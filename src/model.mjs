@@ -3,23 +3,24 @@
 import { categoryFor } from './config.mjs'
 import { liveSessions, transcriptInfo, transcriptPath } from './claude.mjs'
 import { snapshot } from './herdr.mjs'
+import { t } from './lang.mjs'
 import { allCards, writeCard } from './store.mjs'
 
+// Titles read in the board's language at the moment they are used.
+const column = (id, icon, color) => ({ id, icon, color, get title() { return t(`col.${id}`) } })
 export const COLUMNS = [
-  { id: 'work', title: 'Работает', icon: '▶', color: 'green' },
-  { id: 'me', title: 'Ждёт меня', icon: '!', color: 'red' },
-  { id: 'ext', title: 'Ждёт внешнего', icon: '◷', color: 'yellow' },
-  { id: 'done', title: 'Готово', icon: '✓', color: 'cyan' },
-  { id: 'idle', title: 'Простой', icon: '·', color: 'gray' },
+  column('work', '▶', 'green'),
+  column('me', '!', 'red'),
+  column('ext', '◷', 'yellow'),
+  column('done', '✓', 'cyan'),
+  column('idle', '·', 'gray'),
 ]
 
-export const STATUS_TEXT = {
-  working: 'работает',
-  blocked: 'ждёт решения',
-  done: 'готово',
-  idle: 'простой',
-  sleeping: 'спит',
-  unknown: '?',
+/** herdr's agent status in words: "working", "asleep". */
+export function statusText(status) {
+  const key = `status.${status}`
+  const text = t(key)
+  return text === key ? status : text
 }
 
 let sleepCache = { at: 0, list: [] }
@@ -42,7 +43,7 @@ export function forgetSleepers() {
   sleepCache.at = 0
 }
 
-/** Columns the user can drag a card to. "Работает" is herdr's to say. */
+/** Columns the user can drag a card to. "Working" is herdr's to say. */
 export const PINS = new Set(['me', 'ext', 'done', 'idle'])
 /** A turn is on: the session works, or a dialog in it waits in the middle of the work. */
 export const busy = status => status === 'working' || status === 'blocked'
@@ -53,7 +54,7 @@ export const busy = status => status === 'working' || status === 'blocked'
  *   ask       the agent said so with `board ask` (cleared when the user replies)
  *   question  it ended its turn with a question nobody answered yet (unless the user waved that
  *             exact question off on the board: card.dismissed)
- *   later     the user dragged it to "Ждёт меня" to look at it later (card.pin)
+ *   later     the user dragged it to "Needs me" to look at it later (card.pin)
  * A card the user dragged elsewhere (card.pin) shows no question until the pin goes.
  */
 export function attentionOf(status, card, info) {
@@ -94,7 +95,7 @@ function askedText(attention, card, info, tool) {
   if (attention === 'ask') return card.ask
   if (attention === 'question') return info.question
   if (attention !== 'decision' || !tool?.pending) return ''
-  return tool.name === 'AskUserQuestion' ? tool.detail : `Разрешение: ${tool.label}${tool.detail ? ` · ${tool.detail}` : ''}`
+  return tool.name === 'AskUserQuestion' ? tool.detail : t('note.permission', { what: `${tool.label}${tool.detail ? ` · ${tool.detail}` : ''}` })
 }
 
 /** All board items, newest activity first. */
@@ -185,12 +186,12 @@ export async function collect(cfg) {
 
 /** The one line a card shows under the name. */
 export function noteOf(item) {
-  if (item.column === 'ext') return item.wait || 'отложено тобой'
+  if (item.column === 'ext') return item.wait || t('note.parked')
   // Claude's own title of the session beats the last prompt, which is often just "ok" or "go on".
   const title = item.title && item.title !== item.name ? item.title : ''
   const auto = title || item.prompt
-  if (item.attention === 'later') return `отложено тобой · ${item.doing || auto || 'посмотреть'}`
-  if (item.column === 'me') return item.question || item.doing || auto || 'ждёт решения в терминале'
+  if (item.attention === 'later') return t('note.parkedWith', { what: item.doing || auto || t('note.look') })
+  if (item.column === 'me') return item.question || item.doing || auto || t('note.decision')
   if (item.column === 'done' || item.column === 'idle') return item.result || item.doing || auto
   return item.doing || auto
 }

@@ -5,6 +5,8 @@
 // itself. Agents may use ids that are not listed: they get a lane too.
 import { existsSync, mkdirSync, readFileSync, renameSync, watch, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { LANGUAGES } from '../web/i18n.js'
+import { t, useLanguage } from './lang.mjs'
 import { CONFIG_DIR } from './paths.mjs'
 import { allCards, writeCard } from './store.mjs'
 
@@ -20,12 +22,16 @@ const validColor = c => !!PALETTE[c] || /^#[0-9a-f]{3,8}$/i.test(String(c))
 export const colorHex = c => PALETTE[c] ?? (validColor(c) ? c : PALETTE.gray)
 
 const DEFAULTS = {
+  // "auto" (the system's language), "en" or "ru": the board's texts and the language agents
+  // write their cards in.
+  language: 'auto',
   // A start; lanes for clients come from the agents (`board cat <id> "<Title>"`) or the web
-  // board's category editor, which also sets the folders that guess a session's lane.
+  // board's category editor, which also sets the folders that guess a session's lane. These
+  // three have no title of their own: they read in the board's language until one is given.
   categories: [
-    { id: 'work', title: 'Работа', color: 'cyan', paths: [] },
-    { id: 'personal', title: 'Личные', color: 'green', paths: [] },
-    { id: 'other', title: 'Прочее', color: 'gray', paths: [] },
+    { id: 'work', color: 'cyan', paths: [] },
+    { id: 'personal', color: 'green', paths: [] },
+    { id: 'other', color: 'gray', paths: [] },
   ],
   // workspace: a workspace of its own that stays open (default); tab: a tab in the current
   // workspace; overlay: over the current pane, closed when you leave it
@@ -59,7 +65,28 @@ export function loadConfig() {
     } catch {}
   }
   const cfg = raw ?? {}
-  return { ...DEFAULTS, ...cfg, categories: cfg.categories?.length ? cfg.categories : structuredClone(DEFAULTS.categories) }
+  useLanguage(cfg.language ?? DEFAULTS.language)
+  const cats = cfg.categories?.length ? cfg.categories : structuredClone(DEFAULTS.categories)
+  return { ...DEFAULTS, ...cfg, categories: cats.map(c => (c.title ? c : { ...c, title: builtinTitle(c.id) })) }
+}
+
+/** Title of a lane that has none: the built-in ones in the board's language, else the id. */
+function builtinTitle(id) {
+  const key = `lane.${id}`
+  const title = t(key)
+  return title === key ? id : title
+}
+
+/** Change settings in config.json from the web board: { language }. */
+export function editSettings(body) {
+  const raw = readRaw() ?? structuredClone(DEFAULTS)
+  if (body?.language !== undefined) {
+    const l = String(body.language)
+    if (l !== 'auto' && !LANGUAGES[l]) return { ok: false, error: t('err.language', { lang: l }) }
+    raw.language = l
+  }
+  writeRaw(raw)
+  return { ok: true }
 }
 
 /**
@@ -111,8 +138,8 @@ export function editCategories(body) {
   switch (body?.op) {
     case 'create': {
       const id = String(body.id ?? '').trim().toLowerCase()
-      if (!ID.test(id)) return { ok: false, error: 'id: латиница, цифры, - или _, до 32 символов' }
-      if (find(id)) return { ok: false, error: `Категория ${id} уже есть` }
+      if (!ID.test(id)) return { ok: false, error: t('err.cat.id') }
+      if (find(id)) return { ok: false, error: t('err.cat.exists', { id }) }
       const cat = { id, title: title(body.title) || id, color: validColor(body.color) ? body.color : 'blue', paths: cleanPaths(body.paths) ?? [] }
       const other = cats.findIndex(c => c.id === 'other')
       cats.splice(other >= 0 ? other : cats.length, 0, cat)
@@ -120,9 +147,9 @@ export function editCategories(body) {
     }
     case 'update': {
       const cat = find(body.id)
-      if (!cat) return { ok: false, error: `Нет категории ${body.id}` }
+      if (!cat) return { ok: false, error: t('err.cat.missing', { id: body.id }) }
       if (body.title !== undefined) {
-        if (!title(body.title)) return { ok: false, error: 'Пустое название' }
+        if (!title(body.title)) return { ok: false, error: t('err.cat.emptyTitle') }
         cat.title = title(body.title)
       }
       if (body.color !== undefined && validColor(body.color)) cat.color = body.color
@@ -130,9 +157,9 @@ export function editCategories(body) {
       break
     }
     case 'delete': {
-      if (body.id === 'other') return { ok: false, error: '«Прочее» нужна как запасная дорожка' }
+      if (body.id === 'other') return { ok: false, error: t('err.cat.other', { title: t('q', { s: find('other')?.title || builtinTitle('other') }) }) }
       const i = cats.findIndex(c => c.id === body.id)
-      if (i < 0) return { ok: false, error: `Нет категории ${body.id}` }
+      if (i < 0) return { ok: false, error: t('err.cat.missing', { id: body.id }) }
       cats.splice(i, 1)
       for (const card of allCards().values()) if (card.category === body.id) writeCard(card.key, { category: '' })
       break
@@ -181,5 +208,5 @@ export function laneRank(cfg, id) {
 
 /** Category record for an id, including ids agents made up. */
 export function categoryInfo(cfg, id) {
-  return cfg.categories.find(c => c.id === id) ?? { id, title: id, color: 'gray', paths: [] }
+  return cfg.categories.find(c => c.id === id) ?? { id, title: builtinTitle(id), color: 'gray', paths: [] }
 }

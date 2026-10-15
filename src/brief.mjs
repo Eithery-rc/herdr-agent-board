@@ -1,5 +1,6 @@
 // What a Claude session is told about the board (see hook.mjs).
 import { categoryFor } from './config.mjs'
+import { languageName } from './lang.mjs'
 
 // Bump when the brief says something new: every running session gets it again on its next prompt.
 export const BRIEF_VERSION = 2
@@ -18,7 +19,7 @@ export function brief(cfg, card, cwd) {
     '- board ask "<the question, short>": before ending a turn that needs the user\'s answer or decision (approve a draft, pick an option, give data). Puts the card under "needs the user"; cleared by itself when the user replies.',
     '- board wait "<who/what>": before ending a turn blocked on something outside this chat (client reply, CI, another session, a date). The card stays in "waiting" until you run doing or done.',
     '- board done ["<result>"]: task finished; clears doing, wait and ask.',
-    `Card texts in Russian, short. Call it only when the state changes, not every turn.${state ? ` Card now: ${state}.` : ''}`,
+    `Card texts in ${languageName()}, short. Call it only when the state changes, not every turn.${state ? ` Card now: ${state}.` : ''}`,
   ].join('\n')
 }
 

@@ -3,6 +3,7 @@
 // transcript, where Claude keeps the session's ai-title and the user's last prompt.
 import { closeSync, openSync, readSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { onLanguage, t } from './lang.mjs'
 import { CLAUDE_DIR } from './paths.mjs'
 
 function alive(pid) {
@@ -126,7 +127,7 @@ export function toolDetail(name, input) {
     case 'AskUserQuestion':
       return input.questions?.[0]?.question ?? ''
     case 'SendMessage':
-      return !input.to ? '' : /^uds:|pipe/i.test(input.to) ? '→ другой сессии' : `→ ${input.to}`
+      return !input.to ? '' : /^uds:|pipe/i.test(input.to) ? t('tool.peer') : `→ ${input.to}`
     case 'Skill':
       return input.skill ?? ''
   }
@@ -149,6 +150,7 @@ function userText(content) {
 }
 
 const tailCache = new Map() // path -> { mtimeMs, size, info }
+onLanguage(() => tailCache.clear()) // tool details are in the board's language
 
 /**
  * What the end of a transcript says, cached until the file changes:

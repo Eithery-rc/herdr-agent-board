@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { raiseWindow } from './actions.mjs'
 import { loadConfig } from './config.mjs'
+import { t } from './lang.mjs'
 import { ROOT } from './paths.mjs'
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -30,7 +31,7 @@ export async function openWeb(cfg = loadConfig()) {
   if (!(await up(url))) {
     await new Promise(r => execFile(process.execPath, [join(ROOT, 'src', 'open.mjs'), '--background'], { windowsHide: true }, r))
     for (let i = 0; i < 40 && !(await up(url)); i++) await sleep(250)
-    if (!(await up(url))) return { ok: false, error: 'Доска не запущена: открой её один раз через Ctrl+B, A' }
+    if (!(await up(url))) return { ok: false, error: t('err.notRunning') }
   }
   if (await raiseWindow('*Agent board*')) return { ok: true, url }
   const browser = cfg.browser || BROWSERS.find(p => existsSync(p))
