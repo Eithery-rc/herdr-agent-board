@@ -119,10 +119,13 @@ export function startServer({ cfg, log = () => {} } = {}) {
   const port = cfg.port ?? 12422
   pruneUploads(cfg.keepUploadsDays ?? 14)
   let items = []
-  let payload = '{"items":[]}'
+  let stale = true
+  let lastSuccessfulRefreshAt = null
+  let payload
   let version = assetsVersion()
   const clients = new Set()
 
+  /** The board as clients see it, without the time of the last successful refresh. */
   function board() {
     const ids = [...new Set([...cfg.categories.map(c => c.id), ...items.map(i => i.category)])]
     const categories = ids
@@ -133,8 +136,21 @@ export function startServer({ cfg, log = () => {} } = {}) {
         return { id, title: c.title, color: colorHex(c.color), colorName: c.color, paths: c.paths ?? [], configured, fallback: id === 'other' }
       })
     const list = items.map(({ transcript, ...rest }) => rest)
-    return JSON.stringify({ version, lang: lang(), language: cfg.language ?? 'auto', languages: LANGUAGES, items: list, categories, swatches: SWATCHES, columns: COLUMNS.map(({ id, title }) => ({ id, title })) })
+    return { version, lang: lang(), language: cfg.language ?? 'auto', languages: LANGUAGES, stale, items: list, categories, swatches: SWATCHES, columns: COLUMNS.map(({ id, title }) => ({ id, title })) }
   }
+
+  // GET always answers with the latest payload. Live clients get it again only when the board
+  // changed (stale included): a refresh time that moves every few seconds alone is no news.
+  let sent = ''
+  function publish() {
+    const next = board()
+    const key = JSON.stringify(next)
+    payload = JSON.stringify({ ...next, lastSuccessfulRefreshAt })
+    if (key === sent) return
+    sent = key
+    for (const res of clients) res.write(`data: ${payload}\n\n`)
+  }
+  publish()
 
   let refreshing = false
   let again = false
@@ -143,12 +159,12 @@ export function startServer({ cfg, log = () => {} } = {}) {
     refreshing = true
     try {
       items = await collect(cfg)
-      const next = board()
-      if (next !== payload) {
-        payload = next
-        for (const res of clients) res.write(`data: ${payload}\n\n`)
-      }
+      stale = false
+      lastSuccessfulRefreshAt = Date.now()
+      publish()
     } catch (err) {
+      stale = true
+      publish()
       log(`refresh: ${err.message}`)
     } finally {
       refreshing = false

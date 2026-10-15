@@ -77,14 +77,20 @@ export function columnOf(status, card, info) {
 /**
  * The column the user dragged the card to, or ''. It holds until the session works again (the
  * user or another session wrote to it); a card dragged during a turn (card.pinBusy) lands there
- * once that turn is over. Spent pins are taken off the card file here.
+ * once that turn is over. Spent pins are taken off the card file here; a write that fails (its
+ * card is locked) is tried again on the next refresh instead of failing this one.
  */
 function pinOf(key, status, card) {
   if (!PINS.has(card.pin)) return ''
+  const save = patch => {
+    try {
+      writeCard(key, patch)
+    } catch {}
+  }
   if (card.pinBusy) {
-    if (!busy(status)) writeCard(key, { pinBusy: '' })
+    if (!busy(status)) save({ pinBusy: '' })
   } else if (busy(status)) {
-    writeCard(key, { pin: '', pinAt: '', pinBusy: '' })
+    save({ pin: '', pinAt: '', pinBusy: '' })
     return ''
   }
   return card.pin

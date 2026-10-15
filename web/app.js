@@ -2,6 +2,7 @@
 // spring from where the card is on screen (FLIP), drags stay glued to the pointer and land
 // with the pointer's velocity, and the session sheet can be flicked away.
 import { LANGUAGES, translator } from './i18n.js'
+import { updateLive } from './live.js'
 import { markdown } from './markdown.js'
 import { project, reducedMotion, rubberband, Spring, velocityOf } from './spring.js'
 
@@ -66,7 +67,7 @@ const clock = ms => (ms ? new Date(ms).toLocaleTimeString(t.lang, { hour: '2-dig
 
 // ---------------------------------------------------------------- state
 const state = {
-  data: { items: [], categories: [], columns: [] },
+  data: { items: [], categories: [], columns: [], stale: true, lastSuccessfulRefreshAt: null },
   filter: store.get('board.filter', 'all'),
   query: '',
   sleepers: store.get('board.sleepers', '1') === '1',
@@ -120,17 +121,18 @@ function onData(data) {
 function connect() {
   const live = $('#live')
   const source = new EventSource('/api/events')
-  source.onopen = () => {
-    live.classList.add('on')
-    live.title = t('live.on')
-  }
+  source.onopen = () => updateLive(live, { stale: true, lastSuccessfulRefreshAt: null }, t)
   source.onerror = () => {
-    live.classList.remove('on')
+    state.connected = false
+    live.classList.remove('on', 'stale')
     live.title = t('live.off')
   }
   source.onmessage = e => {
     try {
-      onData(JSON.parse(e.data))
+      const data = JSON.parse(e.data)
+      state.connected = true
+      onData(data) // first: it may switch the language
+      updateLive(live, data, t)
     } catch {}
   }
 }
@@ -231,8 +233,8 @@ function applyTexts() {
   for (const el of document.querySelectorAll('[data-i18n-title]')) el.title = t(el.dataset.i18nTitle)
   for (const el of document.querySelectorAll('[data-i18n-label]')) el.setAttribute('aria-label', t(el.dataset.i18nLabel))
   for (const el of document.querySelectorAll('[data-i18n-placeholder]')) el.placeholder = t(el.dataset.i18nPlaceholder)
-  const live = $('#live')
-  live.title = t(live.classList.contains('on') ? 'live.on' : 'live.none')
+  if (state.connected) updateLive($('#live'), state.data, t)
+  else $('#live').title = t('live.none')
   const names = state.data.languages ?? LANGUAGES
   $('#lang-code').textContent = t.lang.toUpperCase()
   $('#lang').title = t('tb.lang', { name: names[t.lang] ?? t.lang })

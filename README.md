@@ -104,6 +104,13 @@ dictionary there plus its plural rule; a test checks that every dictionary has e
 
 Code: `src/server.mjs`, `web/` (no build step, no dependencies; springs in `web/spring.js`).
 
+The web API (`GET /api/board` and SSE `/api/events`) includes `stale` and
+`lastSuccessfulRefreshAt` (Unix milliseconds, or `null` before the first successful refresh).
+A failed refresh keeps the last snapshot and marks it stale; the indicator turns orange until
+Herdr data can be collected again. Opening the SSE connection alone does not mark data live.
+SSE sends the board again only when it changed (stale included); GET always has the latest
+`lastSuccessfulRefreshAt`.
+
 ## Board keys
 
 | Key | Action |
@@ -146,3 +153,9 @@ web board off), `browser` (path for the app window), `terminalTitle` (window tit
 raise, default `<COMPUTERNAME>:*`), `raiseTerminal`.
 
 Cards: `%LOCALAPPDATA%\herdr\plugins\agent-board\cards\<session id>.json`.
+
+Writes to the same card use a per-card directory lock (`<session id>.json.lock`) around the
+read/merge/rename. Contention waits at most two seconds, then reports an error without replacing
+the card. Locks are released on ordinary errors. A writer killed mid-write leaves its lock
+behind; a write holds it for milliseconds, so one older than 30 seconds is taken over by the
+next writer. A card write the board itself fails at is retried on its next refresh.

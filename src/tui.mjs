@@ -107,6 +107,17 @@ const colOf = id => COLUMNS.find(c => c.id === id)
 const byKey = key => items.find(i => i.key === key)
 const selected = () => byKey(sel)
 
+/** writeCard, with a failure (the card locked by another writer) shown instead of ending the board. */
+function save(key, patch) {
+  try {
+    writeCard(key, patch)
+    return true
+  } catch (err) {
+    say(err.message, true)
+    return false
+  }
+}
+
 function say(text, error = false) {
   flash = { text, error, until: Date.now() + (error ? 8000 : 4000) }
   render()
@@ -210,14 +221,13 @@ function onAction(name) {
     case 'wait':
       if (it)
         ask(t('tui.waitsFor', { name: it.name }), it.wait, text => {
-          writeCard(it.key, text ? { wait: text, waitSince: Date.now(), by: 'user' } : { wait: '', waitSince: '' })
+          save(it.key, text ? { wait: text, waitSince: Date.now(), by: 'user' } : { wait: '', waitSince: '' })
           refresh()
         })
       return
     case 'clear':
       if (!it) return
-      writeCard(it.key, { doing: '', wait: '', waitSince: '', ask: '', askSince: '', result: '', pin: '', pinAt: '', pinBusy: '', dismissed: it.attention === 'question' ? it.question : '' })
-      say(t('tui.cleared', { name: it.name }))
+      if (save(it.key, { doing: '', wait: '', waitSince: '', ask: '', askSince: '', result: '', pin: '', pinAt: '', pinBusy: '', dismissed: it.attention === 'question' ? it.question : '' })) say(t('tui.cleared', { name: it.name }))
       return refresh()
     case 'sleep':
       if (!it || it.sleeping) return
@@ -347,15 +357,14 @@ function onCategoryKey(tok) {
     return ask(t('tui.newCat', { name: it.name }), '', text => {
       const id = text.toLowerCase().replace(/[^a-z0-9_-]/g, '')
       if (id) {
-        writeCard(it.key, { category: id })
+        save(it.key, { category: id })
         refresh()
       }
     })
   }
   const c = cfg.categories[Number(tok) - 1]
   if (/^[1-9]$/.test(tok) && c) {
-    writeCard(it.key, { category: c.id })
-    say(t('moved', { name: it.name, where: c.title }))
+    if (save(it.key, { category: c.id })) say(t('moved', { name: it.name, where: c.title }))
     refresh()
   }
   render()

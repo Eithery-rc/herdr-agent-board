@@ -73,13 +73,20 @@ export async function focus(cfg, item, { raise = false } = {}) {
 export async function send(cfg, item, text) {
   text = String(text ?? '').trim()
   if (!text) return { ok: false, error: t('err.emptyMessage') }
+  if (!item?.pane) return { ok: false, error: t('err.noPane') }
+  const expectedSession = item.session ?? null
   if (item.sleeping) {
     const r = await wake(cfg, item)
     if (!r.ok) return r
   }
   try {
-    const agent = (await herdr(['agent', 'get', item.pane])).agent
-    if (agent?.agent_status === 'blocked') return { ok: false, error: t('err.blocked', { name: item.name }) }
+    const agent = (await herdr(['agent', 'get', item.pane]))?.agent
+    // Recheck after wake too: the pane may now host a different session.
+    if (!agent || (agent.agent_session?.value ?? null) !== expectedSession) {
+      return { ok: false, error: t('err.sessionChanged', { name: item.name }) }
+    }
+    if (agent.agent_status === 'blocked') return { ok: false, error: t('err.blocked', { name: item.name }) }
+    // This read and prompt are separate CLI calls, not an atomic identity check and send.
     // A leading dash would be read as an option by the herdr CLI.
     await herdr(['agent', 'prompt', item.pane, /^-/.test(text) ? ` ${text}` : text])
     return { ok: true }
