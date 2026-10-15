@@ -1,7 +1,7 @@
-import { resultToken, unseenResult, attentionTime, nextAttention, recordView } from './attention.js'
 // Agent board, web. Live data over Server-Sent Events; every change of place animates with a
 // spring from where the card is on screen (FLIP), drags stay glued to the pointer and land
 // with the pointer's velocity, and the session sheet can be flicked away.
+import { attentionTime, nextAttention, recordView, resultToken, unseenResult } from './attention.js'
 import { initFiles } from './files.js'
 import { LANGUAGES, translator } from './i18n.js'
 import { updateLive } from './live.js'
@@ -341,12 +341,14 @@ function cardHTML(it) {
   const sleep = !it.sleeping && it.session && !inTurn(it) ? `<button data-act="sleep" title="${esc(t('card.sleep'))}">${ICON.moon}</button>` : ''
   const actions = `<div class="card-actions">${dismiss}${sleep}<button data-act="write" title="${esc(t('card.write'))}">${ICON.write}</button><button data-act="focus" title="${esc(t('card.focus'))}">${ICON.focus}</button></div>`
   const dot = it.sleeping ? ICON.moon : `<span class="dot ${it.column}" style="--c:${COLORS[it.column]}"></span>`
-  const age = ago(it.column === 'ext' ? it.waitSince || it.activity : it.activity)
-  const pin = it.pin && it.pin === it.column ? `<span class="pinned" title="${esc(t('card.pinned'))}">${ICON.pin}</span>` : ''
-  const unread = unseenResult(it, viewed) ? `<span class="chip">${esc(t('attention.unseen'))}</span>` : ''
+  // Under "Needs me" the age says how long it has waited for you: since its question, else since its last activity.
   const waiting = attentionTime(it)
-  const waitAge = waiting ? `<div class="attention-age">${esc(t(it.askSince ? 'attention.waitAge' : 'attention.activityAge', { age: ago(waiting) }))}</div>` : ''
-  const top = unread + waitAge + `<div class="card-top">${dot}<span class="name">${esc(it.name)}</span>${pin}<span class="age">${esc(age)}</span></div>`
+  const age = ago(waiting || (it.column === 'ext' ? it.waitSince || it.activity : it.activity))
+  const ageTitle = waiting ? t(it.askSince ? 'attention.waitAge' : 'attention.activityAge', { age: ago(waiting) }) : ''
+  const pin = it.pin && it.pin === it.column ? `<span class="pinned" title="${esc(t('card.pinned'))}">${ICON.pin}</span>` : ''
+  // A result you have not opened yet: a dot by the name.
+  const unseen = unseenResult(it, viewed) ? `<span class="unseen-dot" title="${esc(t('attention.unseen'))}"></span>` : ''
+  const top = `<div class="card-top">${dot}<span class="name">${esc(it.name)}</span>${unseen}${pin}<span class="age"${ageTitle ? ` title="${esc(ageTitle)}"` : ''}>${esc(age)}</span></div>`
   if (compact(it)) return top + actions
   // What it works on: its own words, else Claude's title of the session, else your last request.
   const own = plain(it.doing || (it.title && it.title !== it.name ? it.title : ''))
@@ -374,6 +376,7 @@ function updateCard(card, it) {
   }
   card.dataset.col = it.column
   card.classList.toggle('compact', compact(it))
+  card.classList.toggle('unseen', unseenResult(it, viewed))
   card.classList.toggle('selected', state.open === it.key)
   const busy = state.busy.get(it.key)
   card.classList.toggle('busy', !!busy)
@@ -1518,7 +1521,7 @@ addEventListener('keydown', e => {
       $('#search').value = state.query = ''
       render()
     }
-  } else if (e.key.toLowerCase() === 'n' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) {
+  } else if (['n', 'т'].includes(e.key.toLowerCase()) && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !files.isOpen()) {
     e.preventDefault()
     openNextAttention()
   } else if (e.key === '/' && !typing) {
