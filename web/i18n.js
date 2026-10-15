@@ -20,6 +20,14 @@ const PLURAL = {
 
 const STRINGS = {
   en: {
+    'changes.open': 'Checkout changes',
+    'changes.title': 'Changes in this checkout',
+    'changes.scope': 'May include work by other sessions sharing the checkout. Untracked file contents are not shown.',
+    'changes.captured': 'Read at {time}; click Checkout changes to refresh.',
+    'changes.unavailable': 'Git checkout unavailable. No changes made.',
+    'changes.clean': 'No changed files.',
+    'changes.truncated': 'Preview limited to 256 KiB per output.',
+
     // columns and states
     'col.work': 'Working',
     'col.me': 'Needs me',
@@ -256,6 +264,14 @@ const STRINGS = {
   },
 
   ru: {
+    'changes.open': 'Изменения checkout',
+    'changes.title': 'Изменения в этом checkout',
+    'changes.scope': 'Здесь может быть работа других сессий в общем checkout. Содержимое untracked-файлов не показывается.',
+    'changes.captured': 'Прочитано в {time}; нажми «Изменения checkout», чтобы обновить.',
+    'changes.unavailable': 'Git checkout недоступен. Изменения не выполнялись.',
+    'changes.clean': 'Изменённых файлов нет.',
+    'changes.truncated': 'Предпросмотр ограничен 256 КиБ на вывод.',
+
     'col.work': 'Работает',
     'col.me': 'Ждёт меня',
     'col.ext': 'Ждёт внешнего',

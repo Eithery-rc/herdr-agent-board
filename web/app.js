@@ -760,6 +760,7 @@ function openSheet(key, { compose = false } = {}) {
   draftFor = key
   state.open = key
   state.detail = null
+  state.changes = null
   lastDetailStamp = ''
   if (!sessionPanel.open() && switching && !reducedMotion.matches) {
     sheetBody.animate([{ opacity: 0.3 }, { opacity: 1 }], { duration: 180, easing: 'ease-out' })
@@ -834,7 +835,8 @@ function renderSheetBody(reset) {
   if (!it) return
   renderSheetCard(it)
   const atBottom = sheetBody.scrollHeight - sheetBody.scrollTop - sheetBody.clientHeight < 40
-  let html = ''
+  const changes = state.changes?.key === it.key ? state.changes.data : null
+  let html = changes ? `<section class="checkout-changes"><h3>${esc(t('changes.title'))}</h3><p>${esc(t('changes.scope'))}</p>${changes.available ? `<p>${esc(changes.root)} · ${esc(changes.branch)}</p><p>${esc(t('changes.captured', { time: clock(changes.collectedAt) }))}</p><pre>${esc(changes.status || t('changes.clean'))}</pre><pre>${esc(changes.diff)}</pre>${changes.truncated ? `<p>${esc(t('changes.truncated'))}</p>` : ''}` : `<p>${esc(t('changes.unavailable'))}</p>`}</section>` : ''
   if (it.column === 'me') {
     const later = it.attention === 'later'
     const why = t(it.attention ? `why.${it.attention}` : 'why.default')
@@ -1508,3 +1510,18 @@ fetch('/api/board')
   .then(d => d.items && onData(d))
   .catch(() => {})
 connect()
+
+let changesSeq = 0
+$('#sheet-changes').addEventListener('click', async () => {
+  const key = state.open
+  const seq = ++changesSeq
+  if (!key) return
+  try {
+    const res = await fetch(`/api/session/${encodeURIComponent(key)}/changes`)
+    if (!res.ok) throw new Error(t('changes.unavailable'))
+    const data = await res.json()
+    if (seq !== changesSeq || state.open !== key) return
+    state.changes = { key, data }
+    renderSheetBody(false)
+  } catch (err) { if (state.open === key) toast(err.message, true) }
+})
