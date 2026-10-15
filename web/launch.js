@@ -119,6 +119,7 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
   let s = null
   let options = { launcher: { kind: 'herdr', agent: 'claude' }, workspaces: [], recent: [], board: '' }
   const local = new Map() // launch id -> launch, until the server's board has it
+  let draft = null // { text, at }: the first message of a window closed without starting
 
   function labels() {
     for (const el of root.querySelectorAll('[data-t]')) el.textContent = tr(el.dataset.t)
@@ -135,7 +136,7 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
     $('.launch-go').textContent = tr('launch.start')
     $('.launch-keys').textContent = tr('launch.keys')
     const l = options.launcher
-    $('.launch-sub').textContent = l.kind === 'command' ? tr('launch.viaCommand', { name: l.name }) : tr('launch.viaHerdr', { agent: l.agent })
+    $('.launch-sub').textContent = l.kind === 'command' ? tr('launch.viaCommand', { name: l.name }) : tr('launch.viaHerdr', { agent: l.agent === 'claude' ? 'Claude' : l.agent })
   }
 
   // ------------------------------------------------------------ motion: out of the origin and back
@@ -194,8 +195,10 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
     if (!s.set.cwd && !f.cwd.value) applyFolder(suggestions()[0]?.path ?? '', false)
   }
 
-  function close(to = null) {
+  /** Fold the window away; a first message written but not sent waits for the next window. */
+  function close(to = null, started = false) {
     if (root.hidden || motion.target === 0) return
+    if (!started && f.message.value.trim()) draft = { text: f.message.value, at: Date.now() }
     closePop()
     from = measure(rectOf(to) ?? rectOf(origin))
     motion.to(0, { damping: 1, response: 0.28 })
@@ -225,7 +228,8 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
     s.set.cwd = !!cwd
     f.name.value = r?.name ?? (cwd ? suggestName(cwd, items) : '')
     s.set.name = !!r
-    f.message.value = r?.message ?? ''
+    // A first message from a window closed unsent comes back (for ten minutes).
+    f.message.value = r?.message ?? (draft && Date.now() - draft.at < 600_000 ? draft.text : '')
     f.wt.checked = !!r?.worktree
     f.branch.value = r?.worktree?.branch ?? ''
     s.set.branch = !!r?.worktree
@@ -292,30 +296,38 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
     el.classList.toggle('error', !!text && error)
   }
 
+  /** What the server says about the folder field, a moment after the typing stops. */
   function checkFolder() {
     clearTimeout(checkTimer)
+    // What was checked before is about another folder now.
+    s.check = null
+    s.git = null
     const path = f.cwd.value.trim()
     if (!path) return setState('')
     setState('wait')
-    checkTimer = setTimeout(async () => {
-      const r = await dirs(path, true)
-      if (!s || f.cwd.value.trim() !== path) return
-      s.check = r
-      if (!r || !r.exists) setState('bad', tr('launch.err.cwdMissing', { path }))
-      else if (!r.dir) setState('bad', tr('launch.err.cwdFile', { path }))
-      else setState('ok')
-      s.git = r?.git ?? null
-      renderWorktree()
-      // The folder decides the category until the user picks one.
-      if (r?.exists && r.dir && !s.set.category) {
-        const cat = categoryForDir(d().categories, r.path)
-        if (cat && cat !== s.category) {
-          s.category = cat
-          renderCats()
-          renderWorkspaces()
-        }
+    checkTimer = setTimeout(() => runCheck(path), 160)
+  }
+
+  async function runCheck(path) {
+    clearTimeout(checkTimer)
+    const r = await dirs(path, true)
+    if (!s || f.cwd.value.trim() !== path) return
+    s.check = { ...r, input: path }
+    if (r?.slow) setState('bad', tr('launch.err.cwdSlow', { path }))
+    else if (!r || !r.exists) setState('bad', tr('launch.err.cwdMissing', { path }))
+    else if (!r.dir) setState('bad', tr('launch.err.cwdFile', { path }))
+    else setState('ok')
+    s.git = r?.git ?? null
+    renderWorktree()
+    // The folder decides the category until the user picks one.
+    if (r?.exists && r.dir && !s.set.category) {
+      const cat = categoryForDir(d().categories, r.path)
+      if (cat && cat !== s.category) {
+        s.category = cat
+        renderCats()
+        renderWorkspaces()
       }
-    }, 160)
+    }
   }
 
   function applyFolder(path, byUser = true) {
@@ -573,7 +585,7 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
     const bad = checkName(f.name.value)
     if (bad) out.name = tr(bad, { max: NAME_MAX })
     if (!f.cwd.value.trim()) out.cwd = tr('launch.err.cwdEmpty')
-    else if (s.check && (!s.check.exists || !s.check.dir) && s.check.path) out.cwd = tr(s.check.exists ? 'launch.err.cwdFile' : 'launch.err.cwdMissing', { path: s.check.path })
+    else if (s.check && (!s.check.exists || !s.check.dir) && s.check.path) out.cwd = tr(s.check.slow ? 'launch.err.cwdSlow' : s.check.exists ? 'launch.err.cwdFile' : 'launch.err.cwdMissing', { path: s.check.path })
     if (!f.workspace.value && !f.newWorkspace.value.trim()) out.workspace = tr('launch.err.workspaceName')
     if (s.git && f.wt.checked && checkBranch(f.branch.value)) out.worktree = tr(checkBranch(f.branch.value))
     return out
@@ -587,6 +599,12 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
 
   async function submit() {
     if (!s || s.sending) return
+    // Enter can come before the folder was checked: check it now, then go on with that answer.
+    const cwd = f.cwd.value.trim()
+    if (cwd && s.check?.input !== cwd) {
+      await runCheck(cwd)
+      if (!s || f.cwd.value.trim() !== cwd) return
+    }
     const bad = problems()
     if (Object.keys(bad).length) {
       for (const [k, v] of Object.entries(bad)) noteFor(k, v)
@@ -597,18 +615,21 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
     const ws = f.workspace.value ? { id: f.workspace.value, label: f.workspace.selectedOptions[0]?.textContent ?? '' } : { create: f.newWorkspace.value.trim() }
     const body = {
       name: f.name.value.trim(),
-      cwd: (s.check?.exists && s.check.path) || f.cwd.value.trim(),
+      cwd: (s.check?.exists && s.check.input === cwd && s.check.path) || cwd,
       category: s.category,
       workspace: ws,
       message: f.message.value.trim(),
       ...(s.git && f.wt.checked ? { worktree: { branch: f.branch.value.trim() } } : {}),
     }
-    s.sending = true
+    const st = s
+    st.sending = true
     syncGo()
     const r = await post('/api/launch', body)
-    if (!s) return
-    s.sending = false
+    st.sending = false
+    // Closed (or opened anew) while the request was out: the start still counts, the old form does not.
+    const here = s === st
     if (!r.ok) {
+      if (!here) return toast(r.error, true)
       syncGo()
       if (r.field) {
         noteFor(r.field, r.error)
@@ -620,18 +641,20 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
       return
     }
     if (ws.id) store.set('board.launch.workspace', ws.id)
-    if (s.retry) post(`/api/launch/${encodeURIComponent(s.retry.id)}/dismiss`, {})
+    if (st.retry) post(`/api/launch/${encodeURIComponent(st.retry.id)}/dismiss`, {})
+    draft = null
     const launch = { id: r.id, name: body.name, cwd: body.cwd, category: body.category, workspace: ws.label ?? ws.create, newWorkspace: !ws.id, message: body.message, worktree: body.worktree ?? null, state: 'starting', step: 'prepare', startedAt: Date.now(), pane: null, key: null }
     local.set(r.id, launch)
     onStarted(launch)
     // The window folds into the new card, where the session will be.
-    requestAnimationFrame(() => close(document.querySelector(`.card[data-key="launch:${CSS.escape(r.id)}"]`)))
+    if (here) requestAnimationFrame(() => close(document.querySelector(`.card[data-key="launch:${CSS.escape(r.id)}"]`), true))
   }
 
   $('.launch-go').addEventListener('click', submit)
   $('.launch-cancel').addEventListener('click', () => close())
   $('.launch-close').addEventListener('click', () => close())
-  scrim.addEventListener('click', () => close())
+  // A click beside the window closes it only while nothing was written in it yet.
+  scrim.addEventListener('click', () => (f.message.value.trim() ? win.focus({ preventScroll: true }) : close()))
   form.addEventListener('submit', e => {
     e.preventDefault()
     submit()

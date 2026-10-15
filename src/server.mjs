@@ -403,7 +403,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
         const body = await readBody(req)
         if (path === '/api/launch') {
           if (refuseStale()) return json(409, { ok: false, error: t('mobile.readOnly') })
-          const r = launches.start(body, items)
+          const r = await launches.start(body, items)
           return json(r.ok ? 200 : 400, r)
         }
         const d = /^\/api\/launch\/([\w-]+)\/(dismiss|focus)$/.exec(path)

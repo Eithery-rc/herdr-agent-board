@@ -755,8 +755,9 @@ const menu = initMenu({ onChange: () => dialogBack.sync() })
 const dialogBack = dialogHistory({
   history,
   mobile: () => matchMedia('(max-width: 760px)').matches,
-  isOpen: () => menu.isOpen() || launchUI.isOpen() || files.isOpen() || panels.some(panel => panel.isOpen),
-  closeTop: () => menu.isOpen() ? menu.close() : launchUI.isOpen() ? launchUI.close() : files.isOpen() ? files.close() : panels.find(panel => panel.isOpen)?.close(),
+  // Asked at once when a reload finds the Back sentinel: launchUI is set up just below.
+  isOpen: () => menu.isOpen() || !!launchUI?.isOpen() || files.isOpen() || panels.some(panel => panel.isOpen),
+  closeTop: () => menu.isOpen() ? menu.close() : launchUI?.isOpen() ? launchUI.close() : files.isOpen() ? files.close() : panels.find(panel => panel.isOpen)?.close(),
 })
 launchUI = initLaunch({
   t: () => t,
@@ -1579,7 +1580,7 @@ $('#sleepers').addEventListener('click', e => {
 $('#sleepers').setAttribute('aria-pressed', String(state.sleepers))
 
 function openNextAttention() {
-  const key = nextAttention(visibleItems().filter(it => laneShown(catOf(it))), state.open, viewed)
+  const key = nextAttention(visibleItems().filter(it => !it.launchOnly && laneShown(catOf(it))), state.open, viewed)
   if (key) openSheet(key)
 }
 $('#next-attention').addEventListener('click', openNextAttention)

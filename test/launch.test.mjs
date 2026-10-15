@@ -112,16 +112,18 @@ test('what a launcher said: its pane when it worked, the reason when it did not'
   assert.equal(failureKind('anything', 'ENOENT'), 'launcher')
 })
 
-test('a launch request is checked before anything runs', t => {
+test('a launch request is checked before anything runs', async t => {
   const box = sandbox(t)
   const dir = join(box.dir, 'Acme project')
   mkdirSync(dir)
   writeFileSync(join(box.dir, 'file.txt'), 'x')
-  const ok = checkRequest({ name: ' Acme ', cwd: dir, category: 'acme', workspace: { id: 'w2' }, message: ' hi ' })
+  const ok = await checkRequest({ name: ' Acme ', cwd: dir, category: 'acme', workspace: { id: 'w2' }, message: ' hi ' })
   assert.equal(ok.ok, true)
   assert.deepEqual({ ...ok.launch }, { name: 'Acme', label: 'Acme', cwd: dir, category: 'acme', workspaceId: 'w2', workspaceLabel: '', newWorkspace: false, message: 'hi', worktree: null })
-  assert.equal(checkRequest({ name: 'A', cwd: dir, workspace: { create: 'Fresh' } }).launch.newWorkspace, true)
-  assert.equal(checkRequest({ name: 'A', cwd: dir, category: 'Bad Id!', workspace: { id: 'w2' } }).launch.category, 'other')
+  assert.equal((await checkRequest({ name: 'A', cwd: dir, workspace: { create: 'Fresh' } })).launch.newWorkspace, true)
+  assert.equal((await checkRequest({ name: 'A', cwd: dir, category: 'Bad Id!', workspace: { id: 'w2' } })).launch.category, 'other')
+  // A workspace's name only fills {workspaceLabel}: one that could read as an option is dropped.
+  assert.equal((await checkRequest({ name: 'A', cwd: dir, workspace: { id: 'w2', label: '-x' } })).launch.workspaceLabel, '')
   const fails = [
     [{ name: '', cwd: dir, workspace: { id: 'w2' } }, 'name'],
     [{ name: 'A', cwd: join(box.dir, 'missing'), workspace: { id: 'w2' } }, 'cwd'],
@@ -129,10 +131,12 @@ test('a launch request is checked before anything runs', t => {
     [{ name: 'A', cwd: '', workspace: { id: 'w2' } }, 'cwd'],
     [{ name: 'A', cwd: dir, workspace: { id: 'w2; rm -rf' } }, 'workspace'],
     [{ name: 'A', cwd: dir, workspace: { create: '' } }, 'workspace'],
+    [{ name: 'A', cwd: dir, workspace: { create: '--focus' } }, 'workspace'],
+    [{ name: 'A', cwd: dir, workspace: { id: '-w2' } }, 'workspace'],
     [{ name: 'A', cwd: dir, workspace: { id: 'w2' }, worktree: { branch: 'a..b' } }, 'worktree'],
     [{ name: 'A', cwd: dir, workspace: { id: 'w2' }, message: 'x'.repeat(20_001) }, 'message'],
   ]
-  for (const [body, field] of fails) assert.equal(checkRequest(body).field, field, JSON.stringify(body).slice(0, 80))
+  for (const [body, field] of fails) assert.equal((await checkRequest(body)).field, field, JSON.stringify(body).slice(0, 80))
 })
 
 // ---------------------------------------------------------------- through the server

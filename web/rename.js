@@ -49,6 +49,7 @@ export function renameInPlace(target, { value, auto, claude = null, t, onCommit,
   field.select()
 
   let done = false
+  let held = false // a press on the checkbox's label is under way
   let saving = false // a field that goes disabled loses the focus: that is no second commit
   const finish = () => {
     if (done) return
@@ -86,7 +87,7 @@ export function renameInPlace(target, { value, auto, claude = null, t, onCommit,
   })
   // Leaving the field keeps the name, unless the focus only went to the checkbox under it.
   box.addEventListener('focusout', e => {
-    if (!box.contains(e.relatedTarget)) setTimeout(() => !box.contains(document.activeElement) && commit(), 0)
+    if (!box.contains(e.relatedTarget)) setTimeout(() => !held && !box.contains(document.activeElement) && commit(), 0)
   })
   check?.addEventListener('keydown', e => {
     e.stopPropagation()
@@ -94,6 +95,18 @@ export function renameInPlace(target, { value, auto, claude = null, t, onCommit,
     if (e.key === 'Escape') finish()
   })
   box.addEventListener('pointerdown', e => e.stopPropagation())
+  // A press on the options must not count as leaving the field. A press on the checkbox's label
+  // is let through (preventing it stops the label from ticking the box) and holds the commit
+  // until its click has landed; any other press keeps the focus in the field.
+  box.addEventListener('mousedown', e => {
+    if (e.target === field) return
+    if (!e.target.closest('label')) return e.preventDefault()
+    held = true
+    addEventListener('pointerup', () => setTimeout(() => (held = false), 0), { once: true })
+  })
+  box.addEventListener('click', e => {
+    if (e.target.closest('label')) setTimeout(() => !done && field.focus(), 0)
+  })
   current = { cancel: finish }
   return current
 }

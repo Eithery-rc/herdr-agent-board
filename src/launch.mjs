@@ -11,9 +11,10 @@
 // board gets its id up front (--session-id), so even its first brief knows the lane.
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { open, readdir, stat } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { basename, dirname, join, resolve, sep } from 'node:path'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { checkBranch, checkName, normDir, sameDir, slugName, uniqueSlug, worktreePath } from '../web/launch-model.js'
 import { resolvePath } from './files.mjs'
 import { raiseTerminal } from './actions.mjs'
@@ -105,14 +106,19 @@ export function launcherLabel(command) {
 
 // ------------------------------------------------------------------ folders for the picker
 
+// A path someone typed can be a share that is offline: no file-system call on it may hold the
+// board up. Each one gives up after `ms` and says so (SLOW).
+const SLOW = Symbol('slow')
+const within = (promise, ms) => Promise.race([promise, new Promise(r => setTimeout(r, ms, SLOW).unref?.())])
+const statOf = (path, ms = 2000) => within(stat(path).catch(() => null), ms)
+
 let rootsCache = { at: 0, list: [] }
 /** Where browsing starts: home, and every drive on Windows. */
-function roots() {
+async function roots() {
   if (Date.now() - rootsCache.at < 30_000) return rootsCache.list
-  const list = [{ name: '~', path: homedir() }]
-  if (process.platform === 'win32') {
-    for (const l of 'CDEFGHIJKLMNOPQRSTUVWXYZ') if (existsSync(`${l}:\\`)) list.push({ name: `${l}:`, path: `${l}:\\` })
-  } else list.push({ name: '/', path: '/' })
+  const drives = process.platform === 'win32' ? [...'CDEFGHIJKLMNOPQRSTUVWXYZ'] : []
+  const found = await Promise.all(drives.map(async l => ((await statOf(`${l}:\\`, 400))?.isDirectory?.() ? { name: `${l}:`, path: `${l}:\\` } : null)))
+  const list = [{ name: '~', path: homedir() }, ...(process.platform === 'win32' ? found.filter(Boolean) : [{ name: '/', path: '/' }])]
   rootsCache = { at: Date.now(), list }
   return list
 }
@@ -121,25 +127,30 @@ const SYSTEM_DIRS = new Set(['$recycle.bin', 'system volume information', '$wind
 
 /**
  * The subfolders of a folder (only folders), for the picker's columns and completion; '' lists
- * the roots. `git` also tells the checkout the folder is in, for the worktree option.
+ * the roots. `git` also tells the checkout the folder is in, for the worktree option. `slow`:
+ * the folder did not answer in time (an offline share), which is not the same as missing.
  */
 export async function listDirs(raw, { git = false } = {}) {
-  if (!String(raw ?? '').trim()) return { path: '', exists: true, dir: true, roots: roots(), entries: [] }
+  if (!String(raw ?? '').trim()) return { path: '', exists: true, dir: true, roots: await roots(), entries: [] }
   const { path } = resolvePath(raw)
   if (!path) return { path: String(raw), exists: false }
-  const st = statSync(path, { throwIfNoEntry: false })
+  const st = await statOf(path)
+  if (st === SLOW) return { path, exists: false, slow: true }
   if (!st) return { path, exists: false }
   if (!st.isDirectory()) return { path, exists: true, dir: false }
   let entries = []
   let error = null
   try {
-    entries = readdirSync(path, { withFileTypes: true })
-      .filter(d => d.isDirectory() || (d.isSymbolicLink() && statSync(join(path, d.name), { throwIfNoEntry: false })?.isDirectory()))
+    const dirents = await within(readdir(path, { withFileTypes: true }), 4000)
+    if (dirents === SLOW) throw Object.assign(new Error('slow'), { code: 'SLOW' })
+    const linked = await Promise.all(dirents.map(async d => d.isDirectory() || (d.isSymbolicLink() && (await statOf(join(path, d.name), 1000))?.isDirectory?.())))
+    entries = dirents
+      .filter((d, i) => linked[i] === true)
       .map(d => d.name)
       .filter(n => !SYSTEM_DIRS.has(n.toLowerCase()))
       .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
   } catch (err) {
-    error = err.code === 'EPERM' || err.code === 'EACCES' ? 'denied' : err.message
+    error = err.code === 'EPERM' || err.code === 'EACCES' ? 'denied' : err.code === 'SLOW' ? 'slow' : err.message
   }
   const up = dirname(path)
   const out = { path, exists: true, dir: true, entries: entries.slice(0, 2000), truncated: entries.length > 2000, parent: up !== path ? up : '', sep, error }
@@ -168,24 +179,24 @@ let recentCache = { at: 0, list: [] }
  * Folders recent Claude sessions on this machine ran in, newest first: the cwd in the newest
  * transcript of each project. Read from the head of the file only, cached for a minute.
  */
-export function recentFolders(projects = join(CLAUDE_DIR, 'projects'), limit = 12) {
+export async function recentFolders(projects = join(CLAUDE_DIR, 'projects'), limit = 12) {
   if (Date.now() - recentCache.at < 60_000) return recentCache.list
   const found = []
   try {
-    const dirs = readdirSync(projects, { withFileTypes: true })
-      .filter(d => d.isDirectory())
-      .map(d => ({ dir: join(projects, d.name), mtime: statSync(join(projects, d.name), { throwIfNoEntry: false })?.mtimeMs ?? 0 }))
-      .sort((a, b) => b.mtime - a.mtime)
-      .slice(0, 40)
+    const mtime = async p => (await stat(p).catch(() => null))?.mtimeMs ?? 0
+    const all = (await readdir(projects, { withFileTypes: true })).filter(d => d.isDirectory())
+    const dirs = (await Promise.all(all.map(async d => ({ dir: join(projects, d.name), m: await mtime(join(projects, d.name)) })))).sort((a, b) => b.m - a.m).slice(0, 40)
     const temp = normDir(tmpdir())
-    for (const { dir } of dirs) {
-      const newest = readdirSync(dir)
-        .filter(f => f.endsWith('.jsonl'))
-        .map(f => ({ f, m: statSync(join(dir, f), { throwIfNoEntry: false })?.mtimeMs ?? 0 }))
-        .sort((a, b) => b.m - a.m)[0]
-      if (!newest) continue
-      const cwd = cwdOf(join(dir, newest.f))
-      if (cwd && !normDir(cwd).startsWith(temp) && !found.some(f => sameDir(f, cwd)) && statSync(cwd, { throwIfNoEntry: false })?.isDirectory()) found.push(cwd)
+    const cwds = await Promise.all(
+      dirs.map(async ({ dir }) => {
+        const files = (await readdir(dir).catch(() => [])).filter(f => f.endsWith('.jsonl'))
+        const newest = (await Promise.all(files.map(async f => ({ f, m: await mtime(join(dir, f)) })))).sort((a, b) => b.m - a.m)[0]
+        return newest ? cwdOf(join(dir, newest.f)) : null
+      }),
+    )
+    for (const cwd of cwds) {
+      if (!cwd || normDir(cwd).startsWith(temp) || found.some(f => sameDir(f, cwd))) continue
+      if ((await statOf(cwd, 500))?.isDirectory?.()) found.push(cwd)
       if (found.length >= limit) break
     }
   } catch {}
@@ -193,18 +204,18 @@ export function recentFolders(projects = join(CLAUDE_DIR, 'projects'), limit = 1
   return found
 }
 
-function cwdOf(file) {
-  let fd
+async function cwdOf(file) {
+  let fh
   try {
-    fd = openSync(file, 'r')
+    fh = await open(file, 'r')
     const buf = Buffer.alloc(32 << 10)
-    const n = readSync(fd, buf, 0, buf.length, 0)
-    const m = /"cwd":("(?:[^"\\]|\\.)*")/.exec(buf.subarray(0, n).toString('utf8'))
+    const { bytesRead } = await fh.read(buf, 0, buf.length, 0)
+    const m = /"cwd":("(?:[^"\\]|\\.)*")/.exec(buf.subarray(0, bytesRead).toString('utf8'))
     return m ? JSON.parse(m[1]) : null
   } catch {
     return null
   } finally {
-    if (fd !== undefined) closeSync(fd)
+    await fh?.close()
   }
 }
 
@@ -226,7 +237,8 @@ async function typeLine(pane, text, tries = 3) {
     } catch (err) {
       if (!stalled(err)) throw err
       const screen = await herdrText(['pane', 'read', pane, '--source', 'visible'], 5000).catch(() => '')
-      if (screen.includes(text.slice(0, 30)) || /Pasted text/.test(screen)) {
+      // Its first line (the screen breaks the rest) still in the prompt: it only needs its Enter.
+      if (screen.includes(text.split('\n')[0].slice(0, 30)) || /Pasted text/.test(screen)) {
         await herdr(['pane', 'send-keys', pane, 'enter']).catch(() => {})
         return true
       }
@@ -289,15 +301,20 @@ class LaunchError extends Error {
   }
 }
 
+const WORKSPACE_ID = /^[A-Za-z0-9][\w:-]{0,39}$/
+/** A workspace name herdr takes as a value: no control characters, no leading dash. */
+const workspaceName = (s, max) => !!s && s.length <= max && !/[\u0000-\u001f\u007f]/.test(s) && !s.startsWith('-')
+
 /** Check a launch request. { ok, launch } or { ok: false, error, field }. */
-export function checkRequest(body) {
+export async function checkRequest(body) {
   const fail = (field, key, vars) => ({ ok: false, field, error: t(key, vars) })
   const name = String(body?.name ?? '').trim()
   const bad = checkName(name)
   if (bad) return fail('name', bad, { max: 60 })
   const { path: cwd } = resolvePath(body?.cwd)
   if (!cwd) return fail('cwd', 'launch.err.cwdEmpty')
-  const st = statSync(cwd, { throwIfNoEntry: false })
+  const st = await statOf(cwd, 3000)
+  if (st === SLOW) return fail('cwd', 'launch.err.cwdSlow', { path: cwd })
   if (!st) return fail('cwd', 'launch.err.cwdMissing', { path: cwd })
   if (!st.isDirectory()) return fail('cwd', 'launch.err.cwdFile', { path: cwd })
   const category = /^[a-z0-9_-]{1,32}$/.test(String(body?.category ?? '')) ? body.category : 'other'
@@ -305,12 +322,13 @@ export function checkRequest(body) {
   let workspaceId = ''
   let workspaceLabel = ''
   if (ws.id) {
-    if (!/^[\w:-]{1,40}$/.test(String(ws.id))) return fail('workspace', 'launch.err.workspace')
+    if (!WORKSPACE_ID.test(String(ws.id))) return fail('workspace', 'launch.err.workspace')
     workspaceId = String(ws.id)
-    workspaceLabel = String(ws.label ?? '').slice(0, 60)
+    workspaceLabel = String(ws.label ?? '').trim()
+    if (workspaceLabel && !workspaceName(workspaceLabel, 60)) workspaceLabel = ''
   } else {
     workspaceLabel = String(ws.create ?? '').trim()
-    if (!workspaceLabel || workspaceLabel.length > 40 || /[\u0000-\u001f\u007f]/.test(workspaceLabel) || workspaceLabel.startsWith('-')) return fail('workspace', 'launch.err.workspaceName')
+    if (!workspaceName(workspaceLabel, 40)) return fail('workspace', 'launch.err.workspaceName')
   }
   const message = String(body?.message ?? '').trim()
   if (message.length > MESSAGE_MAX) return fail('message', 'launch.err.message', { n: MESSAGE_MAX })
@@ -333,8 +351,8 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
   const changed = () => onChange()
   const spec = () => cfg.launch ?? {}
 
-  function start(body, items = []) {
-    const r = checkRequest(body)
+  async function start(body, items = []) {
+    const r = await checkRequest(body)
     if (!r.ok) return r
     const l = { ...r.launch, id: randomUUID().slice(0, 8), state: 'starting', step: 'prepare', startedAt: Date.now(), knownPanes: new Set(items.map(i => i.pane)), pane: null, key: null, error: '', kind: '' }
     launches.set(l.id, l)
@@ -344,6 +362,7 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
         l.doneAt = Date.now()
       })
       .catch(err => {
+        if (l.dismissed) return void launches.delete(l.id) // waved off while it ran: nothing to show
         l.state = 'failed'
         l.error = err.message || String(err)
         l.kind = err.kind || failureKind(l.error, err.code)
@@ -365,13 +384,13 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
       const git = await gitInfo(l.cwd)
       if (!git) throw new LaunchError(t('launch.err.notGit', { path: l.cwd }), 'worktree')
       const path = worktreePath(git.root, l.worktree.branch)
-      if (existsSync(path)) throw new LaunchError(t('launch.err.worktreeExists', { path }), 'worktree')
+      if (await statOf(path)) throw new LaunchError(t('launch.err.worktreeExists', { path }), 'worktree')
       const r = await run('git', ['-C', git.root, 'worktree', 'add', '-b', l.worktree.branch, path], { timeout: 60_000 })
       if (r.code !== 0) throw new LaunchError(t('launch.err.worktreeGit', { why: launcherError(r.stdout, r.stderr).message || r.error?.message }), 'worktree')
       // The session works in the same place below the checkout as the folder that was picked.
-      const below = normDir(l.cwd).slice(normDir(git.root).length).replace(/^\//, '')
-      l.cwd = below ? join(path, ...below.split('/')) : path
-      if (!existsSync(l.cwd)) l.cwd = path
+      const below = relative(git.root, l.cwd)
+      const inside = below && !below.startsWith('..') ? join(path, below) : path
+      l.cwd = (await statOf(inside))?.isDirectory?.() ? inside : path
     }
     if (l.newWorkspace) {
       step(l, 'workspace')
@@ -501,8 +520,11 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
     const claimed = new Set()
     for (const l of launches.values()) {
       let it = (l.sessionId && items.find(i => i.session === l.sessionId)) || (l.pane && items.find(i => i.pane === l.pane)) || null
-      // A launcher that says its pane only at the end: the new agent pane in that folder is it.
-      if (!it && !l.pane && l.state !== 'failed') it = items.find(i => !l.knownPanes.has(i.pane) && sameDir(i.cwd, l.cwd) && !claimed.has(i.key) && ![...launches.values()].some(o => o !== l && o.key === i.key))
+      // A launcher that says its pane only at the end: while it runs, a new agent pane in that
+      // folder and workspace is taken for it, and the pane it prints settles it. herdr's own path
+      // and launchers given {sessionId} need no guess: they are matched by the session id.
+      const guess = !it && !l.pane && !l.sessionId && l.step === 'command' && l.state === 'starting' && l.workspaceLabel
+      if (guess) it = items.find(i => !l.knownPanes.has(i.pane) && i.workspace === l.workspaceLabel && sameDir(i.cwd, l.cwd) && !claimed.has(i.key) && ![...launches.values()].some(o => o !== l && o.key === i.key))
       if (!it) continue
       claimed.add(it.key)
       l.key = it.key
@@ -520,7 +542,7 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
     const now = Date.now()
     let gone = false
     for (const [id, l] of launches) {
-      const done = l.state === 'done' && ((l.key && l.carded && now - l.doneAt > 8000) || now - l.doneAt > 120_000)
+      const done = l.state === 'done' && ((l.key && l.carded && now - l.doneAt > 8000) || now - l.doneAt > 120_000 || l.dismissed)
       if (done || (l.state === 'failed' && now - l.startedAt > 30 * 60_000)) {
         launches.delete(id)
         gone = true
@@ -533,16 +555,20 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
   function decorate(item) {
     const l = [...launches.values()].find(x => x.key === item.key)
     if (!l) return item
-    return { ...item, category: item.categorySet ? item.category : l.category, launch: l.state === 'done' ? null : view(l) }
+    return { ...item, category: item.categorySet ? item.category : l.category, launch: l.state === 'done' || l.dismissed ? null : view(l) }
   }
 
   const view = l => ({ id: l.id, name: l.name, cwd: l.cwd, category: l.category, workspace: l.workspaceLabel, state: l.state, step: l.step, error: l.error, kind: l.kind, pane: l.pane, key: l.key, startedAt: l.startedAt, doneAt: l.doneAt ?? null, message: l.message, worktree: l.worktree, newWorkspace: l.newWorkspace })
 
+  /**
+   * Take a launch off the board. A failed one goes; one still running only stops showing: it
+   * goes on, and its session still gets its lane (a dialog it waits on is given up on).
+   */
   function dismiss(id) {
     const l = launches.get(id)
     if (!l) return { ok: false, error: t('launch.err.gone') }
     l.dismissed = true
-    launches.delete(id)
+    if (l.state === 'failed' || l.state === 'done') launches.delete(id)
     changed()
     return { ok: true }
   }
@@ -580,10 +606,10 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
       workspaces,
       focused,
       board: (cfg.placement ?? 'workspace') === 'workspace' ? (cfg.workspace ?? 'Board') : '',
-      recent: recentFolders(),
+      recent: await recentFolders(),
       error,
     }
   }
 
-  return { start, observe, decorate, dismiss, focus: focusLaunch, options, list: () => [...launches.values()].map(view) }
+  return { start, observe, decorate, dismiss, focus: focusLaunch, options, list: () => [...launches.values()].filter(l => !l.dismissed).map(view) }
 }
