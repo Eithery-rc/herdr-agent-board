@@ -37,6 +37,7 @@
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11.5m-4.5-4.5 4.5 4.5-4.5 4.5"/></svg>
           <span data-i18n="attention.next">Next</span>
         </button>
+        <span class="limits" id="limits" hidden></span>
         <span class="live" id="live" title="No connection to the board"></span>
       </div>
     </div>
@@ -58,15 +59,9 @@
       </button>
     </header>
     <div class="sheet-card" id="sheet-card"></div>
-    <form id="history-search" class="sheet-card">
-      <label data-i18n="history.label" for="history-query">Search this project's past Claude sessions</label>
-      <input id="history-query" type="search" minlength="2" maxlength="100" required autocomplete="off">
-      <button class="button" type="submit" data-i18n="history.search">Search history</button>
-    </form>
     <div class="sheet-body" id="sheet-body"></div>
     <footer class="composer">
       <div class="composer-actions">
-        <button class="button" id="sheet-usage" data-i18n="usage.open">Claude usage</button>
         <button class="button" id="sheet-focus">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 4.5h8.5V13M15 5 5 15"/></svg>
           <span data-i18n="sheet.focus">Go to herdr</span>
@@ -82,6 +77,10 @@
         <button class="button" id="sheet-changes" hidden title="What is changed against HEAD in the git checkout of this session’s folder" data-i18n-title="changes.hint">
           <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="6" cy="4.8" r="1.8"/><circle cx="6" cy="15.2" r="1.8"/><circle cx="14" cy="7.6" r="1.8"/><path d="M6 6.6v6.8M14 9.4c0 3-2.6 3.6-6.4 4.6"/></svg>
           <span data-i18n="changes.open">Changes</span>
+        </button>
+        <button class="button" id="sheet-history" title="Search the past Claude sessions of this project" data-i18n-title="history.hint">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.6 10a6.4 6.4 0 1 0 1.9-4.5M3.5 3.5v3h3"/><path d="M10 6.5V10l2.4 1.6"/></svg>
+          <span data-i18n="history.open">History</span>
         </button>
       </div>
       <div class="attachments" id="attachments"></div>

@@ -1,6 +1,7 @@
 // Explicit local search in a single Claude project. Never scans sibling projects.
 import { readdir, lstat, realpath, open } from 'node:fs/promises'
 import { join, relative, isAbsolute } from 'node:path'
+import { transcriptInfo } from './claude.mjs'
 import { CLAUDE_DIR } from './paths.mjs'
 const norm = s => /^[a-z]:/i.test(s) ? s.replace(/\\/g,'/').replace(/\/+$/,'').toLowerCase() : s.replace(/\/+$/,'')
 export async function searchHistory(cwd, query, projects = join(CLAUDE_DIR,'projects'), excludeSession = null) {
@@ -33,18 +34,20 @@ export async function searchHistory(cwd, query, projects = join(CLAUDE_DIR,'proj
         if(start&&index===0)continue
         try {
           const row=JSON.parse(line)
-          if(row.isSidechain||typeof row.cwd!=='string'||norm(row.cwd)!==norm(cwd)||!['user','assistant'].includes(row.type))continue
+          if(row.isSidechain||row.isMeta||typeof row.cwd!=='string'||norm(row.cwd)!==norm(cwd)||!['user','assistant'].includes(row.type))continue
           const content=row.message?.content
           const text=typeof content==='string'?content:Array.isArray(content)?content.filter(b=>b.type==='text').map(b=>b.text).join('\n'):''
           const at=text.toLowerCase().indexOf(query.toLowerCase())
           if(at<0)continue
           const date=Date.parse(row.timestamp)
-          results.push({session:name.slice(0,-6),excerpt:text.slice(Math.max(0,at-100),at+query.length+180),date:Number.isFinite(date)?new Date(date).toISOString():null,source:`${encoded}/${name}`,byteOffset})
+          results.push({session:name.slice(0,-6),role:row.type,text:text.length>4000?text.slice(0,4000)+'…':text,excerpt:text.slice(Math.max(0,at-100),at+query.length+180),date:Number.isFinite(date)?new Date(date).toISOString():null,source:`${encoded}/${name}`,byteOffset})
           if(results.length===30){truncated=true;break}
         }catch{}
       }
       if(results.length===30||bytesRead>=(8<<20)){truncated=true;break}
     }
+    // What the quick look shows with a hit: the session's own title, who said it, the whole message.
+    for (const r of results) r.title = transcriptInfo(join(dir, `${r.session}.jsonl`))?.title ?? ''
     return {results,truncated,scanned,bytesRead}
   }catch{return {results:[],unavailable:true,truncated}}
 }

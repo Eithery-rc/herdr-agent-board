@@ -263,6 +263,7 @@ function renderToolbar(visible) {
   if (asleep) parts.push(`${asleep} ${t('sum.asleep', { n: asleep })}`)
   $('#summary').innerHTML = parts.join(' · ')
   document.title = count('me') ? `(${count('me')}) Agent board` : 'Agent board'
+  renderLimits()
 
   // Lanes control: "All" and the categories that have sessions.
   const seg = $('#lanes')
@@ -291,6 +292,18 @@ function renderToolbar(visible) {
     .map(c => `<div class="col-head"><span class="dot" style="--c:${COLORS[c.id]}"></span>${esc(colTitle(c.id))}<span class="n">${visible.filter(i => i.column === c.id && laneShown(catOf(i))).length}</span></div>`)
     .join('')
   if (head.innerHTML !== html) head.innerHTML = html
+}
+
+/** Claude's usage windows from the usagebar cache, when there is one: a small pill by the live dot. */
+function renderLimits() {
+  const lim = state.data.limits
+  const pill = $('#limits')
+  pill.hidden = !lim
+  if (!lim) return
+  const heat = p => (p >= 90 ? ' class="hot"' : p >= 70 ? ' class="warm"' : '')
+  pill.innerHTML = lim.windows.map(w => `<span${heat(w.usedPercentage)}>${esc(t(w.minutes === 300 ? 'limits.5h' : 'limits.7d'))} <b>${Math.round(w.usedPercentage)}%</b></span>`).join('')
+  pill.classList.toggle('stale', lim.stale)
+  pill.title = t(lim.stale ? 'limits.stale' : 'limits.hint', { time: new Date(lim.observedAt).toLocaleString(t.lang, { dateStyle: 'medium', timeStyle: 'short' }) })
 }
 
 function placeThumb(jump) {
@@ -775,9 +788,6 @@ let currentDraft = null
 let draftFor = null // the session the composer's attachments were added for; outlives a close
 
 function openSheet(key, { compose = false } = {}) {
-  ++historySeq
-  ++usageSeq
-  state.usage = null
   const switching = sessionPanel.isOpen && state.open !== key
   // Attachments belong to the session they were added for, never to the next one. Closing the
   // panel and opening the same session again keeps them.
@@ -793,8 +803,6 @@ function openSheet(key, { compose = false } = {}) {
   syncComposer()
   state.detail = null
   $('#sheet-changes').hidden = true // until the detail says the folder is in git
-  state.history = null
-  $('#history-query').value = ''
   lastDetailStamp = ''
   if (!sessionPanel.open() && switching && !reducedMotion.matches) {
     sheetBody.animate([{ opacity: 0.3 }, { opacity: 1 }], { duration: 180, easing: 'ease-out' })
@@ -831,7 +839,10 @@ function renderSheetHead() {
   pill.style.setProperty('--c', COLORS[it.column])
   pill.innerHTML = it.sleeping ? `${ICON.moon}${esc(t('sheet.asleep'))}` : `<span class="dot ${it.column}" style="--c:${COLORS[it.column]}"></span>${esc(colTitle(it.column))}`
   $('#sheet-name').textContent = it.name
-  $('#sheet-meta').textContent = [catInfo(catOf(it)).title, it.workspace && t('meta.workspace', { name: it.workspace }), it.activity && (ago(it.activity) === t('ago.now') ? t('meta.activeNow') : t('meta.active', { ago: ago(it.activity) }))].filter(Boolean).join(' · ')
+  const context = it.context ? t('meta.context', { tokens: it.context >= 1000 ? `${Math.round(it.context / 1000)}k` : it.context }) : ''
+  $('#sheet-meta').textContent = [catInfo(catOf(it)).title, it.workspace && t('meta.workspace', { name: it.workspace }), it.activity && (ago(it.activity) === t('ago.now') ? t('meta.activeNow') : t('meta.active', { ago: ago(it.activity) })), context].filter(Boolean).join(' · ')
+  $('#sheet-meta').title = context ? t('meta.contextHint') : ''
+  $('#sheet-history').hidden = !it.session // a Claude project to look back in
   $('#sheet-wake').hidden = !it.sleeping
   const sleep = $('#sheet-sleep')
   sleep.hidden = it.sleeping || !it.session
@@ -875,10 +886,7 @@ function renderSheetBody(reset) {
   if (!it) return
   renderSheetCard(it)
   const atBottom = sheetBody.scrollHeight - sheetBody.scrollTop - sheetBody.clientHeight < 40
-  const history = state.history?.key === it.key ? state.history.data : null
-  let html = history ? `<section class="history-results"><h3>${esc(t('history.title'))}</h3><p>${esc(t('history.scope'))}</p>${history.unavailable ? esc(t('history.unavailable')) : history.results.length ? history.results.map(result => `<article><p>${esc(result.date ? new Date(result.date).toLocaleString() : t('history.unknownDate'))} · ${esc(result.session)}</p><blockquote>${esc(result.excerpt)}</blockquote><small>${esc(result.source)} · byte ${result.byteOffset}</small></article>`).join('') : esc(t('history.empty'))}${history.truncated ? `<p>${esc(t('history.limited'))}</p>` : ''}</section>` : ''
-  const usage = state.usage?.key === it.key ? state.usage.data : null
-  let html = usage ? `<section class="usage-status"><h3>${esc(t('usage.title'))}</h3><p>${esc(t('usage.contextUnknown'))}</p><p>${esc(t('usage.scope'))}</p>${usage.limits.available ? `<p>${esc(t((usage.limits.stale || Date.now()-usage.limits.observedAt > 300000 || usage.limits.windows.some(w => w.resetsAt && w.resetsAt <= Date.now())) ? 'usage.stale' : 'usage.observed', { time: new Date(usage.limits.observedAt).toLocaleString(), age: ago(usage.limits.observedAt) }))}</p>${usage.limits.windows.map(w => `<p>${w.minutes === 300 ? '5h' : '7d'}: ${w.usedPercentage}% ${esc(t('usage.used'))}${w.resetsAt ? ` · ${esc(t('usage.reset', { time: new Date(w.resetsAt).toLocaleString() }))}` : ''}${(w.expired || (w.resetsAt && w.resetsAt <= Date.now())) ? ` · ${esc(t('usage.expired'))}` : ''}</p>`).join('')}` : `<p>${esc(t('usage.unavailable'))}</p>`}</section>` : ''
+  let html = ''
   if (it.column === 'me') {
     const later = it.attention === 'later'
     const why = t(it.attention ? `why.${it.attention}` : 'why.default')
@@ -1581,7 +1589,7 @@ addEventListener('keydown', e => {
 })
 addEventListener('scroll', () => $('.toolbar').classList.toggle('scrolled', scrollY > 2), { passive: true })
 addEventListener('resize', () => placeThumb(true))
-setInterval(() => { render(); if (state.open && state.usage) renderSheetBody(false) }, 30_000) // ages
+setInterval(render, 30_000) // ages
 
 applyTexts()
 fetch('/api/board')
@@ -1592,28 +1600,5 @@ connect()
 
 // The checkout changes of the session's folder open in the quick look as a diff (files.js).
 $('#sheet-changes').addEventListener('click', e => state.open && files.lookChanges(state.open, e.currentTarget))
-let historySeq = 0
-$('#history-search').addEventListener('submit', async event => {
-  event.preventDefault()
-  const key = state.open, seq = ++historySeq
-  const query = $('#history-query').value.trim()
-  if (!key || query.length < 2) return
-  try {
-    const res = await fetch(`/api/session/${encodeURIComponent(key)}/history?q=${encodeURIComponent(query)}`)
-    if (!res.ok) throw new Error(t('history.unavailable'))
-    const data = await res.json()
-    if (seq !== historySeq || state.open !== key) return
-    state.history = { key, data }
-let usageSeq = 0
-$('#sheet-usage').addEventListener('click', async () => {
-  const key = state.open, seq = ++usageSeq
-  if (!key) return
-  try {
-    const response = await fetch(`/api/session/${encodeURIComponent(key)}/usage`)
-    if (!response.ok) throw new Error(t('usage.unavailable'))
-    const data = await response.json()
-    if (seq !== usageSeq || state.open !== key) return
-    state.usage = { key, data }
-    renderSheetBody(false)
-  } catch (err) { if (state.open === key) toast(err.message, true) }
-})
+// Past sessions of the project, searched in the quick look (files.js).
+$('#sheet-history').addEventListener('click', e => state.open && files.lookHistory(state.open, itemOf(state.open)?.cwd ?? '', e.currentTarget))

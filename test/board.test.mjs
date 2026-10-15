@@ -112,7 +112,7 @@ test('transcript tail: title, last prompt, last words, pending tool; sidechains 
       line({ type: 'user', message: { content: 'load the receipts' } }),
       line({ type: 'assistant', message: { content: [{ type: 'text', text: 'Checking the file.' }, { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: 'C:/a/checks.csv' } }] } }),
       line({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } }),
-      line({ type: 'assistant', message: { content: [{ type: 'text', text: 'The file is fine, asking.' }, { type: 'tool_use', id: 't2', name: 'AskUserQuestion', input: { questions: [{ question: 'Import 10/23?' }] } }] } }),
+      line({ type: 'assistant', message: { model: 'claude-x', usage: { input_tokens: 12, cache_creation_input_tokens: 3000, cache_read_input_tokens: 150000, output_tokens: 90 }, content: [{ type: 'text', text: 'The file is fine, asking.' }, { type: 'tool_use', id: 't2', name: 'AskUserQuestion', input: { questions: [{ question: 'Import 10/23?' }] } }] } }),
       line({ type: 'assistant', isSidechain: true, message: { content: [{ type: 'text', text: 'subagent noise' }] } }),
     ].join('\n'),
   )
@@ -120,6 +120,7 @@ test('transcript tail: title, last prompt, last words, pending tool; sidechains 
   assert.equal(info.title, 'Receipt import')
   assert.equal(info.prompt, 'load the receipts')
   assert.equal(info.lastText, 'The file is fine, asking.')
+  assert.equal(info.context, 153012) // what the last request carried, cache included; output not
   assert.deepEqual(info.tool, { name: 'AskUserQuestion', label: 'AskUserQuestion', detail: 'Import 10/23?', pending: true })
 
   const conv = conversation(file)

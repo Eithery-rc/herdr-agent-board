@@ -19,6 +19,7 @@ test('search stays in selected project, verifies colliding cwd, skips sidechains
  assert.equal(out.results.length,2);assert.equal(out.scanned,2)
  const first=out.results.find(r=>r.session==='session-a'),second=out.results.find(r=>r.session==='session-b')
  assert.match(first.excerpt,/project note/);assert.equal(second.date,null)
+ assert.equal(first.role,'assistant');assert.equal(first.text,'Needle: project note');assert.equal(typeof first.title,'string')
  assert.match(first.source,/-project-one\/session-a.jsonl/);assert.ok(first.byteOffset>0)
  assert.equal((await searchHistory(cwd,'absent',base)).results.length,0)
  assert.equal((await searchHistory(cwd,'project note',base,'session-a')).results.length,0)

@@ -29,11 +29,14 @@ test('paths in the chat: links, code and running text become candidates; the res
 })
 
 test('a path as written: prefixes, escapes, lines, home and the session folder', () => {
-  assert.deepEqual(resolvePath('herdr-reveal:C:/Work/My%20Notes/a.md'), { path: resolve('C:/Work/My Notes/a.md'), line: null })
-  assert.deepEqual(resolvePath('file:///C:/x/y.txt'), { path: resolve('C:/x/y.txt'), line: null })
-  assert.deepEqual(resolvePath('src/app.js:42:7', 'C:\\proj'), { path: resolve('C:\\proj', 'src/app.js'), line: 42 })
-  assert.deepEqual(resolvePath('C:\\x\\y.ts:10'), { path: resolve('C:\\x\\y.ts'), line: 10 })
-  assert.equal(resolvePath('C:\\').path, resolve('C:\\'))
+  // Drive letters are absolute only on Windows; elsewhere the same checks run on POSIX paths.
+  const win = process.platform === 'win32'
+  const root = win ? 'C:/Work' : '/work'
+  assert.deepEqual(resolvePath(`herdr-reveal:${root}/My%20Notes/a.md`), { path: resolve(`${root}/My Notes/a.md`), line: null })
+  assert.deepEqual(resolvePath(`file://${win ? '/' : ''}${root}/y.txt`), { path: resolve(`${root}/y.txt`), line: null })
+  assert.deepEqual(resolvePath('src/app.js:42:7', `${root}/proj`), { path: resolve(`${root}/proj`, 'src/app.js'), line: 42 })
+  assert.deepEqual(resolvePath(`${root}/y.ts:10`), { path: resolve(`${root}/y.ts`), line: 10 })
+  if (win) assert.equal(resolvePath('C:\\').path, resolve('C:\\')) // a bare drive is not a line number
   assert.equal(resolvePath('~/notes.md').path, resolve(homedir(), 'notes.md'))
   assert.equal(resolvePath('relative.txt').path, '') // no session folder to resolve against
   assert.equal(kindOf('a/b/Dockerfile'), 'text')

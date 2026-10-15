@@ -34,6 +34,8 @@ export const ICONS = {
   changes: svg('<circle cx="6" cy="4.8" r="1.8"/><circle cx="6" cy="15.2" r="1.8"/><circle cx="14" cy="7.6" r="1.8"/><path d="M6 6.6v6.8M14 9.4c0 3-2.6 3.6-6.4 4.6"/>'),
   clean: svg('<circle cx="10" cy="10" r="7"/><path d="m6.8 10.2 2.2 2.2 4.2-4.6"/>'),
   refresh: svg('<path d="M15.6 10a5.6 5.6 0 1 1-1.7-4M15.6 3.8V7h-3.2"/>'),
+  history: svg('<path d="M3.6 10a6.4 6.4 0 1 0 1.9-4.5M3.5 3.5v3h3"/><path d="M10 6.5V10l2.4 1.6"/>'),
+  search: svg('<circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/>'),
 }
 const iconOf = kind => ICONS[kind] ?? (kind === 'binary' ? ICONS.file : ICONS.text)
 
@@ -212,9 +214,12 @@ export function initFiles({ t, token, toast }) {
     $(root, '[data-mode="source"]').textContent = tr('ql.source')
   }
 
-  /** Open the quick look on { path, line }, or on { changes: session key }, grown from element `el`. */
+  /**
+   * Open the quick look on { path, line }, on { changes: session key } or on { history: session
+   * key, cwd }, grown from element `el`.
+   */
   function look(target, el) {
-    if (!target?.path && !target?.changes) return
+    if (!target?.path && !target?.changes && !target?.history) return
     if (!root.hidden && motion.target === 1) {
       ql.stack.push(target)
       return show()
@@ -254,6 +259,7 @@ export function initFiles({ t, token, toast }) {
     $(root, '.ql-back').hidden = ql.stack.length < 2
     $(root, '.ql-refresh').hidden = !target.changes
     if (target.changes) return showChanges(target, seq, fresh)
+    if (target.history) return showHistory(target)
     head({ path: target.path, name: target.path.split(/[\\/]/).filter(Boolean).pop() ?? target.path, kind: 'file' })
     body.className = 'ql-body loading'
     body.innerHTML = `<div class="ql-wait">${esc(tr('loading'))}</div>`
@@ -298,7 +304,7 @@ export function initFiles({ t, token, toast }) {
     // The folders above it, each one a step to walk to (for changes, up to the checkout itself).
     const parts = String(d.path ?? '').split(/[\\/]/).filter((p, i) => p || i === 0)
     const sep = d.path?.includes('\\') ? '\\' : '/'
-    const crumbs = parts.slice(0, d.kind === 'changes' ? parts.length : -1).map((name, i) => ({ name: name || sep, path: parts.slice(0, i + 1).join(sep) + (i === 0 ? sep : '') }))
+    const crumbs = parts.slice(0, d.kind === 'changes' || d.kind === 'history' ? parts.length : -1).map((name, i) => ({ name: name || sep, path: parts.slice(0, i + 1).join(sep) + (i === 0 ? sep : '') }))
     const nav = $(root, '.ql-path')
     nav.innerHTML = crumbs.map(c => `<button data-go="${esc(c.path)}">${esc(c.name)}</button>`).join('<span>›</span>')
     nav.scrollLeft = nav.scrollWidth
@@ -308,6 +314,7 @@ export function initFiles({ t, token, toast }) {
 
   function render() {
     const d = ql.data
+    if (d.kind === 'history') return showHistory(ql.stack.at(-1))
     const foot = []
     body.className = `ql-body k-${d.dir ? 'dir' : d.kind}`
     $(root, '.ql-mode').hidden = d.kind !== 'markdown'
@@ -388,6 +395,71 @@ export function initFiles({ t, token, toast }) {
     if (d.truncated) foot.push(tr('changes.truncated'))
     foot.push(tr('changes.scope'))
   }
+  /**
+   * Past sessions of the session's project: a search field, then the hits with the session's
+   * own title, who wrote it and when; a hit opens to the whole message. Query and hits stay on
+   * the stack entry, so a step back from a file finds them again.
+   */
+  function showHistory(target) {
+    ql.data = { kind: 'history', name: tr('history.title'), path: target.cwd }
+    head(ql.data)
+    $(root, '.ql-mode').hidden = true
+    body.className = 'ql-body k-history'
+    body.innerHTML = `<form class="ql-search">${ICONS.search}<input type="search" maxlength="100" autocomplete="off" spellcheck="false" placeholder="${esc(tr('history.placeholder'))}" aria-label="${esc(tr('history.placeholder'))}"></form><div class="ql-hits"></div>`
+    const input = $(body, 'input')
+    input.value = target.query ?? ''
+    hits(target)
+    requestAnimationFrame(() => input.focus({ preventScroll: true }))
+  }
+
+  function hits(target) {
+    const box = $(body, '.ql-hits')
+    const d = target.result
+    const foot = $(root, '.ql-foot')
+    foot.textContent = ''
+    if (!d) return void (box.innerHTML = `<p class="ql-dnote">${esc(tr('history.prompt'))}</p>`)
+    if (d.loading) return void (box.innerHTML = `<p class="ql-dnote">${esc(tr('loading'))}</p>`)
+    if (d.unavailable) return void (box.innerHTML = empty('history', tr('history.unavailable')))
+    if (!d.results?.length) return void (box.innerHTML = empty('search', tr('history.empty')))
+    box.innerHTML = d.results
+      .map(
+        (r, i) => `<article class="ql-hit" data-hit="${i}" tabindex="0">
+          <header><span class="who ${r.role === 'user' ? 'you' : 'agent'}">${esc(tr(r.role === 'user' ? 'history.you' : 'history.agent'))}</span><b>${esc(r.title || r.session.slice(0, 8))}</b><time>${esc(r.date ? date(Date.parse(r.date)) : tr('history.unknownDate'))}</time></header>
+          <p class="ex">${(r.text.indexOf(r.excerpt) > 0 ? '…' : '') + mark(r.excerpt.replace(/\*\*|__|`/g, ''), target.query)}</p>
+        </article>`,
+      )
+      .join('')
+    foot.textContent = [tr('history.results', { n: d.results.length }), d.truncated ? tr('history.limited') : ''].filter(Boolean).join(' · ')
+  }
+
+  /** The text, escaped, with every place the query matches marked. */
+  function mark(text, query) {
+    const low = text.toLowerCase()
+    const q = String(query ?? '').toLowerCase()
+    let out = ''
+    let i = 0
+    for (let at = q ? low.indexOf(q) : -1; at >= 0; at = low.indexOf(q, i)) {
+      out += `${esc(text.slice(i, at))}<mark>${esc(text.slice(at, at + q.length))}</mark>`
+      i = at + q.length
+    }
+    return out + esc(text.slice(i))
+  }
+
+  async function search(target, query) {
+    target.query = query
+    target.result = { loading: true }
+    hits(target)
+    const seq = ++ql.seq
+    let d = { unavailable: true }
+    try {
+      const res = await fetch(`/api/session/${encodeURIComponent(target.history)}/history?q=${encodeURIComponent(query)}`)
+      if (res.ok) d = await res.json()
+    } catch {}
+    if (seq !== ql.seq || ql.stack.at(-1) !== target) return
+    target.result = d
+    hits(target)
+  }
+
   // The kind of a file by its name, for the icon only (the server decides the rest).
   const kindOfName = p => ({ md: 'markdown', markdown: 'markdown', json: 'json', csv: 'csv', tsv: 'csv', png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', svg: 'image', pdf: 'pdf' })[p.split('.').pop().toLowerCase()] ?? 'text'
 
@@ -428,6 +500,8 @@ export function initFiles({ t, token, toast }) {
       ql.stack.push({ path: go.dataset.go, line: null })
       return show()
     }
+    const hit = e.target.closest('.ql-hit')
+    if (hit && !e.target.closest('[data-fs], a')) return openHit(hit)
     const jump = e.target.closest('[data-jump]')
     if (jump) {
       for (const b of root.querySelectorAll('.ql-file')) b.setAttribute('aria-current', String(b === jump))
@@ -446,6 +520,37 @@ export function initFiles({ t, token, toast }) {
     if (e.target.closest('.ql-reveal')) return system(d.path, 'reveal')
     if (e.target.closest('.ql-copy')) return copy(d.line ? `${d.path}:${d.line}` : d.path)
   })
+  /** A hit opens to the whole message, rendered; again, it folds back. */
+  function openHit(el) {
+    const target = ql.stack.at(-1)
+    const r = target?.result?.results?.[Number(el.dataset.hit)]
+    if (!r) return
+    const open = el.classList.toggle('open')
+    let full = $(el, '.full')
+    if (open && !full) {
+      full = document.createElement('div')
+      full.className = 'full md'
+      full.innerHTML = markdown(r.text)
+      el.append(full)
+      upgrade(full, target.cwd)
+    }
+    $(el, '.ex').hidden = open
+    if (full) full.hidden = !open
+  }
+  root.addEventListener('submit', e => {
+    if (!e.target.matches('.ql-search')) return
+    e.preventDefault()
+    const query = $(e.target, 'input').value.trim()
+    const target = ql.stack.at(-1)
+    if (target?.history && query.length >= 2) search(target, query)
+  })
+  root.addEventListener('keydown', e => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.ql-hit')) {
+      e.preventDefault()
+      openHit(e.target)
+    }
+  })
+
   // Before the page's own keys: Esc here must not close the session sheet as well.
   addEventListener(
     'keydown',
@@ -465,5 +570,5 @@ export function initFiles({ t, token, toast }) {
     true,
   )
 
-  return { upgrade, look, lookChanges: (key, el) => look({ changes: key }, el), close, isOpen: () => !root.hidden && motion.target === 1, relabel: () => !root.hidden && (labels(), ql.data && render()) }
+  return { upgrade, look, lookChanges: (key, el) => look({ changes: key }, el), lookHistory: (key, cwd, el) => look({ history: key, cwd }, el), close, isOpen: () => !root.hidden && motion.target === 1, relabel: () => !root.hidden && (labels(), ql.data && render()) }
 }
