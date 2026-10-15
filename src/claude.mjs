@@ -100,6 +100,12 @@ export function toolLabel(name) {
 }
 
 /** The few words that say what a tool call is about: a Bash description, a file name, a query. */
+/** The file a tool call worked on, in full, for the thread to open; '' for other tools. */
+export function toolPath(name, input) {
+  if (!input || typeof input !== 'object') return ''
+  return ['Read', 'Edit', 'Write', 'NotebookEdit'].includes(name) ? String(input.file_path || input.notebook_path || '') : ''
+}
+
 export function toolDetail(name, input) {
   if (!input || typeof input !== 'object') return ''
   const base = p => String(p ?? '').split(/[\\/]/).pop()
@@ -274,7 +280,7 @@ function turns(text) {
       for (const b of content) {
         if (b.type === 'text' && b.text?.trim()) items.push({ role: 'assistant', text: clip(b.text.trim(), 4000), at })
         else if (b.type === 'tool_use') {
-          const t = { role: 'tool', label: toolLabel(b.name), detail: toolDetail(b.name, b.input), done: false, at }
+          const t = { role: 'tool', label: toolLabel(b.name), detail: toolDetail(b.name, b.input), path: toolPath(b.name, b.input), done: false, at }
           tools.set(b.id, t)
           items.push(t)
         }
