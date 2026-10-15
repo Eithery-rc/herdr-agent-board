@@ -26,6 +26,8 @@ import { checkName } from '../web/launch-model.js'
 import { messageGate } from './message-gate.mjs'
 import { busy, COLUMNS, collect, forgetSleepers, PINS } from './model.mjs'
 import { CARDS_DIR, ROOT, STATE_DIR } from './paths.mjs'
+import { listEntries, readLog, removeEntry, SCHEDULE_DIR, updateEntry } from './schedule.mjs'
+import { startScheduler } from './scheduler.mjs'
 import { writeCard } from './store.mjs'
 
 const WEB = join(ROOT, 'web')
@@ -146,7 +148,9 @@ export function startServer({ cfg, log = () => {} } = {}) {
         return { id, title: c.title, color: colorHex(c.color), colorName: c.color, paths: c.paths ?? [], configured, fallback: id === 'other' }
       })
     const list = items.map(({ transcript, ...rest }) => launches.decorate(rest))
-    return { version, lang: lang(), language: cfg.language ?? 'auto', languages: LANGUAGES, fsToken: FILE_TOKEN, stale, limits: claudeLimits(), items: list, launches: launches.list(), categories, swatches: SWATCHES, columns: COLUMNS.map(({ id, title }) => ({ id, title })) }
+    // The schedule without the scheduler's bookkeeping; the log is what was sent or missed lately.
+    const schedules = listEntries().map(({ claim, tried, waited, ...entry }) => entry)
+    return { version, lang: lang(), language: cfg.language ?? 'auto', languages: LANGUAGES, fsToken: FILE_TOKEN, stale, limits: claudeLimits(), items: list, launches: launches.list(), categories, swatches: SWATCHES, columns: COLUMNS.map(({ id, title }) => ({ id, title })), schedules, scheduleLog: readLog(20) }
   }
 
   /**
@@ -387,6 +391,19 @@ export function startServer({ cfg, log = () => {} } = {}) {
         const r = editSettings(await readBody(req))
         return json(r.ok ? 200 : 409, r)
       }
+      if (req.method === 'POST' && path === '/api/schedule') {
+        if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })
+        const body = await readBody(req)
+        const id = String(body.id ?? '')
+        // cancel: remove the entry; mode: on time (idle false) or when the session is free.
+        const done =
+          body.op === 'cancel' ? removeEntry(id)
+          : body.op === 'mode' ? updateEntry(id, e => ({ ...e, idle: body.idle ? true : undefined }))
+          : undefined
+        if (body.op !== 'cancel' && body.op !== 'mode') return json(400, { error: `unknown op ${body.op}` })
+        refresh()
+        return json(done ? 200 : 404, done ? { ok: true } : { ok: false, error: t('sched.err.gone') })
+      }
       if (req.method === 'POST' && path === '/api/categories') {
         if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })
         // Written to config.json; the config watcher reloads it and pushes the new board.
@@ -469,6 +486,17 @@ export function startServer({ cfg, log = () => {} } = {}) {
       timer = setTimeout(refresh, 150)
     })
   } catch {}
+  // Entries added or cancelled by agents (`board remind`), and runs the scheduler made.
+  let scheduleTimer = null
+  try {
+    mkdirSync(SCHEDULE_DIR, { recursive: true })
+    const watcher = watch(SCHEDULE_DIR, () => {
+      clearTimeout(scheduleTimer)
+      scheduleTimer = setTimeout(refresh, 150)
+    })
+    // A deleted folder errors on Windows (EPERM), which unhandled ends the board; the poll goes on.
+    watcher.on('error', () => watcher.close())
+  } catch {}
   let webTimer = null
   try {
     watch(WEB, () => {
@@ -488,7 +516,9 @@ export function startServer({ cfg, log = () => {} } = {}) {
     })
     server.listen(port, '127.0.0.1', () => {
       refresh()
-      resolve({ port, url: `http://127.0.0.1:${port}/`, refresh })
+      // The port makes it one board per machine, so one scheduler; claims cover an overlap.
+      const scheduler = startScheduler({ cfg, log, onChange: refresh })
+      resolve({ port, url: `http://127.0.0.1:${port}/`, refresh, scheduler })
     })
   })
 }

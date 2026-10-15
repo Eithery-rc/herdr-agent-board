@@ -20,6 +20,18 @@ if (mode === 'open') {
       process.send({ refreshed: true })
     }
   })
+} else if (mode === 'cli') {
+  // The board command as an agent runs it: its session's env, herdr answered by the fake.
+  const { args, env } = JSON.parse(process.env.TEST_INPUT)
+  Object.assign(process.env, env)
+  process.argv = [process.argv[0], new URL('../../src/cli.mjs', import.meta.url).pathname, ...args]
+  await import('../../src/cli.mjs')
+} else if (mode === 'scheduler') {
+  const { useLanguage } = await import('../../src/lang.mjs')
+  const { startScheduler } = await import('../../src/scheduler.mjs')
+  useLanguage('en')
+  startScheduler({ cfg: JSON.parse(process.env.TEST_INPUT), log: text => process.send({ log: text }) })
+  process.send({ ready: true })
 } else if (mode === 'write') {
   const { existsSync } = await import('node:fs')
   const { writeCard } = await import('../../src/store.mjs')

@@ -15,11 +15,12 @@ if (!/\.m?js$/.test(process.argv[1] ?? '')) {
       await new Promise(resolve => setTimeout(resolve, 10))
     }
   }
-  if (reply.error) {
+  if (reply.text !== undefined) {
+    // Commands that print plain text (agent read, pane read).
+    process.stdout.write(reply.text)
+  } else if (reply.error) {
     console.error(JSON.stringify({ error: { code: reply.code, message: reply.error } }))
     process.exitCode = 1
-  } else if (reply.text !== undefined) {
-    console.log(reply.text)
   } else {
     console.log(JSON.stringify({ result: reply.result ?? null }))
   }

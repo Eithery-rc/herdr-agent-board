@@ -14,6 +14,7 @@ import { initMenu } from './menu.js'
 import { keepInSight, menuOpen, Panel, panels, roomBelow } from './panel.js'
 import { renameInPlace } from './rename.js'
 import { reducedMotion, rubberband, Spring, velocityOf } from './spring.js'
+import { capital, dayLabel, longWhen, shortWhen, span, timeOf } from './when.js'
 
 const $ = sel => document.querySelector(sel)
 
@@ -32,6 +33,11 @@ const ICON = {
   check: '<svg viewBox="0 0 20 20"><path d="m4.5 10.5 3.5 3.5 7.5-8"/></svg>',
   pin: '<svg viewBox="0 0 20 20"><circle cx="10" cy="7" r="3.5"/><path d="M10 10.5V17"/></svg>',
   plus: '<svg viewBox="0 0 20 20"><path d="M10 4.5v11M4.5 10h11"/></svg>',
+  alarm: '<svg viewBox="0 0 20 20"><circle cx="10" cy="11" r="6"/><path d="M10 8v3.2l2 1.3M3.6 5.4 6 3.3M16.4 5.4 14 3.3"/></svg>',
+  repeat: '<svg viewBox="0 0 20 20"><path d="M4 9.5V8a3 3 0 0 1 3-3h8.5m-2.5-2.5L15.5 5 13 7.5M16 10.5V12a3 3 0 0 1-3 3H4.5M7 12.5 4.5 15 7 17.5"/></svg>',
+  trash: '<svg viewBox="0 0 20 20"><path d="M4.5 6h11M8 6V4.5h4V6m-6 0 .7 9.5h6.6L14 6"/></svg>',
+  bolt: '<svg viewBox="0 0 20 20"><path d="M11 2.5 4.5 11H10l-1 6.5L15.5 9H10Z"/></svg>',
+  hourglass: '<svg viewBox="0 0 20 20"><path d="M6 3h8M6 17h8M7 3v2.6c0 1.2.6 2.1 1.6 2.8L10 9.4l1.4-1c1-.7 1.6-1.6 1.6-2.8V3M7 17v-2.6c0-1.2.6-2.1 1.6-2.8l1.4-1 1.4 1c1 .7 1.6 1.6 1.6 2.8V17"/></svg>',
 }
 
 // ---------------------------------------------------------------- small helpers
@@ -82,7 +88,7 @@ try { viewed = JSON.parse(store.get('board.viewed', '{}')) ?? {} } catch {}
 
 // ---------------------------------------------------------------- state
 const state = {
-  data: { items: [], categories: [], columns: [], stale: true, lastSuccessfulRefreshAt: null },
+  data: { items: [], categories: [], columns: [], schedules: [], scheduleLog: [], stale: true, lastSuccessfulRefreshAt: null },
   filter: store.get('board.filter', 'all'),
   query: '',
   sleepers: store.get('board.sleepers', '1') === '1',
@@ -162,7 +168,7 @@ function syncAvailability() {
     banner.textContent = t(canEdit() ? 'mobile.readOnly' : 'live.off')
   }
   for (const element of document.querySelectorAll('#sheet-focus, #sheet-sleep, #sheet-wake, [data-act="focus"], [data-act="sleep"]')) element.disabled = blocked || (element.id === 'sheet-sleep' && inTurn(itemOf(state.open) ?? {}))
-  for (const element of document.querySelectorAll('#attach, #lang, #cat-new, #sheet-card button, #sheet-card input, #cats-sheet button:not([data-close]):not([data-layout]), #cats-sheet input, [data-act="dismiss"]')) element.disabled = !canEdit()
+  for (const element of document.querySelectorAll('#attach, #lang, #cat-new, #sheet-card button, #sheet-card input, #cats-sheet button:not([data-close]):not([data-layout]), #cats-sheet input, #sched-body .sched-x, #sched-body .sched-mode, [data-act="dismiss"]')) element.disabled = !canEdit()
   // New sessions go through herdr: they wait for fresh data like going to a session does.
   for (const element of document.querySelectorAll('#new-session, #sheet-new, .lane-new')) {
     element.disabled = blocked
@@ -267,6 +273,7 @@ function setLanguage(lang) {
   catRows.clear()
   if (catDraft) renderDraft()
   sheetCard._html = ''
+  schedBody._html = ''
   if (state.open) renderSheetBody(false)
   renderAttachments()
   syncComposer()
@@ -386,6 +393,19 @@ function laneOf(cat) {
 
 const dismissable = it => it.attention === 'ask' || it.attention === 'question' || it.attention === 'later'
 
+/** The session's schedule entries, soonest first (the server sorts them). */
+const schedulesOf = key => (state.data.schedules ?? []).filter(e => e.key === key)
+const overdue = e => e.next <= Date.now()
+
+/** A clock by the name with the soonest time, orange while a due one waits for the session. */
+function alarmBadge(it) {
+  const list = schedulesOf(it.key)
+  if (!list.length) return ''
+  const first = list[0]
+  const title = t('sched.badge', { n: list.length, when: longWhen(first.next, t), text: plain(first.text) })
+  return `<span class="alarm${overdue(first) ? ' due' : ''}" title="${esc(title)}">${first.cron ? ICON.repeat : ICON.alarm}<span>${esc(shortWhen(first.next, t))}</span></span>`
+}
+
 function cardHTML(it) {
   if (it.launchOnly) return launchUI.cardHTML(it)
   const dismiss = dismissable(it) ? `<button data-act="dismiss" title="${esc(it.attention === 'later' ? t('card.seen', { col: q(colTitle('me')) }) : t('card.noReply'))}">${ICON.check}</button>` : ''
@@ -399,7 +419,7 @@ function cardHTML(it) {
   const pin = it.pin && it.pin === it.column ? `<span class="pinned" title="${esc(t('card.pinned'))}">${ICON.pin}</span>` : ''
   // A result you have not opened yet: a dot by the name.
   const unseen = unseenResult(it, viewed) ? `<span class="unseen-dot" title="${esc(t('attention.unseen'))}"></span>` : ''
-  const top = `<div class="card-top">${dot}<span class="name"${it.name !== it.autoName && it.autoName ? ` title="${esc(t('rename.was', { name: it.autoName }))}"` : ''}>${esc(it.name)}</span>${unseen}${pin}<span class="age"${ageTitle ? ` title="${esc(ageTitle)}"` : ''}>${esc(age)}</span></div>`
+  const top = `<div class="card-top">${dot}<span class="name"${it.name !== it.autoName && it.autoName ? ` title="${esc(t('rename.was', { name: it.autoName }))}"` : ''}>${esc(it.name)}</span>${unseen}${pin}${alarmBadge(it)}<span class="age"${ageTitle ? ` title="${esc(ageTitle)}"` : ''}>${esc(age)}</span></div>`
   if (compact(it)) return top + actions
   // What it works on: its own words, else Claude's title of the session, else your last request.
   const own = plain(it.doing || (it.title && it.title !== it.name ? it.title : ''))
@@ -519,8 +539,14 @@ function render() {
     empty.textContent = t(state.data.items.length ? 'empty.none' : 'empty.noSessions')
   } else empty?.remove()
   flip(first)
-  if (state.open) renderSheetHead()
+  if (state.open) {
+    renderSheetHead()
+    const it = itemOf(state.open)
+    if (it && !collapsing) renderSheetCard(it)
+  }
   renderCats()
+  renderScheduleCount()
+  renderSchedule()
   syncAvailability()
 }
 
@@ -880,6 +906,7 @@ function renderSheetCard(it) {
       <div class="row"><span class="row-label">${esc(t('row.status'))}</span><div class="row-value chips" id="cols">${cols}</div></div>
       <div class="row"><span class="row-label">${esc(t('row.doing'))}</span><input class="row-value" id="doing" value="${esc(it.doing)}" placeholder="${esc(plain(it.title && it.title !== it.name ? it.title : '') || t('row.doingNone'))}"></div>
       <div class="row"><span class="row-label">${esc(t('row.wait'))}</span><input class="row-value" id="wait" value="${esc(it.wait)}" placeholder="${esc(t('row.waitNone'))}"></div>
+      ${scheduleRow(it)}
     </div>`
   if (sheetCard._html === html) return
   if (sheetCard.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') {
@@ -889,6 +916,18 @@ function renderSheetCard(it) {
   }
   sheetCard.innerHTML = html
   sheetCard._html = html
+}
+
+/** The session's reminders in its sheet: the first three, the rest in the schedule panel. */
+function scheduleRow(it) {
+  const list = schedulesOf(it.key)
+  if (!list.length) return ''
+  const shown = list.slice(0, 3).map(e => {
+    const what = `${e.cron ? ICON.repeat : ICON.alarm}${esc(capital(longWhen(e.next, t), t))}`
+    return `<div class="sched-mini" data-id="${esc(e.id)}"><span class="when${overdue(e) ? ' due' : ''}" title="${esc(e.cron ? `${t('sched.repeat')}: ${e.cron}` : t('sched.once'))}">${what}</span><span class="text" title="${esc(e.text)}">${esc(e.text)}</span>${modeButton(e, true)}${cancelButton(e)}</div>`
+  })
+  const more = list.length > 3 ? `<button class="sched-more" data-sched-more>${esc(t('sched.more', { n: list.length - 3 }))}</button>` : ''
+  return `<div class="row sched-row"><span class="row-label">${esc(t('sched.row'))}</span><div class="row-value">${shown.join('')}${more}</div></div>`
 }
 
 function renderSheetBody(reset) {
@@ -950,6 +989,11 @@ function thread(conv, it) {
 }
 
 sheetCard.addEventListener('click', e => {
+  const cancel = e.target.closest('[data-sched-cancel]')
+  if (cancel) return cancelSchedule(cancel)
+  const mode = e.target.closest('[data-sched-mode]')
+  if (mode) return toggleMode(mode)
+  if (e.target.closest('[data-sched-more]')) return openSchedule(state.open)
   const b = e.target.closest('#cats button, #cols button')
   if (!b || !state.open) return
   moveCard(state.open, b.dataset.cat ? { cat: b.dataset.cat } : { column: b.dataset.col })
@@ -1543,6 +1587,207 @@ $('#board').addEventListener('click', e => {
   const head = e.target.closest('.lane-head')
   if (head) openCats(head.closest('.lane').dataset.cat)
 })
+
+// ---------------------------------------------------------------- schedule
+// What the agents set with `board remind` and `board every`: every entry by day, soonest first,
+// then what was sent or missed lately. Cancelling takes two clicks, here and in a session's sheet.
+const schedPanel = new Panel($('#sched-sheet'), {
+  onClose: () => disarm(),
+  onChange: () => dialogBack.sync(),
+  text: key => t(key),
+})
+const schedBody = $('#sched-body')
+let armed = null // { id, timer }: the entry whose cancel button asks "Cancel?"
+let collapsing = 0 // rows on their way out; the panel redraws once they are gone
+
+function openSchedule(key) {
+  schedBody._fresh = true
+  schedPanel.open()
+  renderSchedule()
+  const row = key && schedBody.querySelector(`.sched-entry[data-key="${CSS.escape(key)}"]`)
+  if (!row) return
+  row.scrollIntoView({ block: 'center' })
+  if (!reducedMotion.matches) row.animate([{ background: 'color-mix(in srgb, var(--accent) 16%, transparent)' }, { background: 'transparent' }], { duration: 1400, easing: 'ease-out' })
+}
+
+const cancelButton = e => {
+  const ask = armed?.id === e.id
+  return `<button class="sched-x"${ask ? ' data-confirm' : ''} data-sched-cancel="${esc(e.id)}" title="${esc(t('sched.cancel'))}" aria-label="${esc(t(ask ? 'sched.confirm' : 'sched.cancel'))}">${ICON.trash}<span>${ask ? esc(t('sched.confirm')) : ''}</span></button>`
+}
+
+/** Why a due entry has not gone out yet. */
+function pendingText(e) {
+  if (!e.pendingSince) return ''
+  const own = { gone: 'sched.gone', draft: 'sched.draft', dialog: 'sched.dialog', busy: 'sched.pending' }
+  return t(own[e.why] ?? (e.why ? 'sched.failed' : 'sched.pending'), { why: e.why })
+}
+
+function entryHTML(e, when) {
+  const it = itemOf(e.key)
+  const pending = pendingText(e)
+  // A session that left the board keeps its entries until they run out of patience or are cancelled.
+  const note = pending || (it ? '' : t('sched.gone'))
+  // Set by another session than the one it is for (`board remind --session`).
+  const by = e.from && e.from.key !== (e.movedFrom?.key ?? e.key) ? t('sched.by', { name: itemOf(e.from.key)?.name || e.from.name || e.from.key.slice(0, 8) }) : ''
+  const stats = [e.cron && `<code>${esc(e.cron)}</code>`, e.runs && esc(t('sched.runs', { n: e.runs })), e.missed && esc(t('sched.missedN', { n: e.missed })), by && esc(by)].filter(Boolean).join(' · ')
+  return `<div class="sched-entry${pending ? ' waiting' : ''}" data-id="${esc(e.id)}" data-key="${esc(e.key)}">
+    <div class="sched-time"><b>${esc(when(e))}</b><span>${e.cron ? `${ICON.repeat}${esc(t('sched.repeat'))}` : esc(t('sched.once'))}</span></div>
+    <div class="sched-main">
+      <button class="sched-who" data-open="${esc(e.key)}" style="--lane:${it ? catInfo(catOf(it)).color : 'var(--gray)'}"${it ? ` title="${esc(t('sched.open'))}"` : ' disabled'}>${esc(it?.name || e.name || t('session'))}</button>
+      <div class="sched-text">${esc(e.text)}</div>
+      <div class="sched-stats">${modeButton(e)}${stats ? `<span>${stats}</span>` : ''}</div>${note ? `<div class="sched-state${pending ? '' : ' muted'}">${esc(note)}</div>` : ''}
+    </div>
+    ${cancelButton(e)}
+  </div>`
+}
+
+function logHTML(r) {
+  const it = itemOf(r.key)
+  const late = r.at - r.due
+  const note =
+    r.result === 'dropped' ? t('sched.why.dropped', { n: r.n ?? 3 })
+    : r.result === 'missed' ? (['busy', 'gone', 'draft', 'dialog'].includes(r.why) ? t(`sched.why.${r.why}`) : r.why)
+    : late > 120_000 ? t('sched.lateBy', { late: span(late, t) }) : ''
+  const icon = { sent: ICON.check, missed: '!', dropped: '×' }[r.result] ?? '!'
+  return `<div class="log-row ${esc(r.result)}"><span class="log-icon" title="${esc(t(`sched.${r.result === 'sent' || r.result === 'dropped' ? r.result : 'missed'}`))}">${icon}</span><span class="log-when">${esc(capital(longWhen(r.at, t), t))}</span><span class="log-what"><b>${esc(it?.name || r.name || t('session'))}</b> ${esc(r.text)}</span>${note ? `<span class="log-note">${esc(note)}</span>` : ''}</div>`
+}
+
+function renderSchedule() {
+  if (!schedPanel.isOpen || collapsing) return
+  const list = state.data.schedules ?? []
+  // Due ones that wait for their session first, then by day.
+  const groups = []
+  const waiting = list.filter(overdue)
+  if (waiting.length) groups.push({ title: t('sched.waiting'), list: waiting, when: e => shortWhen(e.next, t) })
+  for (const e of list.filter(e => !overdue(e))) {
+    const title = capital(dayLabel(e.next, t), t)
+    if (groups.at(-1)?.title !== title) groups.push({ title, list: [], when: e => timeOf(e.next, t) })
+    groups.at(-1).list.push(e)
+  }
+  let html = list.length ? '' : `<div class="sched-empty">${ICON.alarm}<p>${esc(t('sched.empty'))}</p><p class="hint">${t('sched.emptyHint')}</p></div>`
+  for (const g of groups) html += `<div class="section-title">${esc(g.title)}</div><div class="group sched-group">${g.list.map(e => entryHTML(e, g.when)).join('')}</div>`
+  const log = state.data.scheduleLog ?? []
+  if (log.length) html += `<div class="section-title">${esc(t('sched.recent'))}</div><div class="group sched-log">${log.slice(0, 15).map(logHTML).join('')}</div>`
+  if (schedBody._html === html) return
+  // New entries materialize; on opening the panel its own slide is motion enough.
+  const before = new Set([...schedBody.querySelectorAll('.sched-entry')].map(r => r.dataset.id))
+  schedBody.innerHTML = html
+  schedBody._html = html
+  if (!schedBody._fresh) for (const row of schedBody.querySelectorAll('.sched-entry')) if (!before.has(row.dataset.id)) appear(row)
+  schedBody._fresh = false
+}
+
+function renderScheduleCount() {
+  const list = state.data.schedules ?? []
+  $('#sched-count').textContent = list.length || ''
+  $('#sched-open').classList.toggle('due', list.some(overdue))
+}
+
+function disarm(redraw = true) {
+  if (!armed) return
+  clearTimeout(armed.timer)
+  armed = null
+  if (redraw) render()
+}
+
+/** A row folds away: its height and opacity spring to nothing. */
+function collapse(el) {
+  if (reducedMotion.matches || !el.isConnected) return Promise.resolve()
+  const h = el.offsetHeight
+  const cs = getComputedStyle(el)
+  const pt = parseFloat(cs.paddingTop)
+  const pb = parseFloat(cs.paddingBottom)
+  el.style.overflow = 'hidden'
+  return new Promise(resolve => {
+    const s = new Spring({
+      value: 1,
+      damping: 1,
+      response: 0.32,
+      precision: 0.004,
+      onUpdate: v => {
+        el.style.height = `${h * v}px`
+        el.style.paddingTop = `${pt * v}px`
+        el.style.paddingBottom = `${pb * v}px`
+        el.style.opacity = String(v * v)
+      },
+      onRest: resolve,
+    })
+    s.to(0)
+  })
+}
+
+/** On time or when the session is free: a pill in the panel, an icon in the sheet. */
+function modeButton(e, short = false) {
+  const label = t(e.idle ? 'sched.mode.idle' : 'sched.mode.onTime')
+  const hint = t(e.idle ? 'sched.mode.idleHint' : 'sched.mode.onTimeHint')
+  return `<button class="sched-mode${e.idle ? ' idle' : ''}${short ? ' short' : ''}" data-sched-mode="${esc(e.id)}" title="${esc(hint)}" aria-label="${esc(label)}" aria-pressed="${!e.idle}">${e.idle ? ICON.hourglass : ICON.bolt}${short ? '' : `<span>${esc(label)}</span>`}</button>`
+}
+
+async function toggleMode(btn) {
+  const entry = (state.data.schedules ?? []).find(e => e.id === btn.dataset.schedMode)
+  if (!entry) return
+  const idle = !entry.idle
+  // On screen at once; the live stream confirms it.
+  entry.idle = idle || undefined
+  render()
+  const r = await postSchedule({ op: 'mode', id: entry.id, idle })
+  if (!r.ok) {
+    entry.idle = !idle || undefined
+    render()
+    return toast(r.error, true)
+  }
+  toast(t('sched.mode.set', { mode: t(idle ? 'sched.mode.idle' : 'sched.mode.onTime') }))
+}
+
+/** First click arms the button ("Cancel?"), a second one within four seconds removes the entry. */
+async function cancelSchedule(btn) {
+  const id = btn.dataset.schedCancel
+  if (armed?.id !== id) {
+    disarm(false)
+    armed = { id, timer: setTimeout(() => disarm(), 4000) }
+    return render()
+  }
+  disarm(false)
+  const entry = (state.data.schedules ?? []).find(e => e.id === id)
+  const rows = [...document.querySelectorAll(`.sched-entry[data-id="${CSS.escape(id)}"], .sched-mini[data-id="${CSS.escape(id)}"]`)]
+  collapsing++
+  let r
+  try {
+    ;[r] = await Promise.all([postSchedule({ op: 'cancel', id }), ...rows.map(collapse)])
+  } finally {
+    collapsing--
+  }
+  if (r.ok) {
+    // Off the board at once; the live stream confirms it.
+    state.data.schedules = (state.data.schedules ?? []).filter(e => e.id !== id)
+    toast(t('sched.cancelled', { text: plain(entry?.text ?? '').slice(0, 60) }))
+  } else {
+    for (const row of rows) row.removeAttribute('style')
+    toast(r.error, true)
+  }
+  render()
+}
+
+async function postSchedule(body) {
+  if (!canEdit()) return { ok: false, error: t('live.off') }
+  try {
+    const res = await fetch('/api/schedule', { method: 'POST', headers: { 'content-type': 'application/json', 'x-board': '1' }, body: JSON.stringify(body) })
+    const r = await res.json().catch(() => ({}))
+    return res.ok && r.ok !== false ? { ok: true } : { ok: false, error: r.error || t('err.status', { code: res.status }) }
+  } catch (err) {
+    return { ok: false, error: t('err.offline', { why: err.message }) }
+  }
+}
+
+schedBody.addEventListener('click', e => {
+  const cancel = e.target.closest('[data-sched-cancel]')
+  if (cancel) return cancelSchedule(cancel)
+  const mode = e.target.closest('[data-sched-mode]')
+  if (mode) return toggleMode(mode)
+  const who = e.target.closest('[data-open]')
+  if (who && itemOf(who.dataset.open)) openSheet(who.dataset.open)
+})
+$('#sched-open').addEventListener('click', () => (schedPanel.isOpen ? schedPanel.close() : openSchedule()))
 
 // ---------------------------------------------------------------- toolbar controls and keys
 $('#lanes').addEventListener('click', e => {
