@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -12,24 +12,28 @@
   <header class="toolbar">
     <div class="toolbar-row">
       <div class="titles">
-        <h1>Агенты</h1>
-        <p class="summary" id="summary">Загружаю…</p>
+        <h1 data-i18n="tb.title">Agents</h1>
+        <p class="summary" id="summary" data-i18n="loading">Loading…</p>
       </div>
       <div class="controls">
-        <div class="segmented" id="lanes" role="tablist" aria-label="Категории"></div>
+        <div class="segmented" id="lanes" role="tablist" aria-label="Categories" data-i18n-label="tb.lanes"></div>
         <label class="search">
           <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg>
-          <input id="search" type="search" placeholder="Поиск" autocomplete="off" spellcheck="false">
+          <input id="search" type="search" placeholder="Search" data-i18n-placeholder="tb.search" autocomplete="off" spellcheck="false">
         </label>
-        <button class="pill-toggle" id="sleepers" aria-pressed="true" title="Показывать спящие сессии">
+        <button class="pill-toggle" id="sleepers" aria-pressed="true" title="Show sleeping sessions" data-i18n-title="tb.sleepersTitle">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15.5 12.2A6.5 6.5 0 0 1 7.8 4.5a6.5 6.5 0 1 0 7.7 7.7Z"/></svg>
-          <span>Спящие</span>
+          <span data-i18n="tb.sleepers">Asleep</span>
         </button>
-        <button class="pill-toggle" id="cats-open" title="Категории: названия, цвета, папки, порядок">
+        <button class="pill-toggle" id="cats-open" title="Categories: titles, colors, folders, order" data-i18n-title="tb.catsTitle">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 4.5h6l7 7-5 5-7-7Z"/><circle cx="7" cy="8" r="1.1"/></svg>
-          <span>Категории</span>
+          <span data-i18n="tb.cats">Categories</span>
         </button>
-        <span class="live" id="live" title="Нет связи с доской"></span>
+        <button class="pill-toggle" id="lang" title="Language">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="M3 10h14M10 3c1.9 2.1 2.8 4.4 2.8 7s-.9 4.9-2.8 7c-1.9-2.1-2.8-4.4-2.8-7s.9-4.9 2.8-7Z"/></svg>
+          <span id="lang-code">EN</span>
+        </button>
+        <span class="live" id="live" title="No connection to the board"></span>
       </div>
     </div>
     <div class="columns-head" id="columns-head"></div>
@@ -37,7 +41,7 @@
 
   <main class="board" id="board"></main>
 
-  <aside class="sheet" id="sheet" aria-hidden="true" aria-label="Сессия">
+  <aside class="sheet" id="sheet" aria-hidden="true" aria-label="Session" data-i18n-label="sheet.label">
     <div class="sheet-grip" aria-hidden="true"></div>
     <header class="sheet-head">
       <div class="sheet-title">
@@ -45,7 +49,7 @@
         <h2 id="sheet-name"></h2>
         <p class="sheet-meta" id="sheet-meta"></p>
       </div>
-      <button class="icon-button" id="sheet-close" data-close title="Закрыть (Esc)" aria-label="Закрыть">
+      <button class="icon-button" id="sheet-close" data-close title="Close (Esc)" aria-label="Close" data-i18n-title="sheet.close" data-i18n-label="sheet.closeLabel">
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 5.5 9 9m0-9-9 9"/></svg>
       </button>
     </header>
@@ -55,39 +59,39 @@
       <div class="composer-actions">
         <button class="button" id="sheet-focus">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 4.5h8.5V13M15 5 5 15"/></svg>
-          <span>Перейти в herdr</span>
+          <span data-i18n="sheet.focus">Go to herdr</span>
         </button>
         <button class="button" id="sheet-wake" hidden>
           <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="3.5"/><path d="M10 2.5v2m0 11v2m7.5-7.5h-2m-11 0h-2m12.8-5.3-1.4 1.4M6.1 13.9l-1.4 1.4m0-10.6 1.4 1.4m7.8 7.8 1.4 1.4"/></svg>
-          <span>Разбудить</span>
+          <span data-i18n="sheet.wake">Wake</span>
         </button>
-        <button class="button" id="sheet-sleep" title="Claude выйдет, панель останется. Разбудить можно отсюда, из herdr или сообщением">
+        <button class="button" id="sheet-sleep">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15.5 12.2A6.5 6.5 0 0 1 7.8 4.5a6.5 6.5 0 1 0 7.7 7.7Z"/></svg>
-          <span>Усыпить</span>
+          <span data-i18n="sheet.sleep">Put to sleep</span>
         </button>
       </div>
       <div class="attachments" id="attachments"></div>
       <form class="composer-box" id="composer">
-        <button type="button" class="attach" id="attach" title="Прикрепить файл. Скриншот можно вставить через Ctrl+V или перетащить файлы на панель" aria-label="Прикрепить файл">
+        <button type="button" class="attach" id="attach" title="Attach a file. Paste a screenshot with Ctrl+V or drop files on the panel" aria-label="Attach a file" data-i18n-title="compose.attach" data-i18n-label="compose.attachLabel">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m15.5 9.5-5.6 5.6a3.5 3.5 0 0 1-5-5l6-6a2.3 2.3 0 0 1 3.3 3.3l-6 6a1.2 1.2 0 0 1-1.7-1.7L12 6.2"/></svg>
         </button>
         <input type="file" id="file-input" multiple hidden>
-        <textarea id="message" rows="1" placeholder="Написать сессии… Ctrl+V вставит скриншот" aria-label="Сообщение"></textarea>
-        <button class="send" type="submit" title="Отправить (Enter)" aria-label="Отправить">
+        <textarea id="message" rows="1" placeholder="Message the session… Ctrl+V pastes a screenshot" aria-label="Message" data-i18n-placeholder="compose.placeholder" data-i18n-label="compose.label"></textarea>
+        <button class="send" type="submit" title="Send (Enter)" aria-label="Send" data-i18n-label="compose.sendLabel">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 16V4m-5 5 5-5 5 5"/></svg>
         </button>
       </form>
     </footer>
   </aside>
 
-  <aside class="sheet" id="cats-sheet" aria-hidden="true" aria-label="Категории">
+  <aside class="sheet" id="cats-sheet" aria-hidden="true" aria-label="Categories" data-i18n-label="cats.title">
     <div class="sheet-grip" aria-hidden="true"></div>
     <header class="sheet-head">
       <div class="sheet-title">
-        <h2>Категории</h2>
-        <p class="sheet-meta">Дорожки доски. Сессия попадает в дорожку по выбору агента, а пока он не выбрал, по папке. Потяни за ручку, чтобы поменять порядок.</p>
+        <h2 data-i18n="cats.title">Categories</h2>
+        <p class="sheet-meta" data-i18n="cats.about">Lanes of the board. A session goes to the lane its agent picks, and by folder until it picks one. Drag the handle to reorder.</p>
       </div>
-      <button class="icon-button" data-close title="Закрыть (Esc)" aria-label="Закрыть">
+      <button class="icon-button" data-close title="Close (Esc)" aria-label="Close" data-i18n-title="sheet.close" data-i18n-label="sheet.closeLabel">
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 5.5 9 9m0-9-9 9"/></svg>
       </button>
     </header>
@@ -98,7 +102,7 @@
     <footer class="composer">
       <button class="button primary" id="cat-new">
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.5v11M4.5 10h11"/></svg>
-        <span>Новая категория</span>
+        <span data-i18n="cats.new">New category</span>
       </button>
     </footer>
   </aside>

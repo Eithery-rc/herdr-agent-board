@@ -12,7 +12,9 @@ import { extname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { focus, send, sleepSession, wake } from './actions.mjs'
 import { conversation } from './claude.mjs'
-import { categoryInfo, colorHex, editCategories, laneRank, liveConfig, PALETTE } from './config.mjs'
+import { categoryInfo, colorHex, editCategories, editSettings, laneRank, liveConfig, PALETTE } from './config.mjs'
+import { lang, t } from './lang.mjs'
+import { LANGUAGES } from '../web/i18n.js'
 import { herdrText } from './herdr.mjs'
 import { busy, COLUMNS, collect, forgetSleepers, PINS } from './model.mjs'
 import { CARDS_DIR, ROOT, STATE_DIR } from './paths.mjs'
@@ -77,10 +79,10 @@ function receiveUpload(req, name) {
       size += chunk.length
       if (size > MAX_UPLOAD) {
         req.destroy()
-        fail(`Файл больше ${MAX_UPLOAD >> 20} МБ`)
+        fail(t('err.upload.big', { mb: MAX_UPLOAD >> 20 }))
       }
     })
-    req.on('error', () => fail('Загрузка прервалась'))
+    req.on('error', () => fail(t('err.upload.broken')))
     req.pipe(out)
     out.on('finish', () => !failed && resolve({ ok: true, path, name: file, size, url: `/uploads/${day}/${encodeURIComponent(file)}` }))
     out.on('error', err => fail(err.message))
@@ -123,6 +125,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
   let version = assetsVersion()
   const clients = new Set()
 
+  /** The board as clients see it, without the time of the last successful refresh. */
   function board() {
     const ids = [...new Set([...cfg.categories.map(c => c.id), ...items.map(i => i.category)])]
     const categories = ids
@@ -133,18 +136,21 @@ export function startServer({ cfg, log = () => {} } = {}) {
         return { id, title: c.title, color: colorHex(c.color), colorName: c.color, paths: c.paths ?? [], configured, fallback: id === 'other' }
       })
     const list = items.map(({ transcript, ...rest }) => rest)
-    return JSON.stringify({ version, stale, lastSuccessfulRefreshAt, items: list, categories, swatches: SWATCHES, columns: COLUMNS.map(({ id, title }) => ({ id, title })) })
+    return { version, lang: lang(), language: cfg.language ?? 'auto', languages: LANGUAGES, stale, items: list, categories, swatches: SWATCHES, columns: COLUMNS.map(({ id, title }) => ({ id, title })) }
   }
 
-  payload = board()
-
+  // GET always answers with the latest payload. Live clients get it again only when the board
+  // changed (stale included): a refresh time that moves every few seconds alone is no news.
+  let sent = ''
   function publish() {
     const next = board()
-    if (next !== payload) {
-      payload = next
-      for (const res of clients) res.write(`data: ${payload}\n\n`)
-    }
+    const key = JSON.stringify(next)
+    payload = JSON.stringify({ ...next, lastSuccessfulRefreshAt })
+    if (key === sent) return
+    sent = key
+    for (const res of clients) res.write(`data: ${payload}\n\n`)
   }
+  publish()
 
   let refreshing = false
   let again = false
@@ -193,7 +199,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
       case 'message': {
         // Attached files go as their paths: Claude reads them, and picks up image paths as images.
         const files = (Array.isArray(body.files) ? body.files : []).filter(p => typeof p === 'string' && p.startsWith(UPLOADS_DIR))
-        const list = files.length ? `${files.length > 1 ? 'Файлы' : 'Файл'}:\n${files.join('\n')}` : ''
+        const list = files.length ? `${t('msg.files', { n: files.length })}:\n${files.join('\n')}` : ''
         return send(cfg, item, [String(body.text ?? '').trim(), list].filter(Boolean).join('\n\n'))
       }
       case 'card': {
@@ -206,11 +212,11 @@ export function startServer({ cfg, log = () => {} } = {}) {
         if (typeof body.column === 'string') {
           if (body.column === item.auto) Object.assign(patch, { pin: '', pinAt: '', pinBusy: '' })
           else if (PINS.has(body.column)) Object.assign(patch, { pin: body.column, pinAt: Date.now(), pinBusy: busy(item.status) ? 1 : '' })
-          else return { ok: false, error: 'В «Работает» сессия попадает сама, когда работает' }
+          else return { ok: false, error: t('err.pinWork', { col: t('q', { s: t('col.work') }) }) }
         }
         const unpin = { pin: '', pinAt: '', pinBusy: '' }
         if (body.clear) Object.assign(patch, { doing: '', wait: '', waitSince: '', ask: '', askSince: '', result: '' }, unpin)
-        // "Не ждёт ответа": drop the agent's ask, and stop reading its last question as one.
+        // "No reply needed": drop the agent's ask, and stop reading its last question as one.
         if (body.dismiss) Object.assign(patch, { ask: '', askSince: '', dismissed: item.attention === 'question' ? item.question : '' }, unpin)
         writeCard(item.key, patch)
         return { ok: true }
@@ -262,6 +268,12 @@ export function startServer({ cfg, log = () => {} } = {}) {
         })
         return res.end(body)
       }
+      if (req.method === 'POST' && path === '/api/settings') {
+        if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })
+        // Written to config.json; the config watcher switches the language and pushes the new board.
+        const r = editSettings(await readBody(req))
+        return json(r.ok ? 200 : 409, r)
+      }
       if (req.method === 'POST' && path === '/api/categories') {
         if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })
         // Written to config.json; the config watcher reloads it and pushes the new board.
@@ -271,7 +283,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
       const m = /^\/api\/session\/([^/]+)(?:\/(\w+))?$/.exec(path)
       if (m) {
         const item = find(m[1])
-        if (!item) return json(404, { error: 'Сессии больше нет на доске' })
+        if (!item) return json(404, { error: t('err.gone') })
         if (req.method === 'GET' && !m[2]) return json(200, await detail(item))
         if (req.method === 'POST' && m[2]) {
           if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })

@@ -4,7 +4,7 @@
 //   board cat <id> [title]   set the category (lane); a new id with a title is added to the config
 //   board doing <text>       what the session works on now
 //   board wait <text>        what it waits for outside the chat (moves the card to "waiting")
-//   board ask <question>     needs the user: "Ждёт меня" until the user's next prompt
+//   board ask <question>     needs the user: "Needs me" until the user's next prompt
 //   board done [text]        task finished: clears doing, wait and ask, keeps the result
 //   board clear              clears doing, wait, ask and result
 //   board list               every session on the board, one line each
@@ -13,7 +13,7 @@
 import { categoryFor, categoryInfo, CONFIG_FILE, editCategories, laneRank, loadConfig } from './config.mjs'
 import { liveSessions } from './claude.mjs'
 import { snapshot } from './herdr.mjs'
-import { COLUMNS, collect, noteOf } from './model.mjs'
+import { COLUMNS, collect, noteOf, statusText } from './model.mjs'
 import { readCard, writeCard } from './store.mjs'
 
 const USAGE = `board [cat <id> ["<Title>"] | doing <text> | wait <text> | ask <question> | done [text] | clear | list | cats] [--session <id|name|pane>]`
@@ -65,7 +65,7 @@ async function main() {
   if (cmd === 'help' || cmd === '--help' || cmd === '-h') return console.log(USAGE)
 
   if (cmd === 'cats') {
-    const known = cfg.categories.map(c => `${c.id} (${c.title})`).join(', ')
+    const known = cfg.categories.map(c => `${c.id} (${categoryInfo(cfg, c.id).title})`).join(', ')
     return console.log(`${known}. A new id makes a new lane. Config: ${CONFIG_FILE}`)
   }
 
@@ -76,7 +76,7 @@ async function main() {
     for (const i of items) {
       const col = COLUMNS.find(c => c.id === i.column).title
       const note = noteOf(i)
-      console.log(`${i.name} [${i.category}] ${col}${i.sleeping ? ' (спит)' : ''}${note ? `: ${note.slice(0, 80)}` : ''}`)
+      console.log(`${i.name} [${i.category}] ${col}${i.sleeping ? ` (${statusText('sleeping')})` : ''}${note ? `: ${note.slice(0, 80)}` : ''}`)
     }
     return
   }
@@ -109,7 +109,7 @@ async function main() {
       writeCard(s.key, { wait: text, waitSince: now, by: 'agent' })
       break
     case 'ask':
-      // Needs the user: the card goes to "Ждёт меня" until the user's next prompt (hook.mjs clears it).
+      // Needs the user: the card goes to "Needs me" until the user's next prompt (hook.mjs clears it).
       if (!text) throw new Error('usage: board ask <question>')
       writeCard(s.key, { ask: text, askSince: now, by: 'agent' })
       break

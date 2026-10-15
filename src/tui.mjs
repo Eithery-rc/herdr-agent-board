@@ -1,6 +1,6 @@
 // The board: a full-screen terminal UI in a herdr plugin pane. No model in the loop: it polls
 // herdr, the Claude registry, transcript tails and the card files, and redraws.
-//   lanes = categories, columns = Работает / Ждёт меня / Ждёт внешнего / Готово / Простой
+//   lanes = categories, columns = Working / Needs me / Waiting on others / Done / Idle
 //   Enter or double click: go to the session (waking it if it sleeps); m: send it a message;
 //   w: set what it waits for; x: clear its card; c: change its category; 1-9 / 0: filter lanes;
 //   q / Esc: back to where you were (an overlay board closes instead); Ctrl+C: close the board.
@@ -8,7 +8,8 @@ import { mkdirSync, readFileSync, unlinkSync, watch, writeFileSync } from 'node:
 import { join } from 'node:path'
 import { categoryInfo, laneRank, liveConfig } from './config.mjs'
 import * as actions from './actions.mjs'
-import { COLUMNS, collect, forgetSleepers, noteOf, STATUS_TEXT } from './model.mjs'
+import { t } from './lang.mjs'
+import { COLUMNS, collect, forgetSleepers, noteOf, statusText } from './model.mjs'
 import { goBack } from './nav.mjs'
 import { startServer } from './server.mjs'
 import { openWeb } from './web-open.mjs'
@@ -78,10 +79,10 @@ function fit(s, w) {
 function age(ms) {
   if (!ms) return ''
   const m = Math.floor((Date.now() - ms) / 60_000)
-  if (m < 1) return '<1м'
-  if (m < 60) return `${m}м`
+  if (m < 1) return t('ago.short.now')
+  if (m < 60) return t('ago.short.min', { n: m })
   const h = Math.floor(m / 60)
-  return h < 24 ? `${h}ч` : `${Math.floor(h / 24)}д`
+  return h < 24 ? t('ago.short.h', { n: h }) : t('ago.short.d', { n: Math.floor(h / 24) })
 }
 
 // ---------------------------------------------------------------- state
@@ -167,7 +168,7 @@ function setBusy(key, text) {
 
 async function jump(it) {
   if (!it?.pane) return
-  setBusy(it.key, it.sleeping ? 'бужу…' : 'перехожу…')
+  setBusy(it.key, t(it.sleeping ? 'tui.waking' : 'tui.going'))
   const r = await actions.focus(cfg, it)
   setBusy(it.key, null)
   if (!r.ok) return say(r.error, true)
@@ -176,10 +177,10 @@ async function jump(it) {
 }
 
 async function send(it, text) {
-  setBusy(it.key, it.sleeping ? 'бужу…' : 'отправляю…')
+  setBusy(it.key, t(it.sleeping ? 'tui.waking' : 'tui.sending'))
   const r = await actions.send(cfg, it, text)
   setBusy(it.key, null)
-  say(r.ok ? `Отправлено в ${it.name}` : r.error, !r.ok)
+  say(r.ok ? t('sent.to', { name: it.name }) : r.error, !r.ok)
   refresh()
 }
 
@@ -199,16 +200,16 @@ function onAction(name) {
     case 'refresh':
       return refresh()
     case 'web':
-      say('Открываю веб-доску…')
+      say(t('tui.openingWeb'))
       return openWeb(cfg).then(r => !r.ok && say(r.error, true))
     case 'enter':
       return jump(it)
     case 'message':
-      if (it) ask(`Сообщение для ${it.name}`, '', text => text && send(it, text))
+      if (it) ask(t('tui.messageFor', { name: it.name }), '', text => text && send(it, text))
       return
     case 'wait':
       if (it)
-        ask(`${it.name} ждёт`, it.wait, text => {
+        ask(t('tui.waitsFor', { name: it.name }), it.wait, text => {
           writeCard(it.key, text ? { wait: text, waitSince: Date.now(), by: 'user' } : { wait: '', waitSince: '' })
           refresh()
         })
@@ -216,14 +217,14 @@ function onAction(name) {
     case 'clear':
       if (!it) return
       writeCard(it.key, { doing: '', wait: '', waitSince: '', ask: '', askSince: '', result: '', pin: '', pinAt: '', pinBusy: '', dismissed: it.attention === 'question' ? it.question : '' })
-      say(`Карточка ${it.name} очищена`)
+      say(t('tui.cleared', { name: it.name }))
       return refresh()
     case 'sleep':
       if (!it || it.sleeping) return
-      setBusy(it.key, 'усыпляю…')
+      setBusy(it.key, t('tui.sleeping'))
       return actions.sleepSession(cfg, it).then(r => {
         setBusy(it.key, null)
-        say(r.ok ? `${it.name} спит` : r.error, !r.ok)
+        say(r.ok ? t('asleep', { name: it.name }) : r.error, !r.ok)
         forgetSleepers()
         refresh()
       })
@@ -285,6 +286,7 @@ function move(dir) {
 }
 
 // ---------------------------------------------------------------- input
+// Each action also takes the letter on the same key of a Russian layout (k = л, m = ь, ...).
 const KEYMAP = {
   up: ['\x1b[A', '\x1bOA', 'k', 'л'],
   down: ['\x1b[B', '\x1bOB', 'j', 'о'],
@@ -342,7 +344,7 @@ function onCategoryKey(tok) {
   mode = 'board'
   if (!it || tok === '\x1b' || tok === '\x03') return render()
   if (tok === 'n' || tok === 'т') {
-    return ask(`Новая категория для ${it.name} (id латиницей)`, '', text => {
+    return ask(t('tui.newCat', { name: it.name }), '', text => {
       const id = text.toLowerCase().replace(/[^a-z0-9_-]/g, '')
       if (id) {
         writeCard(it.key, { category: id })
@@ -353,7 +355,7 @@ function onCategoryKey(tok) {
   const c = cfg.categories[Number(tok) - 1]
   if (/^[1-9]$/.test(tok) && c) {
     writeCard(it.key, { category: c.id })
-    say(`${it.name} → ${c.title}`)
+    say(t('moved', { name: it.name, where: c.title }))
     refresh()
   }
   render()
@@ -465,7 +467,7 @@ function bodyNarrow(W) {
       const nameW = Math.min(24, Math.floor(W / 3))
       const stateW = 14
       const noteW = Math.max(0, W - 2 - 2 - nameW - 1 - stateW - 1 - width(right) - 1)
-      const state = it.column === 'ext' ? 'ждёт внешнего' : STATUS_TEXT[it.status] ?? it.status
+      const state = it.column === 'ext' ? t('status.ext') : statusText(it.status)
       const text = `${col.icon} ${fit(it.name, nameW)} ${fit(state, stateW)} ${fit(noteOf(it), noteW)} ${right}`
       tops.set(it.key, lines.length)
       lines.push(it.key === sel ? ` ${paint(text, 'inverse')}` : ` ${paint(col.icon, col.color, it.sleeping && 'dim')}${text.slice(col.icon.length)}`)
@@ -480,10 +482,10 @@ function bodyNarrow(W) {
 function header(W, colW) {
   const asleep = items.filter(i => i.sleeping).length
   const counts = colW
-    ? paint(`${items.length} сессий${asleep ? `, ${asleep} спят` : ''}`, 'gray')
+    ? paint(`${t('tui.sessions', { n: items.length })}${asleep ? `, ${t('tui.asleep', { n: asleep })}` : ''}`, 'gray')
     : COLUMNS.map(c => `${paint(c.icon, c.color)} ${items.filter(i => i.column === c.id).length}`).join('  ')
   const time = new Date().toTimeString().slice(0, 5)
-  const filt = filter ? paint(`  фильтр: ${categoryInfo(cfg, filter).title} (0 все)`, 'yellow') : ''
+  const filt = filter ? paint(`  ${t('tui.filter', { title: categoryInfo(cfg, filter).title })}`, 'yellow') : ''
   const left = `${paint(' Agent board ', 'bold')} ${counts}${filt}`
   const top = `${left}${' '.repeat(Math.max(1, W - width(left.replace(/\x1b\[[0-9;]*m/g, '')) - 6))}${paint(time, 'gray')}`
   if (!colW) return [top, paint('─'.repeat(W - 1), 'gray')]
@@ -504,14 +506,14 @@ function footer(W) {
     const chars = [...input.text]
     let shown = ''
     for (let i = chars.length - 1; i >= 0 && width(chars[i] + shown) <= room; i--) shown = chars[i] + shown
-    keys = `${paint(label, 'bold')}${shown}${paint('█', 'gray')}${paint('  Enter ок · Esc отмена', 'gray')}`
+    keys = `${paint(label, 'bold')}${shown}${paint('█', 'gray')}${paint(`  ${t('tui.inputHint')}`, 'gray')}`
   } else if (mode === 'category') {
     const list = cfg.categories.map((c, i) => `${paint(String(i + 1), 'bold')} ${c.title}`).join('  ')
-    keys = ` Категория для ${selected()?.name ?? ''}: ${list}  ${paint('n', 'bold')} новая  ${paint('Esc', 'bold')} отмена`
+    keys = ` ${t('tui.catFor', { name: selected()?.name ?? '' })} ${list}  ${paint('n', 'bold')} ${t('tui.new')}  ${paint('Esc', 'bold')} ${t('tui.cancel')}`
   } else {
     const hints = [
-      ['Enter', 'перейти'], ['m', 'написать'], ['w', 'ждёт…'], ['x', 'очистить'], ['c', 'категория'],
-      ['z', 'усыпить'], ['1-9', 'фильтр'], ['o', 'веб'], ['r', 'обновить'], ['q', OVERLAY || !PANE ? 'закрыть' : 'назад'],
+      ['Enter', t('key.enter')], ['m', t('key.m')], ['w', t('key.w')], ['x', t('key.x')], ['c', t('key.c')],
+      ['z', t('key.z')], ['1-9', t('key.filter')], ['o', t('key.o')], ['r', t('key.r')], ['q', t(OVERLAY || !PANE ? 'key.close' : 'key.back')],
     ]
     keys = ''
     let used = 0
@@ -530,8 +532,8 @@ function render() {
   const H = out.rows || 24
   const bodyH = Math.max(1, H - HEADER_ROWS - FOOTER_ROWS)
   const { lines, tops, heights, colW } = isWide() ? bodyWide(W) : bodyNarrow(W)
-  if (loading) lines.splice(0, lines.length, paint(' Загружаю…', 'gray'))
-  else if (!items.length) lines.splice(0, lines.length, paint(' Агентов нет', 'gray'))
+  if (loading) lines.splice(0, lines.length, paint(` ${t('loading')}`, 'gray'))
+  else if (!items.length) lines.splice(0, lines.length, paint(` ${t('tui.noAgents')}`, 'gray'))
   if (follow && tops.has(sel)) {
     const top = tops.get(sel)
     const h = heights.get(sel) ?? 1

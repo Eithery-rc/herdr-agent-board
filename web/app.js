@@ -1,11 +1,16 @@
 // Agent board, web. Live data over Server-Sent Events; every change of place animates with a
 // spring from where the card is on screen (FLIP), drags stay glued to the pointer and land
 // with the pointer's velocity, and the session sheet can be flicked away.
+import { LANGUAGES, translator } from './i18n.js'
 import { updateLive } from './live.js'
 import { markdown } from './markdown.js'
 import { project, reducedMotion, rubberband, Spring, velocityOf } from './spring.js'
 
 const $ = sel => document.querySelector(sel)
+
+// Texts in the board's language; the server says which one (config `language`), the toolbar switches it.
+let t = translator(document.documentElement.lang)
+const q = s => t('q', { s })
 
 const COLORS = { work: 'var(--green)', me: 'var(--orange)', ext: 'var(--purple)', done: 'var(--blue)', idle: 'var(--gray)' }
 const ICON = {
@@ -50,20 +55,15 @@ const thumbs = text => {
   const urls = [...String(text ?? '').matchAll(UPLOAD_IMAGE)].map(m => `/uploads/${m[1]}/${encodeURIComponent(m[2])}`)
   return urls.length ? `<div class="thumbs">${urls.map(u => `<a href="${u}" target="_blank" rel="noopener"><img src="${u}" alt="" loading="lazy"></a>`).join('')}</div>` : ''
 }
-function plural(n, one, few, many) {
-  const m10 = n % 10
-  const m100 = n % 100
-  return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many
-}
 function ago(ms) {
   if (!ms) return ''
   const m = Math.floor((Date.now() - ms) / 60_000)
-  if (m < 1) return 'сейчас'
-  if (m < 60) return `${m} мин`
+  if (m < 1) return t('ago.now')
+  if (m < 60) return t('ago.min', { n: m })
   const h = Math.floor(m / 60)
-  return h < 24 ? `${h} ч` : `${Math.floor(h / 24)} д`
+  return h < 24 ? t('ago.h', { n: h }) : t('ago.d', { n: Math.floor(h / 24) })
 }
-const clock = ms => (ms ? new Date(ms).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '')
+const clock = ms => (ms ? new Date(ms).toLocaleTimeString(t.lang, { hour: '2-digit', minute: '2-digit' }) : '')
 
 // ---------------------------------------------------------------- state
 const state = {
@@ -73,7 +73,7 @@ const state = {
   sleepers: store.get('board.sleepers', '1') === '1',
   open: null, // key of the session in the sheet
   detail: null,
-  busy: new Map(), // key -> what is happening ("Бужу…")
+  busy: new Map(), // key -> what is happening ("Waking…")
   moved: new Map(), // key -> category the user dropped it in, until the server agrees
   movedCol: new Map(), // key -> { col, at }: column the user dropped it in, until the server agrees
 }
@@ -102,6 +102,9 @@ function onData(data) {
   if (state.version && data.version && data.version !== state.version) return location.reload()
   state.version = data.version
   state.data = data
+  // Right after a switch from this page, a board sent before it may still come in: let it pass.
+  const asked = state.langAsked && Date.now() - state.langAsked.at < 4000 ? state.langAsked.lang : null
+  if (data.lang && data.lang !== t.lang && (!asked || data.lang === asked)) setLanguage(data.lang)
   for (const [key, cat] of state.moved) if (itemOf(key)?.category === cat) state.moved.delete(key)
   for (const [key, m] of state.movedCol) if (itemOf(key)?.column === m.col || Date.now() - m.at > 8000) state.movedCol.delete(key)
   render()
@@ -118,16 +121,18 @@ function onData(data) {
 function connect() {
   const live = $('#live')
   const source = new EventSource('/api/events')
-  source.onopen = () => updateLive(live, { stale: true, lastSuccessfulRefreshAt: null })
+  source.onopen = () => updateLive(live, { stale: true, lastSuccessfulRefreshAt: null }, t)
   source.onerror = () => {
+    state.connected = false
     live.classList.remove('on', 'stale')
-    live.title = 'Нет связи с доской, переподключаюсь…'
+    live.title = t('live.off')
   }
   source.onmessage = e => {
     try {
       const data = JSON.parse(e.data)
-      updateLive(live, data)
-      onData(data)
+      state.connected = true
+      onData(data) // first: it may switch the language
+      updateLive(live, data, t)
     } catch {}
   }
 }
@@ -140,9 +145,9 @@ async function act(key, action, body = {}) {
       body: JSON.stringify(body),
     })
     const r = await res.json().catch(() => ({}))
-    return res.ok && r.ok !== false ? { ok: true } : { ok: false, error: r.error || `Ошибка ${res.status}` }
+    return res.ok && r.ok !== false ? { ok: true } : { ok: false, error: r.error || t('err.status', { code: res.status }) }
   } catch (err) {
-    return { ok: false, error: `Нет связи с доской: ${err.message}` }
+    return { ok: false, error: t('err.offline', { why: err.message }) }
   }
 }
 
@@ -152,29 +157,31 @@ function setBusy(key, label) {
   render()
 }
 
-/** A question that does not need an answer: off the "Ждёт меня" column until the next one. */
+/** A question that does not need an answer: off the "Needs me" column until the next one. */
 async function dismissAsk(key) {
   const it = itemOf(key)
   const r = await act(key, 'card', { dismiss: true })
-  toast(r.ok ? `${it?.name ?? 'Сессия'}: ${it?.attention === 'later' ? 'убрана из «Ждёт меня»' : 'ответа не ждёт'}` : r.error, !r.ok)
+  const name = it?.name ?? t('session')
+  toast(r.ok ? (it?.attention === 'later' ? t('toast.unparked', { name, col: q(colTitle('me')) }) : t('toast.dismissed', { name })) : r.error, !r.ok)
 }
 
-/** Claude exits through herdr-wake; the pane stays as 💤 and wakes on a message or "Разбудить". */
+/** Claude exits through herdr-wake; the pane stays as 💤 and wakes on a message or "Wake". */
 async function sleepSession(key) {
   const it = itemOf(key)
   if (!it || it.sleeping) return
-  setBusy(key, 'Усыпляю…')
+  setBusy(key, t('busy.sleeping'))
   const r = await act(key, 'sleep')
   setBusy(key, null)
-  toast(r.ok ? `${it.name} спит` : r.error, !r.ok)
+  toast(r.ok ? t('asleep', { name: it.name }) : r.error, !r.ok)
 }
 
-const colTitle = id => state.data.columns.find(c => c.id === id)?.title ?? id
+// The page's own dictionary, so a switch from here shows at once (the server's titles come from the same one).
+const colTitle = id => t(`col.${id}`)
 
 /**
  * Move a card to another lane and/or column: on screen at once, then on the server. A column is
  * a pin that holds until the session works again; dragged while it works, the card stays under
- * "Работает" and moves when that turn is over. Its own column (`auto`) takes the pin off.
+ * "Working" and moves when that turn is over. Its own column (`auto`) takes the pin off.
  */
 async function moveCard(key, { cat = null, column = null }) {
   const it = itemOf(key)
@@ -192,17 +199,45 @@ async function moveCard(key, { cat = null, column = null }) {
     return toast(r.error, true)
   }
   const parts = cat ? [catInfo(cat).title] : []
-  if (column) parts.push(column === it.auto ? `«${colTitle(column)}», как решает доска` : `«${colTitle(column)}»${turn ? ', когда закончит работу' : ''}`)
-  toast(`${it.name} → ${parts.join(', ')}`)
+  if (column) parts.push(t(column === it.auto ? 'move.auto' : turn ? 'move.afterTurn' : 'q', { col: q(colTitle(column)), s: colTitle(column) }))
+  toast(t('moved', { name: it.name, where: parts.join(', ') }))
 }
 
 async function focusSession(key) {
   const it = itemOf(key)
   if (!it) return
-  if (it.sleeping) setBusy(key, 'Бужу…')
+  if (it.sleeping) setBusy(key, t('busy.waking'))
   const r = await act(key, 'focus')
   setBusy(key, null)
-  toast(r.ok ? `${it.name} открыта в herdr` : r.error, !r.ok)
+  toast(r.ok ? t('toast.focused', { name: it.name }) : r.error, !r.ok)
+}
+
+// ---------------------------------------------------------------- language
+/** The page in another language: the static texts by their data-i18n attributes, and every part drawn already. */
+function setLanguage(lang) {
+  t = translator(lang)
+  document.documentElement.lang = t.lang
+  applyTexts()
+  for (const lane of lanes.values()) for (const [id, col] of lane.cols) col.querySelector('.col-label').lastChild.textContent = colTitle(id)
+  for (const row of catRows.values()) row.remove()
+  catRows.clear()
+  if (catDraft) renderDraft()
+  sheetCard._html = ''
+  if (state.open) renderSheetBody(false)
+  renderAttachments()
+  syncComposer()
+}
+
+function applyTexts() {
+  for (const el of document.querySelectorAll('[data-i18n]')) el.textContent = t(el.dataset.i18n)
+  for (const el of document.querySelectorAll('[data-i18n-title]')) el.title = t(el.dataset.i18nTitle)
+  for (const el of document.querySelectorAll('[data-i18n-label]')) el.setAttribute('aria-label', t(el.dataset.i18nLabel))
+  for (const el of document.querySelectorAll('[data-i18n-placeholder]')) el.placeholder = t(el.dataset.i18nPlaceholder)
+  if (state.connected) updateLive($('#live'), state.data, t)
+  else $('#live').title = t('live.none')
+  const names = state.data.languages ?? LANGUAGES
+  $('#lang-code').textContent = t.lang.toUpperCase()
+  $('#lang').title = t('tb.lang', { name: names[t.lang] ?? t.lang })
 }
 
 // ---------------------------------------------------------------- toolbar
@@ -211,19 +246,19 @@ function renderToolbar(visible) {
   const all = state.data.items
   const count = col => all.filter(i => i.column === col).length
   const asleep = all.filter(i => i.sleeping).length
-  const parts = [`<b>${all.length}</b> ${plural(all.length, 'сессия', 'сессии', 'сессий')}`]
-  if (count('work')) parts.push(`<b>${count('work')}</b> ${plural(count('work'), 'работает', 'работают', 'работают')}`)
-  if (count('me')) parts.push(`<b>${count('me')}</b> ${plural(count('me'), 'ждёт', 'ждут', 'ждут')} тебя`)
-  if (count('ext')) parts.push(`<b>${count('ext')}</b> ${plural(count('ext'), 'ждёт', 'ждут', 'ждут')} ответа извне`)
-  if (asleep) parts.push(`${asleep} ${plural(asleep, 'спит', 'спят', 'спят')}`)
+  const parts = [`<b>${all.length}</b> ${t('sum.sessions', { n: all.length })}`]
+  if (count('work')) parts.push(`<b>${count('work')}</b> ${t('sum.working', { n: count('work') })}`)
+  if (count('me')) parts.push(`<b>${count('me')}</b> ${t('sum.needYou', { n: count('me') })}`)
+  if (count('ext')) parts.push(`<b>${count('ext')}</b> ${t('sum.waitOthers', { n: count('ext') })}`)
+  if (asleep) parts.push(`${asleep} ${t('sum.asleep', { n: asleep })}`)
   $('#summary').innerHTML = parts.join(' · ')
   document.title = count('me') ? `(${count('me')}) Agent board` : 'Agent board'
 
-  // Lanes control: "Все" and the categories that have sessions.
+  // Lanes control: "All" and the categories that have sessions.
   const seg = $('#lanes')
   const used = state.data.categories.filter(c => visible.some(i => catOf(i) === c.id) || c.id === state.filter)
-  const options = [{ id: 'all', title: 'Все', n: visible.length }, ...used.map(c => ({ id: c.id, title: c.title, n: visible.filter(i => catOf(i) === c.id).length }))]
-  const sig = options.map(o => `${o.id}:${o.n}`).join('|')
+  const options = [{ id: 'all', title: t('all'), n: visible.length }, ...used.map(c => ({ id: c.id, title: c.title, n: visible.filter(i => catOf(i) === c.id).length }))]
+  const sig = options.map(o => `${o.id}:${o.title}:${o.n}`).join('|')
   if (seg.dataset.sig !== sig) {
     seg.dataset.sig = sig
     seg.innerHTML = `<span class="thumb"></span>${options
@@ -243,7 +278,7 @@ function renderToolbar(visible) {
   // Column heads with counts.
   const head = $('#columns-head')
   const html = state.data.columns
-    .map(c => `<div class="col-head"><span class="dot" style="--c:${COLORS[c.id]}"></span>${esc(c.title)}<span class="n">${visible.filter(i => i.column === c.id && laneShown(catOf(i))).length}</span></div>`)
+    .map(c => `<div class="col-head"><span class="dot" style="--c:${COLORS[c.id]}"></span>${esc(colTitle(c.id))}<span class="n">${visible.filter(i => i.column === c.id && laneShown(catOf(i))).length}</span></div>`)
     .join('')
   if (head.innerHTML !== html) head.innerHTML = html
 }
@@ -282,7 +317,7 @@ function laneOf(cat) {
     const col = document.createElement('div')
     col.className = 'col'
     col.dataset.col = c.id
-    col.innerHTML = `<div class="col-label"><span class="dot" style="--c:${COLORS[c.id]}"></span>${esc(c.title)}</div>`
+    col.innerHTML = `<div class="col-label"><span class="dot" style="--c:${COLORS[c.id]}"></span>${esc(colTitle(c.id))}</div>`
     grid.append(col)
     cols.set(c.id, col)
   }
@@ -291,16 +326,15 @@ function laneOf(cat) {
   return lane
 }
 
-const ATTENTION = { decision: 'В терминале', ask: 'Спрашивает', question: 'Спрашивает', later: 'Отложено' }
 const dismissable = it => it.attention === 'ask' || it.attention === 'question' || it.attention === 'later'
 
 function cardHTML(it) {
-  const dismiss = dismissable(it) ? `<button data-act="dismiss" title="${it.attention === 'later' ? 'Посмотрел: убрать из «Ждёт меня»' : 'Не ждёт ответа'}">${ICON.check}</button>` : ''
-  const sleep = !it.sleeping && it.session && !inTurn(it) ? `<button data-act="sleep" title="Усыпить">${ICON.moon}</button>` : ''
-  const actions = `<div class="card-actions">${dismiss}${sleep}<button data-act="write" title="Написать">${ICON.write}</button><button data-act="focus" title="Перейти в herdr">${ICON.focus}</button></div>`
+  const dismiss = dismissable(it) ? `<button data-act="dismiss" title="${esc(it.attention === 'later' ? t('card.seen', { col: q(colTitle('me')) }) : t('card.noReply'))}">${ICON.check}</button>` : ''
+  const sleep = !it.sleeping && it.session && !inTurn(it) ? `<button data-act="sleep" title="${esc(t('card.sleep'))}">${ICON.moon}</button>` : ''
+  const actions = `<div class="card-actions">${dismiss}${sleep}<button data-act="write" title="${esc(t('card.write'))}">${ICON.write}</button><button data-act="focus" title="${esc(t('card.focus'))}">${ICON.focus}</button></div>`
   const dot = it.sleeping ? ICON.moon : `<span class="dot ${it.column}" style="--c:${COLORS[it.column]}"></span>`
   const age = ago(it.column === 'ext' ? it.waitSince || it.activity : it.activity)
-  const pin = it.pin && it.pin === it.column ? `<span class="pinned" title="Ты перенёс сюда. Вернётся само, когда сессия снова заработает">${ICON.pin}</span>` : ''
+  const pin = it.pin && it.pin === it.column ? `<span class="pinned" title="${esc(t('card.pinned'))}">${ICON.pin}</span>` : ''
   const top = `<div class="card-top">${dot}<span class="name">${esc(it.name)}</span>${pin}<span class="age">${esc(age)}</span></div>`
   if (compact(it)) return top + actions
   // What it works on: its own words, else Claude's title of the session, else your last request.
@@ -308,15 +342,15 @@ function cardHTML(it) {
   const asked = own ? '' : plain(it.prompt)
   const what = own || asked
   const said = plain(it.column === 'done' || it.column === 'idle' ? it.result || it.lastText : it.lastText)
-  let body = own ? `<div class="what">${esc(own)}</div>` : asked ? `<div class="what"><span class="you">Ты:</span> ${esc(asked)}</div>` : ''
-  if (it.column === 'me') body += `<div class="ask"><b>${ATTENTION[it.attention] ?? 'Ждёт'}:</b> ${esc(plain(it.question) || (it.attention === 'later' ? 'посмотреть позже' : 'нужно решение'))}</div>`
-  if (it.column === 'ext') body += `<div class="chip">${ICON.clock}<span>${esc(it.wait || 'отложено тобой')}</span></div>`
+  let body = own ? `<div class="what">${esc(own)}</div>` : asked ? `<div class="what"><span class="you">${esc(t('card.you'))}</span> ${esc(asked)}</div>` : ''
+  if (it.column === 'me') body += `<div class="ask"><b>${esc(t(it.attention ? `att.${it.attention}` : 'att.default'))}:</b> ${esc(plain(it.question) || t(it.attention === 'later' ? 'card.lookLater' : 'card.needsDecision'))}</div>`
+  if (it.column === 'ext') body += `<div class="chip">${ICON.clock}<span>${esc(it.wait || t('note.parked'))}</span></div>`
   if (it.column !== 'me' && said && said !== what) body += `<div class="said">${esc(said)}</div>`
   if (it.column === 'work') {
-    const t = it.tool
-    body += t?.pending
-      ? `<div class="now">${ICON.spin}<span class="tool">${esc(t.label)}</span><span class="detail">${esc(t.detail)}</span></div>`
-      : `<div class="now idle">${ICON.spin}<span class="tool">Думает</span><span class="detail">${t ? `после ${esc(t.label)}` : ''}</span></div>`
+    const tool = it.tool
+    body += tool?.pending
+      ? `<div class="now">${ICON.spin}<span class="tool">${esc(tool.label)}</span><span class="detail">${esc(tool.detail)}</span></div>`
+      : `<div class="now idle">${ICON.spin}<span class="tool">${esc(t('card.thinking'))}</span><span class="detail">${tool ? esc(t('card.after', { tool: tool.label })) : ''}</span></div>`
   }
   return top + body + actions
 }
@@ -405,7 +439,7 @@ function render() {
       empty.className = 'empty'
       board.prepend(empty)
     }
-    empty.textContent = state.data.items.length ? 'Ничего не нашлось' : 'Сессий нет'
+    empty.textContent = t(state.data.items.length ? 'empty.none' : 'empty.noSessions')
   } else empty?.remove()
   flip(first)
   if (state.open) renderSheetHead()
@@ -517,22 +551,22 @@ function onDragMove(e) {
   }
   drag.x.set(e.clientX - drag.ox)
   drag.y.set(e.clientY - drag.oy)
-  const t = dropTarget(drag.key, document.elementFromPoint(e.clientX, e.clientY))
+  const target = dropTarget(drag.key, document.elementFromPoint(e.clientX, e.clientY))
   // The column lights up when the card changes column there, else the lane when only the lane changes.
-  const lit = t?.column ? t.colEl : t?.cat ? t.lane : null
+  const lit = target?.column ? target.colEl : target?.cat ? target.lane : null
   if (lit !== drag.lit) {
     drag.lit?.classList.remove('drop')
     lit?.classList.add('drop')
     drag.lit = lit
   }
-  drag.target = t
+  drag.target = target
   if (e.clientY < 150) scrollBy(0, -14)
   else if (e.clientY > innerHeight - 70) scrollBy(0, 14)
 }
 
 /**
  * What dropping the card on `el` changes: { cat, column, lane, colEl }, null when nothing. A lane
- * head or the gap between columns changes only the lane; "Работает" takes no cards.
+ * head or the gap between columns changes only the lane; "Working" takes no cards.
  */
 function dropTarget(key, el) {
   const it = itemOf(key)
@@ -721,7 +755,7 @@ function openSheet(key, { compose = false } = {}) {
   // panel and opening the same session again keeps them.
   if (draftFor !== key && attachments.length) {
     clearAttachments()
-    toast('Вложения убраны: открыта другая сессия')
+    toast(t('toast.attachDropped'))
   }
   draftFor = key
   state.open = key
@@ -743,7 +777,7 @@ async function loadDetail(key) {
     const res = await fetch(`/api/session/${encodeURIComponent(key)}`)
     const d = await res.json()
     if (seq !== detailSeq || state.open !== key) return
-    if (!res.ok) return toast(d.error || 'Сессия недоступна', true)
+    if (!res.ok) return toast(d.error || t('err.unavailable'), true)
     state.detail = d
     renderSheetBody(false)
   } catch {}
@@ -752,17 +786,16 @@ async function loadDetail(key) {
 function renderSheetHead() {
   const it = itemOf(state.open)
   if (!it) return
-  const col = state.data.columns.find(c => c.id === it.column)
   const pill = $('#sheet-status')
   pill.style.setProperty('--c', COLORS[it.column])
-  pill.innerHTML = it.sleeping ? `${ICON.moon}Спит` : `<span class="dot ${it.column}" style="--c:${COLORS[it.column]}"></span>${esc(col?.title ?? '')}`
+  pill.innerHTML = it.sleeping ? `${ICON.moon}${esc(t('sheet.asleep'))}` : `<span class="dot ${it.column}" style="--c:${COLORS[it.column]}"></span>${esc(colTitle(it.column))}`
   $('#sheet-name').textContent = it.name
-  $('#sheet-meta').textContent = [catInfo(catOf(it)).title, it.workspace && `workspace ${it.workspace}`, it.activity && `активность ${ago(it.activity)}${ago(it.activity) === 'сейчас' ? '' : ' назад'}`].filter(Boolean).join(' · ')
+  $('#sheet-meta').textContent = [catInfo(catOf(it)).title, it.workspace && t('meta.workspace', { name: it.workspace }), it.activity && (ago(it.activity) === t('ago.now') ? t('meta.activeNow') : t('meta.active', { ago: ago(it.activity) }))].filter(Boolean).join(' · ')
   $('#sheet-wake').hidden = !it.sleeping
   const sleep = $('#sheet-sleep')
   sleep.hidden = it.sleeping || !it.session
   sleep.disabled = inTurn(it)
-  sleep.title = inTurn(it) ? 'Сессия работает: усыпить можно, когда закончит' : 'Claude выйдет, панель останется. Разбудить можно отсюда, из herdr или сообщением'
+  sleep.title = t(inTurn(it) ? 'sheet.sleepBusy' : 'sheet.sleepHint')
 }
 
 const sheetCard = $('#sheet-card')
@@ -772,19 +805,19 @@ function renderSheetCard(it) {
   const cats = state.data.categories
     .map(c => `<button data-cat="${esc(c.id)}" style="--lane:${c.color}" aria-pressed="${catOf(it) === c.id}">${esc(c.title)}</button>`)
     .join('')
-  // Columns the user can put it in; "Само" drops the pin and lets the board decide again.
+  // Columns the user can put it in; "Auto" drops the pin and lets the board decide again.
   const pinned = it.pin && colOf(it) === it.pin
   const cols =
     state.data.columns
       .filter(c => c.id !== 'work')
       .map(c => `<button data-col="${c.id}" style="--lane:${COLORS[c.id]}" aria-pressed="${colOf(it) === c.id}">${esc(c.title)}</button>`)
-      .join('') + (pinned ? `<button class="auto" data-col="${it.auto}" title="Доска сама поставит в «${esc(colTitle(it.auto))}»">Само</button>` : '')
+      .join('') + (pinned ? `<button class="auto" data-col="${it.auto}" title="${esc(t('chip.autoTitle', { col: q(colTitle(it.auto)) }))}">${esc(t('chip.auto'))}</button>` : '')
   const html = `
     <div class="group">
-      <div class="row"><span class="row-label">Категория</span><div class="row-value chips" id="cats">${cats}</div></div>
-      <div class="row"><span class="row-label">Статус</span><div class="row-value chips" id="cols">${cols}</div></div>
-      <div class="row"><span class="row-label">Делает</span><input class="row-value" id="doing" value="${esc(it.doing)}" placeholder="${esc(plain(it.title && it.title !== it.name ? it.title : '') || 'Агент не указал')}"></div>
-      <div class="row"><span class="row-label">Ждёт</span><input class="row-value" id="wait" value="${esc(it.wait)}" placeholder="Ничего. Впиши и нажми Enter"></div>
+      <div class="row"><span class="row-label">${esc(t('row.category'))}</span><div class="row-value chips" id="cats">${cats}</div></div>
+      <div class="row"><span class="row-label">${esc(t('row.status'))}</span><div class="row-value chips" id="cols">${cols}</div></div>
+      <div class="row"><span class="row-label">${esc(t('row.doing'))}</span><input class="row-value" id="doing" value="${esc(it.doing)}" placeholder="${esc(plain(it.title && it.title !== it.name ? it.title : '') || t('row.doingNone'))}"></div>
+      <div class="row"><span class="row-label">${esc(t('row.wait'))}</span><input class="row-value" id="wait" value="${esc(it.wait)}" placeholder="${esc(t('row.waitNone'))}"></div>
     </div>`
   if (sheetCard._html === html) return
   if (sheetCard.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') {
@@ -804,16 +837,16 @@ function renderSheetBody(reset) {
   let html = ''
   if (it.column === 'me') {
     const later = it.attention === 'later'
-    const why = { decision: 'НУЖНО РЕШЕНИЕ В ТЕРМИНАЛЕ', ask: 'СПРАШИВАЕТ', question: 'СПРАШИВАЕТ В ПОСЛЕДНЕМ СООБЩЕНИИ', later: 'ОТЛОЖЕНО ТОБОЙ' }[it.attention] ?? 'ЖДЁТ ТЕБЯ'
-    const wave = dismissable(it) ? `<button class="button asked-dismiss" data-act="dismiss">${ICON.check}<span>${later ? 'Посмотрел' : 'Не ждёт ответа'}</span></button>` : ''
-    const text = later ? 'Ты перенёс сюда, чтобы посмотреть позже. Уйдёт отсюда, когда напишешь сессии.' : it.question || 'Ответь в терминале: Перейти в herdr'
-    html += `<div class="asked"><b>${why}</b>${esc(text)}${wave}</div>`
+    const why = t(it.attention ? `why.${it.attention}` : 'why.default')
+    const wave = dismissable(it) ? `<button class="button asked-dismiss" data-act="dismiss">${ICON.check}<span>${esc(t(later ? 'asked.seen' : 'asked.noReply'))}</span></button>` : ''
+    const text = later ? t('asked.later') : it.question || t('asked.terminal')
+    html += `<div class="asked"><b>${esc(why)}</b>${esc(text)}${wave}</div>`
     if (state.detail?.screen) html += `<pre class="screen">${esc(state.detail.screen)}</pre>`
   }
-  html += '<div class="section-title">Переписка</div><div class="thread">'
+  html += `<div class="section-title">${esc(t('thread.title'))}</div><div class="thread">`
   const conv = state.detail?.conversation
-  if (!conv) html += '<p class="row-value muted">Загружаю…</p>'
-  else if (!conv.length) html += '<p class="row-value muted">Пока пусто</p>'
+  if (!conv) html += `<p class="row-value muted">${esc(t('loading'))}</p>`
+  else if (!conv.length) html += `<p class="row-value muted">${esc(t('thread.empty'))}</p>`
   else html += thread(conv, it)
   html += '</div>'
   const open = new Set([...sheetBody.querySelectorAll('details[open]')].map(d => d.dataset.i))
@@ -834,9 +867,9 @@ function thread(conv, it) {
     if (!run.length) return
     const lastTool = run.at(-1)
     const live = !lastTool.done && it.column === 'work'
-    const summary = live ? `Сейчас: ${lastTool.label}` : `${run.length} ${plural(run.length, 'действие', 'действия', 'действий')} · ${lastTool.label}`
+    const summary = live ? t('run.now', { tool: lastTool.label }) : `${t('run.actions', { n: run.length })} · ${lastTool.label}`
     html += `<details class="tools" data-i="${i++}"><summary>${live ? ICON.spin : ICON.chev}<span>${esc(summary)}</span></summary>${run
-      .map(t => `<div class="tool-line${t.done ? '' : ' pending'}"><span class="t">${esc(t.label)}</span><span class="d">${esc(t.detail)}</span></div>`)
+      .map(x => `<div class="tool-line${x.done ? '' : ' pending'}"><span class="t">${esc(x.label)}</span><span class="d">${esc(x.detail)}</span></div>`)
       .join('')}</details>`
     run = []
   }
@@ -871,7 +904,7 @@ sheetCard.addEventListener('keydown', async e => {
   e.preventDefault()
   const r = await act(state.open, 'card', { [input.id]: input.value })
   input.blur()
-  toast(r.ok ? (input.id === 'wait' ? (input.value.trim() ? 'Пометка сохранена' : 'Пометка снята') : 'Сохранено') : r.error, !r.ok)
+  toast(r.ok ? t(input.id === 'wait' ? (input.value.trim() ? 'toast.waitSet' : 'toast.waitCleared') : 'saved') : r.error, !r.ok)
 })
 
 sheetBody.addEventListener('click', e => {
@@ -881,10 +914,10 @@ $('#sheet-focus').addEventListener('click', () => state.open && focusSession(sta
 $('#sheet-wake').addEventListener('click', async () => {
   const key = state.open
   if (!key) return
-  setBusy(key, 'Бужу…')
+  setBusy(key, t('busy.waking'))
   const r = await act(key, 'wake')
   setBusy(key, null)
-  toast(r.ok ? 'Сессия проснулась' : r.error, !r.ok)
+  toast(r.ok ? t('toast.woke') : r.error, !r.ok)
 })
 $('#sheet-sleep').addEventListener('click', () => state.open && sleepSession(state.open))
 
@@ -902,10 +935,10 @@ const syncComposer = () => {
   const uploading = attachments.some(a => a.status === 'uploading')
   const ready = attachments.some(a => a.status === 'done')
   sendBtn.disabled = uploading || !(message.value.trim() || ready)
-  sendBtn.title = uploading ? 'Файлы ещё загружаются' : 'Отправить (Enter)'
+  sendBtn.title = t(uploading ? 'compose.uploading' : 'compose.send')
 }
 
-const size = n => (n < 1024 ? `${n} Б` : n < 1 << 20 ? `${Math.round(n / 1024)} КБ` : `${(n / (1 << 20)).toFixed(1)} МБ`)
+const size = n => (n < 1024 ? t('size.b', { n }) : n < 1 << 20 ? t('size.kb', { n: Math.round(n / 1024) }) : t('size.mb', { n: (n / (1 << 20)).toFixed(1) }))
 
 function renderAttachments() {
   const box = $('#attachments')
@@ -913,8 +946,8 @@ function renderAttachments() {
     .map(
       a => `<div class="attachment ${a.status}" data-id="${a.id}" title="${esc(a.name)}">
         ${a.image ? `<img src="${a.url}" alt="">` : `<span class="file-icon"><svg viewBox="0 0 20 20"><path d="M5.5 2.5h6l3.5 3.5v11.5h-9.5Z"/><path d="M11.5 2.5V6H15"/></svg></span>`}
-        <span class="att-text"><span class="att-name">${esc(a.name)}</span><span class="att-size">${a.status === 'uploading' ? 'загружаю…' : a.status === 'error' ? 'не загрузился' : size(a.size)}</span></span>
-        <button type="button" class="att-remove" title="Убрать" aria-label="Убрать">×</button>
+        <span class="att-text"><span class="att-name">${esc(a.name)}</span><span class="att-size">${a.status === 'uploading' ? esc(t('file.uploading')) : a.status === 'error' ? esc(t('file.failed')) : size(a.size)}</span></span>
+        <button type="button" class="att-remove" title="${esc(t('file.remove'))}" aria-label="${esc(t('file.remove'))}">×</button>
       </div>`,
     )
     .join('')
@@ -929,12 +962,12 @@ async function upload(a, file) {
       body: file,
     })
     const r = await res.json().catch(() => ({}))
-    if (!res.ok || !r.ok) throw new Error(r.error || `ошибка ${res.status}`)
+    if (!res.ok || !r.ok) throw new Error(r.error || t('err.status', { code: res.status }))
     a.status = 'done'
     a.path = r.path
   } catch (err) {
     a.status = 'error'
-    toast(`Не загрузил ${a.name}: ${err.message}`, true)
+    toast(t('err.upload', { name: a.name, why: err.message }), true)
   }
   renderAttachments()
   syncComposer()
@@ -1026,13 +1059,13 @@ $('#composer').addEventListener('submit', async e => {
   if (!key || (!text && !files.length) || attachments.some(a => a.status === 'uploading')) return
   const it = itemOf(key)
   sendBtn.disabled = true
-  if (it?.sleeping) setBusy(key, 'Бужу…')
+  if (it?.sleeping) setBusy(key, t('busy.waking'))
   const r = await act(key, 'message', { text, files })
   setBusy(key, null)
   if (r.ok) {
     message.value = ''
     clearAttachments()
-    toast(`Отправлено в ${it?.name ?? 'сессию'}${files.length ? ` · ${files.length} ${plural(files.length, 'файл', 'файла', 'файлов')}` : ''}`)
+    toast(`${t('sent.to', { name: it?.name ?? t('session.lower') })}${files.length ? ` · ${t('sent.files', { n: files.length })}` : ''}`)
     setTimeout(() => state.open === key && loadDetail(key), 800)
   } else toast(r.error, true)
   syncComposer()
@@ -1042,23 +1075,23 @@ syncComposer()
 // ---------------------------------------------------------------- toasts
 function toast(text, error = false) {
   if (!text) return
-  const t = document.createElement('div')
-  t.className = `toast${error ? ' error' : ''}`
-  t.textContent = text
-  $('#toasts').append(t)
+  const el = document.createElement('div')
+  el.className = `toast${error ? ' error' : ''}`
+  el.textContent = text
+  $('#toasts').append(el)
   const s = new Spring({
     value: 0,
     damping: 1,
     response: 0.3,
     precision: 0.002,
     onUpdate: v => {
-      t.style.opacity = String(v)
-      t.style.transform = `translateY(${(1 - v) * 14}px) scale(${0.97 + 0.03 * v})`
+      el.style.opacity = String(v)
+      el.style.transform = `translateY(${(1 - v) * 14}px) scale(${0.97 + 0.03 * v})`
     },
   })
   s.to(1)
   setTimeout(() => {
-    s.onRest = () => t.remove()
+    s.onRest = () => el.remove()
     s.to(0)
   }, error ? 6000 : 2600)
 }
@@ -1078,6 +1111,7 @@ const catRows = new Map() // category id -> row
 let catDraft = null // { touched } while a new category is being made
 let catDrag = null
 
+// A category titled in Cyrillic gets a latin id agents can type: "Ромашка" -> "romashka".
 const TRANSLIT = { а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i', й: 'y', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'c', ч: 'ch', ш: 'sh', щ: 'sch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya' }
 const slug = s =>
   [...String(s).toLowerCase()]
@@ -1094,9 +1128,9 @@ async function editCats(body) {
     const res = await fetch('/api/categories', { method: 'POST', headers: { 'content-type': 'application/json', 'x-board': '1' }, body: JSON.stringify(body) })
     const r = await res.json().catch(() => ({}))
     if (res.ok && r.ok !== false) return true
-    toast(r.error || `Ошибка ${res.status}`, true)
+    toast(r.error || t('err.status', { code: res.status }), true)
   } catch (err) {
-    toast(`Нет связи с доской: ${err.message}`, true)
+    toast(t('err.offline', { why: err.message }), true)
   }
   return false
 }
@@ -1118,17 +1152,17 @@ function catRowOf(id) {
   row.dataset.id = id
   row.innerHTML = `
     <div class="cat-main">
-      <button class="handle" title="Потяни, чтобы поменять порядок" aria-label="Порядок">${GRIP}</button>
-      <button class="swatch" title="Цвет" aria-label="Цвет"></button>
-      <input class="cat-title" spellcheck="false" aria-label="Название">
+      <button class="handle" title="${esc(t('cat.handle'))}" aria-label="${esc(t('cat.order'))}">${GRIP}</button>
+      <button class="swatch" title="${esc(t('cat.color'))}" aria-label="${esc(t('cat.color'))}"></button>
+      <input class="cat-title" spellcheck="false" aria-label="${esc(t('cat.titleLabel'))}">
       <span class="cat-count"></span>
-      <button class="cat-add button" hidden>Добавить в категории</button>
-      <button class="cat-del" title="Удалить категорию">${TRASH}<span></span></button>
+      <button class="cat-add button" hidden>${esc(t('cat.add'))}</button>
+      <button class="cat-del" title="${esc(t('cat.delete'))}">${TRASH}<span></span></button>
     </div>
     <div class="cat-sub">
       <span class="cat-id"></span>
       <span class="paths"></span>
-      <input class="path-add" placeholder="+ папка, Enter" spellcheck="false" aria-label="Добавить папку">
+      <input class="path-add" placeholder="${esc(t('cat.pathAdd'))}" spellcheck="false" aria-label="${esc(t('cat.pathAddLabel'))}">
     </div>
     <div class="palette" hidden></div>`
   catRows.set(id, row)
@@ -1141,8 +1175,8 @@ function updateCatRow(row, c, count) {
   const title = row.querySelector('.cat-title')
   if (document.activeElement !== title) title.value = c.title
   title.readOnly = !c.configured
-  row.querySelector('.cat-count').textContent = count ? `${count} ${plural(count, 'сессия', 'сессии', 'сессий')}` : 'пусто'
-  row.querySelector('.cat-id').textContent = c.configured ? c.id : `${c.id} · завёл агент, в настройках нет`
+  row.querySelector('.cat-count').textContent = count ? t('cat.sessions', { n: count }) : t('cat.empty')
+  row.querySelector('.cat-id').textContent = c.configured ? c.id : t('cat.byAgent', { id: c.id })
   row.querySelector('.cat-add').hidden = c.configured
   const del = row.querySelector('.cat-del')
   del.hidden = !c.configured || c.fallback
@@ -1151,7 +1185,7 @@ function updateCatRow(row, c, count) {
   const paths = row.querySelector('.paths')
   if (paths.dataset.sig !== pathsSig) {
     paths.dataset.sig = pathsSig
-    paths.innerHTML = c.paths.map(p => `<span class="path"><span>${esc(p)}</span><button data-path="${esc(p)}" title="Убрать папку" aria-label="Убрать">×</button></span>`).join('')
+    paths.innerHTML = c.paths.map(p => `<span class="path"><span>${esc(p)}</span><button data-path="${esc(p)}" title="${esc(t('cat.pathRemove'))}" aria-label="${esc(t('file.remove'))}">×</button></span>`).join('')
   }
   row.querySelector('.path-add').hidden = !c.configured
   const palette = row.querySelector('.palette')
@@ -1203,13 +1237,13 @@ function renderDraft() {
     <div class="cat-row draft" style="--lane:${hex}">
       <div class="cat-main">
         <span class="swatch"></span>
-        <input class="cat-title draft-title" placeholder="Название, например Acme" spellcheck="false">
-        <button class="button primary draft-ok">Создать</button>
-        <button class="icon-button draft-cancel" title="Отмена" aria-label="Отмена"><svg viewBox="0 0 20 20"><path d="m5.5 5.5 9 9m0-9-9 9"/></svg></button>
+        <input class="cat-title draft-title" placeholder="${esc(t('cat.newTitle'))}" spellcheck="false">
+        <button class="button primary draft-ok">${esc(t('cat.create'))}</button>
+        <button class="icon-button draft-cancel" title="${esc(t('cancel'))}" aria-label="${esc(t('cancel'))}"><svg viewBox="0 0 20 20"><path d="m5.5 5.5 9 9m0-9-9 9"/></svg></button>
       </div>
       <div class="cat-sub">
-        <input class="draft-id" placeholder="id латиницей" spellcheck="false" aria-label="id">
-        <span class="hint">агенты пишут его в <code>board cat</code></span>
+        <input class="draft-id" placeholder="${esc(t('cat.idPlaceholder'))}" spellcheck="false" aria-label="id">
+        <span class="hint">${t('cat.idHint')}</span>
       </div>
     </div>`
   setTimeout(() => box.querySelector('.draft-title').focus(), 30)
@@ -1223,7 +1257,7 @@ async function createDraft() {
   if (await editCats({ op: 'create', id, title: title || id, color: catDraft?.color })) {
     catDraft = null
     renderDraft()
-    toast(`Категория «${title || id}» создана`)
+    toast(t('cat.created', { title: q(title || id) }))
     setTimeout(() => openCats(id), 300)
   }
 }
@@ -1276,13 +1310,13 @@ catsList.addEventListener('click', async e => {
   if (del) {
     if (row.dataset.confirm) {
       delete row.dataset.confirm
-      if (await editCats({ op: 'delete', id })) toast(`Категория «${cat?.title ?? id}» удалена`)
+      if (await editCats({ op: 'delete', id })) toast(t('cat.deleted', { title: q(cat?.title ?? id) }))
       return
     }
     // Destructive: the first click only asks.
     const n = state.data.items.filter(i => catOf(i) === id).length
     row.dataset.confirm = '1'
-    del.querySelector('span').textContent = n ? `Удалить? ${n} ${plural(n, 'сессия уйдёт', 'сессии уйдут', 'сессий уйдут')} по папкам` : 'Удалить?'
+    del.querySelector('span').textContent = n ? t('cat.confirmN', { n }) : t('cat.confirm')
     setTimeout(() => {
       delete row.dataset.confirm
       del.querySelector('span').textContent = ''
@@ -1423,6 +1457,20 @@ $('#lanes').addEventListener('click', e => {
   store.set('board.filter', state.filter)
   render()
 })
+$('#lang').addEventListener('click', async () => {
+  const codes = Object.keys(state.data.languages ?? LANGUAGES)
+  const next = codes[(codes.indexOf(t.lang) + 1) % codes.length]
+  state.langAsked = { lang: next, at: Date.now() }
+  setLanguage(next)
+  render()
+  try {
+    const res = await fetch('/api/settings', { method: 'POST', headers: { 'content-type': 'application/json', 'x-board': '1' }, body: JSON.stringify({ language: next }) })
+    const r = await res.json().catch(() => ({}))
+    if (!res.ok || r.ok === false) toast(r.error || t('err.status', { code: res.status }), true)
+  } catch (err) {
+    toast(t('err.offline', { why: err.message }), true)
+  }
+})
 $('#search').addEventListener('input', e => {
   state.query = e.target.value
   render()
@@ -1454,6 +1502,7 @@ addEventListener('scroll', () => $('.toolbar').classList.toggle('scrolled', scro
 addEventListener('resize', () => placeThumb(true))
 setInterval(render, 30_000) // ages
 
+applyTexts()
 fetch('/api/board')
   .then(r => r.json())
   .then(d => d.items && onData(d))
