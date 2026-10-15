@@ -781,3 +781,6 @@ button.swatch:active { transform: scale(0.88); }
   :root { --label-2: var(--label); --label-3: rgba(60, 60, 67, 0.7); }
   .card, .group, .sheet { box-shadow: 0 0 0 1px var(--label-3); }
 }
+
+.history-results blockquote { user-select: text; white-space: pre-wrap; overflow-wrap: anywhere; }
+.history-results small { overflow-wrap: anywhere; }

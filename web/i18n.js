@@ -20,6 +20,15 @@ const PLURAL = {
 
 const STRINGS = {
   en: {
+    'history.label': "Search this project's past Claude sessions",
+    'history.search': 'Search history',
+    'history.title': 'Past sessions in this project',
+    'history.scope': 'Local lexical search. Results do not resume a session.',
+    'history.unavailable': 'Project history unavailable.',
+    'history.unknownDate': 'Date unknown',
+    'history.empty': 'No matches in the bounded local search.',
+    'history.limited': 'Search limited: up to 200 files, 1 MiB per tail, 8 MiB total and 30 hits.',
+
     // columns and states
     'col.work': 'Working',
     'col.me': 'Needs me',
@@ -256,6 +265,15 @@ const STRINGS = {
   },
 
   ru: {
+    'history.label': 'Поиск по прошлым Claude-сессиям этого проекта',
+    'history.search': 'Искать в истории',
+    'history.title': 'Прошлые сессии проекта',
+    'history.scope': 'Локальный поиск по тексту. Сессии автоматически не возобновляются.',
+    'history.unavailable': 'История проекта недоступна.',
+    'history.unknownDate': 'Дата неизвестна',
+    'history.empty': 'Совпадений в ограниченном локальном поиске нет.',
+    'history.limited': 'Поиск ограничен: до 200 файлов, 1 МиБ хвоста на файл, 8 МиБ всего и 30 совпадений.',
+
     'col.work': 'Работает',
     'col.me': 'Ждёт меня',
     'col.ext': 'Ждёт внешнего',
