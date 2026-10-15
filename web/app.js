@@ -1,3 +1,4 @@
+import { resultToken, unseenResult, attentionTime, nextAttention, recordView } from './attention.js'
 // Agent board, web. Live data over Server-Sent Events; every change of place animates with a
 // spring from where the card is on screen (FLIP), drags stay glued to the pointer and land
 // with the pointer's velocity, and the session sheet can be flicked away.
@@ -64,6 +65,9 @@ function ago(ms) {
   return h < 24 ? t('ago.h', { n: h }) : t('ago.d', { n: Math.floor(h / 24) })
 }
 const clock = ms => (ms ? new Date(ms).toLocaleTimeString(t.lang, { hour: '2-digit', minute: '2-digit' }) : '')
+
+let viewed = {}
+try { viewed = JSON.parse(store.get('board.viewed', '{}')) ?? {} } catch {}
 
 // ---------------------------------------------------------------- state
 const state = {
@@ -335,7 +339,10 @@ function cardHTML(it) {
   const dot = it.sleeping ? ICON.moon : `<span class="dot ${it.column}" style="--c:${COLORS[it.column]}"></span>`
   const age = ago(it.column === 'ext' ? it.waitSince || it.activity : it.activity)
   const pin = it.pin && it.pin === it.column ? `<span class="pinned" title="${esc(t('card.pinned'))}">${ICON.pin}</span>` : ''
-  const top = `<div class="card-top">${dot}<span class="name">${esc(it.name)}</span>${pin}<span class="age">${esc(age)}</span></div>`
+  const unread = unseenResult(it, viewed) ? `<span class="chip">${esc(t('attention.unseen'))}</span>` : ''
+  const waiting = attentionTime(it)
+  const waitAge = waiting ? `<div class="attention-age">${esc(t(it.askSince ? 'attention.waitAge' : 'attention.activityAge', { age: ago(waiting) }))}</div>` : ''
+  const top = unread + waitAge + `<div class="card-top">${dot}<span class="name">${esc(it.name)}</span>${pin}<span class="age">${esc(age)}</span></div>`
   if (compact(it)) return top + actions
   // What it works on: its own words, else Claude's title of the session, else your last request.
   const own = plain(it.doing || (it.title && it.title !== it.name ? it.title : ''))
@@ -779,6 +786,11 @@ async function loadDetail(key) {
     if (seq !== detailSeq || state.open !== key) return
     if (!res.ok) return toast(d.error || t('err.unavailable'), true)
     state.detail = d
+    if (!state.data.stale && d.item.column === 'done' && resultToken(d.item) === resultToken(itemOf(key) ?? {})) {
+      viewed = recordView(viewed, d.item)
+      store.set('board.viewed', JSON.stringify(viewed))
+      render()
+    }
     renderSheetBody(false)
   } catch {}
 }
@@ -1483,6 +1495,12 @@ $('#sleepers').addEventListener('click', e => {
 })
 $('#sleepers').setAttribute('aria-pressed', String(state.sleepers))
 
+function openNextAttention() {
+  const key = nextAttention(visibleItems().filter(it => laneShown(catOf(it))), state.open, viewed)
+  if (key) openSheet(key)
+}
+$('#next-attention').addEventListener('click', openNextAttention)
+
 addEventListener('keydown', e => {
   const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName)
   if (e.key === 'Escape') {
@@ -1493,6 +1511,9 @@ addEventListener('keydown', e => {
       $('#search').value = state.query = ''
       render()
     }
+  } else if (e.key.toLowerCase() === 'n' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    e.preventDefault()
+    openNextAttention()
   } else if (e.key === '/' && !typing) {
     e.preventDefault()
     $('#search').focus()
