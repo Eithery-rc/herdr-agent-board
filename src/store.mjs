@@ -2,7 +2,7 @@
 // see: its category, what it works on, what it waits for. One small JSON file per session, so
 // sessions writing at the same time never clobber each other. Keyed by the Claude session id,
 // which survives sleep and resume; agents without one are keyed by their pane.
-import { mkdirSync, readFileSync, readdirSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, readdirSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CARDS_DIR } from './paths.mjs'
 
@@ -17,10 +17,21 @@ export function readCard(key) {
   }
 }
 
-// An atomic mkdir serializes the whole read/merge/rename across processes. Do not steal
-// old locks: a slow writer may still own one. Crashed writers leave a lock to remove manually.
+// An atomic mkdir serializes the whole read/merge/rename across processes. A writer holds the
+// lock for milliseconds, so one older than LOCK_STALE_MS was left by a process killed mid-write
+// (a closed terminal, a hook cut off): it is taken over, or that card could never be written
+// again. Two writers taking over the same dead lock at the same instant is the one race left.
 const LOCK_TIMEOUT_MS = 2000
+const LOCK_STALE_MS = 30_000
 const pause = new Int32Array(new SharedArrayBuffer(4))
+
+function lockAge(lock) {
+  try {
+    return Date.now() - statSync(lock).mtimeMs
+  } catch {
+    return 0 // gone already: the next mkdir tells
+  }
+}
 
 function lockCard(path) {
   const lock = `${path}.lock`
@@ -31,6 +42,12 @@ function lockCard(path) {
       return () => rmdirSync(lock)
     } catch (err) {
       if (err.code !== 'EEXIST') throw err
+      if (lockAge(lock) > LOCK_STALE_MS) {
+        try {
+          rmdirSync(lock)
+        } catch {}
+        continue
+      }
       if (performance.now() >= deadline) {
         throw new Error(`Timed out waiting for card lock: ${lock}`)
       }

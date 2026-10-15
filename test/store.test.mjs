@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, utimesSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { sandbox, until } from './fixtures/sandbox.mjs'
@@ -42,6 +42,18 @@ test('an occupied card lock times out without deleting another writer lock or ch
   assert.match(message(proc, 'error')?.error ?? '', /Timed out waiting for card lock/)
   assert.equal(JSON.parse(readFileSync(join(box.cards, 'shared.json'), 'utf8')).doing, 'original')
   assert.ok(existsSync(join(box.cards, 'shared.json.lock')))
+})
+
+test('a lock left by a writer that died long ago is taken over', { timeout: 10_000 }, async t => {
+  const box = sandbox(t)
+  const lock = join(box.cards, 'shared.json.lock')
+  mkdirSync(lock, { recursive: true })
+  const old = new Date(Date.now() - 60_000)
+  utimesSync(lock, old, old)
+  writeFileSync(join(box.cards, 'shared.json'), '{"key":"shared","doing":"original"}')
+  await done(box.run('write', { key: 'shared', patch: { doing: 'changed' } }))
+  assert.equal(JSON.parse(readFileSync(join(box.cards, 'shared.json'), 'utf8')).doing, 'changed')
+  assert.equal(existsSync(lock), false)
 })
 
 for (const failure of ['patch', 'rename']) {
