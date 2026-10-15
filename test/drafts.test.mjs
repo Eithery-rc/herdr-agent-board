@@ -74,3 +74,29 @@ test('HTTP messages recheck a fresh snapshot and reject replaced sessions/offlin
   assert.notEqual((await post('offline')).ok,true)
   assert.equal(box.calls().filter(a=>a[1]==='prompt').length,1)
 })
+
+test('a pane with no Claude session id still takes messages, also without a request id', { timeout: 15000 }, async t => {
+  const http = await import('node:http')
+  const { sandbox, until } = await import('./fixtures/sandbox.mjs')
+  const box = sandbox(t)
+  const reserve = http.createServer()
+  await new Promise(r => reserve.listen(0, '127.0.0.1', r))
+  const port = reserve.address().port
+  await new Promise(r => reserve.close(r))
+  box.state({
+    'api snapshot': { result: { snapshot: { panes: [{ pane_id: 'p', agent: 'codex', agent_status: 'idle' }], tabs: [], workspaces: [] } } },
+    'agent get': { result: { agent: { agent_status: 'idle' } } },
+    'agent prompt': { result: {} },
+  })
+  const proc = box.run('server', { port, categories: [{ id: 'other', title: 'Other', color: 'gray' }], wakeUrl: null, refreshSec: 3600 })
+  await until(() => proc.messages.some(m => m.ready))
+  const base = `http://127.0.0.1:${port}`
+  for (let i = 0; i < 100; i++) {
+    const board = await (await fetch(`${base}/api/board`)).json()
+    if (board.items[0]?.key === 'pane-p') break
+    await new Promise(r => setTimeout(r, 20))
+  }
+  const r = await (await fetch(`${base}/api/session/pane-p/message`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-board': '1' }, body: JSON.stringify({ text: 'hi', session: null }) })).json()
+  assert.equal(r.ok, true, JSON.stringify(r))
+  assert.deepEqual(box.calls().filter(a => a[1] === 'prompt'), [['agent', 'prompt', 'p', 'hi']])
+})

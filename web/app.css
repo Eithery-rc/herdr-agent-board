@@ -632,6 +632,12 @@ body.dragging { cursor: grabbing; }
 .send svg { stroke-width: 2.1; }
 .send:disabled { opacity: 0.3; }
 .send:active:not(:disabled) { transform: scale(0.92); }
+/* Discard the draft: only there while there is one. */
+.draft-clear { display: grid; place-items: center; flex: none; width: 26px; height: 26px; margin-bottom: 2px; border: 0; border-radius: 50%; background: none; color: var(--label-3); transition: background 120ms ease, color 120ms ease; }
+.draft-clear[hidden] { display: none; }
+.draft-clear:hover { background: var(--fill); color: var(--label-2); }
+.draft-clear:disabled { opacity: 0.3; }
+.draft-clear svg { width: 14px; height: 14px; stroke-width: 2; }
 
 /* ---------------------------------------------------------------- categories */
 .lane-head { cursor: default; border-radius: 8px; width: fit-content; padding: 2px 8px 2px 2px; transition: background 150ms ease; }

@@ -74,8 +74,6 @@
           <span data-i18n="sheet.sleep">Put to sleep</span>
         </button>
       </div>
-      <p class="sheet-meta" data-i18n="draft.hint">Text is saved per session in this browser. Attachments are not restored after reload.</p>
-      <button type="button" class="button" id="draft-cancel" data-i18n="draft.cancel">Discard draft</button>
       <div class="attachments" id="attachments"></div>
       <form class="composer-box" id="composer">
         <button type="button" class="attach" id="attach" title="Attach a file. Paste a screenshot with Ctrl+V or drop files on the panel" aria-label="Attach a file" data-i18n-title="compose.attach" data-i18n-label="compose.attachLabel">
@@ -83,6 +81,9 @@
         </button>
         <input type="file" id="file-input" multiple hidden>
         <textarea id="message" rows="1" placeholder="Message the session… Ctrl+V pastes a screenshot" aria-label="Message" data-i18n-placeholder="compose.placeholder" data-i18n-label="compose.label"></textarea>
+        <button type="button" class="draft-clear" id="draft-cancel" hidden title="Discard the draft" aria-label="Discard the draft" data-i18n-title="draft.cancel" data-i18n-label="draft.cancel">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6.5 6.5 7 7m0-7-7 7"/></svg>
+        </button>
         <button class="send" type="submit" title="Send (Enter)" aria-label="Send" data-i18n-label="compose.sendLabel">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 16V4m-5 5 5-5 5 5"/></svg>
         </button>

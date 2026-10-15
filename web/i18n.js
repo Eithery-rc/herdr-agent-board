@@ -25,9 +25,9 @@ const STRINGS = {
     'attention.nextHint': 'Open the next card that needs you (N). Opening it does not accept a result.',
     'attention.waitAge': 'Waiting: {age}',
     'attention.activityAge': 'Last activity: {age}',
-    'draft.hint': 'Text is saved per session in this browser. Attachments are not restored after reload. Nothing sends automatically.',
-    'draft.cancel': 'Discard draft',
-    'draft.stale': 'Refresh the board before sending; data is stale.',
+    'draft.cancel': 'Discard the draft',
+    'err.msg.busy': 'A message to this session is still on its way',
+    'err.msg.id': 'A malformed message request',
 
     // columns and states
     'col.work': 'Working',
@@ -291,9 +291,9 @@ const STRINGS = {
     'attention.nextHint': 'Открыть следующую карточку, которой нужно внимание (N). Открыть не значит принять результат.',
     'attention.waitAge': 'Ожидает: {age}',
     'attention.activityAge': 'Последняя активность: {age}',
-    'draft.hint': 'Текст сохраняется на сессию в этом браузере. Вложения после перезагрузки не восстанавливаются. Автоотправки нет.',
-    'draft.cancel': 'Отменить черновик',
-    'draft.stale': 'Перед отправкой обнови доску: данные устарели.',
+    'draft.cancel': 'Удалить черновик',
+    'err.msg.busy': 'Предыдущее сообщение этой сессии ещё отправляется',
+    'err.msg.id': 'Некорректный запрос сообщения',
 
     'col.work': 'Работает',
     'col.me': 'Ждёт меня',

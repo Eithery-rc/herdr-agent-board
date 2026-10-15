@@ -10,7 +10,7 @@ import { readFile } from 'node:fs/promises'
 import http from 'node:http'
 import { extname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { messageGate } from './message-gate.mjs'
+import { randomUUID } from 'node:crypto'
 import { focus, send, sleepSession, wake } from './actions.mjs'
 import { conversation } from './claude.mjs'
 import { describe, FILE_TOKEN, MEDIA_TYPES, openWith, preview, resolvePath } from './files.mjs'
@@ -18,6 +18,7 @@ import { categoryInfo, colorHex, editCategories, editSettings, laneRank, liveCon
 import { lang, t } from './lang.mjs'
 import { LANGUAGES } from '../web/i18n.js'
 import { herdrText } from './herdr.mjs'
+import { messageGate } from './message-gate.mjs'
 import { busy, COLUMNS, collect, forgetSleepers, PINS } from './model.mjs'
 import { CARDS_DIR, ROOT, STATE_DIR } from './paths.mjs'
 import { writeCard } from './store.mjs'
@@ -203,10 +204,12 @@ export function startServer({ cfg, log = () => {} } = {}) {
         // Attached files go as their paths: Claude reads them, and picks up image paths as images.
         const files = (Array.isArray(body.files) ? body.files : []).filter(p => typeof p === 'string' && p.startsWith(UPLOADS_DIR))
         const list = files.length ? `${t('msg.files', { n: files.length })}:\n${files.join('\n')}` : ''
-        if (stale || !lastSuccessfulRefreshAt) return { ok: false, error: t('draft.stale') }
-        if (!item.session || body.session !== item.session) return { ok: false, error: t('err.sessionChanged', { name: item.name }) }
-        return guardedMessage(item.key, body.requestId, [body.session, body.text, files], async () => {
-          // Always collect a new snapshot before accepting a message, even if SSE is connected.
+        // The card is for one session: a pane that holds another one now gets nothing. Panes with
+        // no Claude session id (other agents) are matched by the card alone.
+        if ((body.session ?? null) !== (item.session ?? null)) return { ok: false, error: t('err.sessionChanged', { name: item.name }) }
+        return guardedMessage(item.key, body.requestId ?? randomUUID(), [body.session ?? null, body.text, files], async () => {
+          // Always collect a new snapshot before accepting a message, even if SSE is connected: a
+          // board that cannot reach herdr fails here rather than send on old data.
           const fresh = (await collect(cfg)).find(next => next.key === item.key)
           if (!fresh || fresh.session !== item.session || fresh.pane !== item.pane) return { ok: false, error: t('err.sessionChanged', { name: item.name }) }
           return send(cfg, fresh, [String(body.text ?? '').trim(), list].filter(Boolean).join('\n\n'))

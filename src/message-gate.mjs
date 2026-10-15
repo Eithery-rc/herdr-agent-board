@@ -1,15 +1,17 @@
 // One in-flight message per session. Successful request IDs suppress HTTP replays
 // within this server process; this does not make Herdr get/prompt atomic.
+import { t } from './lang.mjs'
+
 export function messageGate() {
   const pending = new Map()
   const completed = new Map()
   return async (key, id, payload, action) => {
-    if (typeof id !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(id)) return { ok: false, error: 'Invalid message request ID' }
+    if (typeof id !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(id)) return { ok: false, error: t('err.msg.id') }
     const token = `${key}:${id}`
     const signature = JSON.stringify(payload)
     const previous = completed.get(token) ?? pending.get(key)
     if (previous) {
-      if (previous.token !== token || previous.signature !== signature) return { ok: false, error: 'Another message is pending or this request changed' }
+      if (previous.token !== token || previous.signature !== signature) return { ok: false, error: t('err.msg.busy') }
       return previous.result ?? previous.promise
     }
     const entry = { token, signature }
