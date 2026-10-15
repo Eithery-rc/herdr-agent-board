@@ -5,18 +5,21 @@
 // Only loopback, only the Host it was asked for, and every POST needs an X-Board header: a page
 // on another site cannot send that without a CORS preflight, which this server never grants, so
 // it cannot type into a session.
-import { createWriteStream, mkdirSync, readdirSync, rmSync, statSync, unlinkSync, watch } from 'node:fs'
+import { createReadStream, createWriteStream, mkdirSync, readdirSync, rmSync, statSync, unlinkSync, watch } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import http from 'node:http'
 import { extname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { randomUUID } from 'node:crypto'
 import { focus, send, sleepSession, wake } from './actions.mjs'
 import { checkoutChanges } from './changes.mjs'
 import { conversation } from './claude.mjs'
+import { describe, FILE_TOKEN, MEDIA_TYPES, openWith, preview, resolvePath } from './files.mjs'
 import { categoryInfo, colorHex, editCategories, editSettings, laneRank, liveConfig, PALETTE } from './config.mjs'
 import { lang, t } from './lang.mjs'
 import { LANGUAGES } from '../web/i18n.js'
 import { herdrText } from './herdr.mjs'
+import { messageGate } from './message-gate.mjs'
 import { busy, COLUMNS, collect, forgetSleepers, PINS } from './model.mjs'
 import { CARDS_DIR, ROOT, STATE_DIR } from './paths.mjs'
 import { writeCard } from './store.mjs'
@@ -137,7 +140,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
         return { id, title: c.title, color: colorHex(c.color), colorName: c.color, paths: c.paths ?? [], configured, fallback: id === 'other' }
       })
     const list = items.map(({ transcript, ...rest }) => rest)
-    return { version, lang: lang(), language: cfg.language ?? 'auto', languages: LANGUAGES, stale, items: list, categories, swatches: SWATCHES, columns: COLUMNS.map(({ id, title }) => ({ id, title })) }
+    return { version, lang: lang(), language: cfg.language ?? 'auto', languages: LANGUAGES, fsToken: FILE_TOKEN, stale, items: list, categories, swatches: SWATCHES, columns: COLUMNS.map(({ id, title }) => ({ id, title })) }
   }
 
   // GET always answers with the latest payload. Live clients get it again only when the board
@@ -176,6 +179,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
     }
   }
 
+  const guardedMessage = messageGate()
   const find = key => items.find(i => i.key === key)
 
   async function detail(item) {
@@ -201,7 +205,16 @@ export function startServer({ cfg, log = () => {} } = {}) {
         // Attached files go as their paths: Claude reads them, and picks up image paths as images.
         const files = (Array.isArray(body.files) ? body.files : []).filter(p => typeof p === 'string' && p.startsWith(UPLOADS_DIR))
         const list = files.length ? `${t('msg.files', { n: files.length })}:\n${files.join('\n')}` : ''
-        return send(cfg, item, [String(body.text ?? '').trim(), list].filter(Boolean).join('\n\n'))
+        // The card is for one session: a pane that holds another one now gets nothing. Panes with
+        // no Claude session id (other agents) are matched by the card alone.
+        if ((body.session ?? null) !== (item.session ?? null)) return { ok: false, error: t('err.sessionChanged', { name: item.name }) }
+        return guardedMessage(item.key, body.requestId ?? randomUUID(), [body.session ?? null, body.text, files], async () => {
+          // Always collect a new snapshot before accepting a message, even if SSE is connected: a
+          // board that cannot reach herdr fails here rather than send on old data.
+          const fresh = (await collect(cfg)).find(next => next.key === item.key)
+          if (!fresh || fresh.session !== item.session || fresh.pane !== item.pane) return { ok: false, error: t('err.sessionChanged', { name: item.name }) }
+          return send(cfg, fresh, [String(body.text ?? '').trim(), list].filter(Boolean).join('\n\n'))
+        })
       }
       case 'card': {
         const patch = {}
@@ -247,6 +260,72 @@ export function startServer({ cfg, log = () => {} } = {}) {
         clients.add(res)
         req.on('close', () => clients.delete(res))
         return
+      }
+      // Files and folders the chat mentions: what they are, a preview, opening them (files.mjs).
+      if (req.method === 'POST' && path.startsWith('/api/fs/')) {
+        if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })
+        const body = await readBody(req)
+        if (path === '/api/fs/stat') {
+          const raws = Array.isArray(body.paths) ? body.paths.slice(0, 300).map(String) : []
+          const items = raws.map(raw => {
+            const { path: target, line } = resolvePath(raw, body.cwd)
+            return { raw, line, ...(target ? describe(target) : { path: '', exists: false }) }
+          })
+          return json(200, { items })
+        }
+        const { path: target } = resolvePath(body.path, body.cwd)
+        if (!target) return json(400, { error: t('err.fs.missing', { path: String(body.path ?? '') }) })
+        if (path === '/api/fs/preview') return json(200, preview(target))
+        if (path === '/api/fs/open') {
+          if (!describe(target).exists) return json(404, { error: t('err.fs.missing', { path: target }) })
+          const r = await openWith(target, body.how === 'reveal' ? 'reveal' : 'open')
+          return json(r.ok ? 200 : 500, r.ok ? r : { error: t('err.fs.open', { why: r.error }) })
+        }
+        return json(404, { error: 'not found' })
+      }
+      if (req.method === 'POST' && path === '/api/open-url') {
+        if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })
+        const body = await readBody(req)
+        let link = null
+        try {
+          link = new URL(String(body.url ?? ''))
+        } catch {}
+        if (!link || !/^https?:$/.test(link.protocol)) return json(400, { error: t('err.fs.open', { why: String(body.url ?? '') }) })
+        const r = await openWith(link.href)
+        return json(r.ok ? 200 : 500, r.ok ? r : { error: t('err.fs.open', { why: r.error }) })
+      }
+      // Bytes of an image, PDF, video or audio file for the quick look: the per-run token stands
+      // for the X-Board header, which <img>, <video> and the PDF viewer cannot send.
+      if (req.method === 'GET' && path === '/api/fs/raw') {
+        if (url.searchParams.get('t') !== FILE_TOKEN) return json(403, { error: 'token' })
+        const { path: target } = resolvePath(url.searchParams.get('path'))
+        const type = MEDIA_TYPES[extname(target).slice(1).toLowerCase()]
+        const st = target ? statSync(target, { throwIfNoEntry: false }) : null
+        if (!type || !st?.isFile()) return json(404, { error: 'not found' })
+        const head = {
+          'content-type': type,
+          'cache-control': 'no-cache',
+          'accept-ranges': 'bytes',
+          'x-content-type-options': 'nosniff',
+          // An SVG opened on its own runs no script here; the PDF viewer needs no sandbox.
+          'content-security-policy': type === 'application/pdf' ? "default-src 'none'; frame-ancestors 'self'" : "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'self'; sandbox",
+        }
+        let start = 0
+        let end = st.size - 1
+        const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '')
+        if (range && (range[1] || range[2])) {
+          if (range[1]) {
+            start = Number(range[1])
+            if (range[2]) end = Math.min(Number(range[2]), end)
+          } else start = Math.max(0, st.size - Number(range[2]))
+          if (start > end) {
+            res.writeHead(416, { 'content-range': `bytes */${st.size}` })
+            return res.end()
+          }
+          res.writeHead(206, { ...head, 'content-range': `bytes ${start}-${end}/${st.size}`, 'content-length': end - start + 1 })
+        } else res.writeHead(200, { ...head, 'content-length': st.size })
+        if (st.size === 0) return res.end()
+        return createReadStream(target, { start, end }).on('error', () => res.destroy()).pipe(res)
       }
       if (req.method === 'POST' && path === '/api/upload') {
         if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })

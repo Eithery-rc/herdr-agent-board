@@ -163,7 +163,7 @@ test('markdown: blocks and inline markup, nothing executable gets through', () =
   assert.match(html, /<pre><code>&lt;b&gt;x&lt;\/b&gt;<\/code><\/pre>/)
   const evil = markdown('<img src=x onerror=alert(1)> [a](javascript:alert(1)) [b](https://ok.example/p)')
   assert.ok(!/<img|href="javascript/i.test(evil))
-  assert.match(evil, /<a href="https:\/\/ok\.example\/p" target="_blank" rel="noopener noreferrer">b<\/a>/)
+  assert.match(evil, /<a class="ext" href="https:\/\/ok\.example\/p" target="_blank" rel="noopener noreferrer">b<\/a>/)
   assert.equal(markdown('snake_case_name and the path C:\a_b\c_d.txt'), '<p>snake_case_name and the path C:\a_b\c_d.txt</p>')
 })
 
