@@ -220,14 +220,14 @@ test('a reminder set for another session says who set it', { timeout: 15_000 }, 
   const box = sandbox(t)
   herdrWith(box, 'idle')
   const past = Date.now() - 1000
-  put(box, { id: 'abab01', text: 'review my PR', at: past, next: past, from: { key: 's7', name: 'Centium-master' } })
+  put(box, { id: 'abab01', text: 'review my PR', at: past, next: past, from: { key: 's7', name: 'lead-session' } })
   await scheduler(box)
   await until(() => prompts(box).length === 1)
-  assert.deepEqual(prompts(box), ['[board reminder from Centium-master] review my PR'])
+  assert.deepEqual(prompts(box), ['[board reminder from lead-session] review my PR'])
   // Set by s7 for s0, which /clear turned into s1: both are said.
-  put(box, { id: 'abab02', key: 's0', name: 'old', pane: 'p1', cwd: box.dir, text: 'cron', cron: '0 * * * *', next: past, from: { key: 's7', name: 'Centium-master' } })
+  put(box, { id: 'abab02', key: 's0', name: 'old', pane: 'p1', cwd: box.dir, text: 'cron', cron: '0 * * * *', next: past, from: { key: 's7', name: 'lead-session' } })
   await until(() => prompts(box).length === 2)
-  assert.equal(prompts(box)[1], '[board schedule abab02 from Centium-master: 0 * * * *; set for old before /clear] cron')
+  assert.equal(prompts(box)[1], '[board schedule abab02 from lead-session: 0 * * * *; set for old before /clear] cron')
   // Its own reminder has no "from", also after /clear.
   put(box, { id: 'abab03', key: 's0', name: 'old', pane: 'p1', cwd: box.dir, text: 'mine', at: past, next: past, from: { key: 's0', name: 'old' } })
   await until(() => prompts(box).length === 3)
@@ -361,7 +361,7 @@ test('a board reminder does not count as the user answering the session', { time
       proc.on('close', resolve)
       proc.stdin.end(JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 's1', cwd: box.dir, prompt }))
     })
-  await hook('[board reminder from Centium-master] check the CI run')
+  await hook('[board reminder from lead-session] check the CI run')
   assert.equal(card().ask, 'Send it?')
   // The session works again: a column dragged to by hand goes, as with any work.
   assert.equal(card().pin, undefined)
