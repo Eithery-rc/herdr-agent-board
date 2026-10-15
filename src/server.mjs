@@ -265,6 +265,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
       if (!new RegExp(`^(127\\.0\\.0\\.1|localhost):${port}$`).test(req.headers.host ?? '')) return json(403, { error: 'host' })
       const url = new URL(req.url, `http://127.0.0.1:${port}`)
       const path = decodeURIComponent(url.pathname)
+      const refuseStale = () => stale || !lastSuccessfulRefreshAt || Date.now()-lastSuccessfulRefreshAt > Math.max(10000,(cfg.refreshSec ?? 2)*3000)
 
       if (req.method === 'GET' && path === '/api/board') {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
@@ -385,6 +386,8 @@ export function startServer({ cfg, log = () => {} } = {}) {
         if (req.method === 'GET' && !m[2]) return json(200, await detail(item))
         if (req.method === 'POST' && m[2]) {
           if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })
+          // Actions that go through herdr wait for a board that can reach it; card edits and the rest do not.
+          if (['focus', 'wake', 'sleep', 'message'].includes(m[2]) && refuseStale()) return json(409, { ok: false, error: t('mobile.readOnly') })
           const body = await readBody(req)
           const r = await act(item, m[2], body)
           refresh()

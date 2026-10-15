@@ -41,6 +41,7 @@ const STRINGS = {
     'limits.hintUsagebar': 'Claude usage, {time}. From the usagebar cache of the default profile; the board does not check it is the account of these sessions.',
     'limits.stale': 'Claude usage, {time}: an old reading, the windows may have reset since.',
 
+    'mobile.readOnly': 'No fresh data from herdr: sending and going to sessions wait until it is back',
     'attention.unseen': 'Not viewed',
     'attention.next': 'Next',
     'attention.nextHint': 'Open the next card that needs you (N). Opening it does not accept a result.',
@@ -348,6 +349,7 @@ const STRINGS = {
     'limits.hintUsagebar': 'Расход Claude, {time}. Из кэша usagebar профиля по умолчанию; доска не проверяет, что это аккаунт этих сессий.',
     'limits.stale': 'Расход Claude, {time}: старые данные, окна могли уже обнулиться.',
 
+    'mobile.readOnly': 'Нет свежих данных от herdr: отправка и переход к сессиям подождут, пока они вернутся',
     'attention.unseen': 'Не просмотрено',
     'attention.next': 'Дальше',
     'attention.nextHint': 'Открыть следующую карточку, которой нужно внимание (N). Открыть не значит принять результат.',
