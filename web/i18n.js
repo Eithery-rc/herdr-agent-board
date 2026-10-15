@@ -20,6 +20,11 @@ const PLURAL = {
 
 const STRINGS = {
   en: {
+    'attention.unseen': 'Not viewed',
+    'attention.next': 'Next',
+    'attention.nextHint': 'Open the next card that needs you (N). Opening it does not accept a result.',
+    'attention.waitAge': 'Waiting: {age}',
+    'attention.activityAge': 'Last activity: {age}',
     'draft.hint': 'Text is saved per session in this browser. Attachments are not restored after reload. Nothing sends automatically.',
     'draft.cancel': 'Discard draft',
     'draft.stale': 'Refresh the board before sending; data is stale.',
@@ -123,6 +128,27 @@ const STRINGS = {
     'err.cat.emptyTitle': 'Empty title',
     'err.cat.other': '{title} is the fallback lane and stays',
     'err.language': 'Unknown language {lang}',
+    'err.fs.missing': 'Not found: {path}',
+    'err.fs.open': 'Could not open it: {why}',
+
+    // quick look: files, folders and links in the chat
+    'ql.open': 'Open',
+    'ql.reveal': 'Show in folder',
+    'ql.copy': 'Copy path',
+    'ql.copied': 'Path copied',
+    'ql.back': 'Back (Backspace)',
+    'ql.view': 'Preview',
+    'ql.source': 'Source',
+    'ql.missing': 'Not found: {path}',
+    'ql.denied': 'No access to it',
+    'ql.noPreview': 'No preview for this kind of file',
+    'ql.emptyFolder': 'Empty folder',
+    'ql.items': ['{n} item', '{n} items'],
+    'ql.firstItems': 'the first {n} shown',
+    'ql.lines': ['{n} line', '{n} lines'],
+    'ql.rows': ['{n} row', '{n} rows'],
+    'ql.truncated': 'the start only, open it for the rest',
+    'ql.modified': 'modified {date}',
 
     // web board: toolbar
     'tb.title': 'Agents',
@@ -260,6 +286,11 @@ const STRINGS = {
   },
 
   ru: {
+    'attention.unseen': 'Не просмотрено',
+    'attention.next': 'Дальше',
+    'attention.nextHint': 'Открыть следующую карточку, которой нужно внимание (N). Открыть не значит принять результат.',
+    'attention.waitAge': 'Ожидает: {age}',
+    'attention.activityAge': 'Последняя активность: {age}',
     'draft.hint': 'Текст сохраняется на сессию в этом браузере. Вложения после перезагрузки не восстанавливаются. Автоотправки нет.',
     'draft.cancel': 'Отменить черновик',
     'draft.stale': 'Перед отправкой обнови доску: данные устарели.',
@@ -358,6 +389,26 @@ const STRINGS = {
     'err.cat.emptyTitle': 'Пустое название',
     'err.cat.other': '{title} нужна как запасная дорожка',
     'err.language': 'Нет языка {lang}',
+    'err.fs.missing': 'Не найдено: {path}',
+    'err.fs.open': 'Не открылось: {why}',
+
+    'ql.open': 'Открыть',
+    'ql.reveal': 'Показать в папке',
+    'ql.copy': 'Скопировать путь',
+    'ql.copied': 'Путь скопирован',
+    'ql.back': 'Назад (Backspace)',
+    'ql.view': 'Просмотр',
+    'ql.source': 'Исходник',
+    'ql.missing': 'Не найдено: {path}',
+    'ql.denied': 'Нет доступа',
+    'ql.noPreview': 'Для такого файла нет предпросмотра',
+    'ql.emptyFolder': 'Пустая папка',
+    'ql.items': ['{n} объект', '{n} объекта', '{n} объектов'],
+    'ql.firstItems': 'показаны первые {n}',
+    'ql.lines': ['{n} строка', '{n} строки', '{n} строк'],
+    'ql.rows': ['{n} запись', '{n} записи', '{n} записей'],
+    'ql.truncated': 'показано только начало, остальное в «Открыть»',
+    'ql.modified': 'изменён {date}',
 
     'tb.title': 'Агенты',
     'tb.lanes': 'Категории',

@@ -56,6 +56,15 @@ raised when it is already open.
   the panel. They upload to `%LOCALAPPDATA%\herdr\plugins\agent-board\uploads\<day>\` (kept 14
   days, `keepUploadsDays`) and the message carries their paths; Claude reads them, images as
   images. Sent images show as previews in the thread.
+- Files, folders and links in the thread. A path an agent writes (absolute, `~/...`, a
+  `herdr-reveal:` or `file:` link, or relative to the session's folder in `code`, with an
+  optional `:line`) becomes a chip once the board finds it on disk; file tool calls in the
+  folded runs open the same way. A chip opens a quick look over the board, grown out of the
+  chip: images, PDF, video and audio, Markdown (rendered or source), code and text with line
+  numbers (the `:line` lit and scrolled to), JSON pretty, CSV as a table, folders as a list to
+  walk through (the path bar goes up; Backspace goes back). From there: open it with the
+  system, show it in its folder, copy the path. Esc closes it. Web links open in the default
+  browser.
 - "Categories" (or a click on a lane title): rename, recolor, add or remove the folders that
   sort sessions into the lane, create, delete (two clicks; its sessions fall back to the folder
   guess), drag rows by the handle to reorder lanes. Written to config.json at once.
@@ -110,6 +119,14 @@ A failed refresh keeps the last snapshot and marks it stale; the indicator turns
 Herdr data can be collected again. Opening the SSE connection alone does not mark data live.
 SSE sends the board again only when it changed (stale included); GET always has the latest
 `lastSuccessfulRefreshAt`.
+
+Files (`src/files.mjs`, `web/files.js`): `POST /api/fs/stat` (which of these paths exist),
+`POST /api/fs/preview`, `POST /api/fs/open` (`open` or `reveal`, through explorer.exe, `open`
+or `xdg-open`, no shell) and `POST /api/open-url` (http(s) only) need the `X-Board` header like
+every POST. `GET /api/fs/raw` serves images, PDF, video and audio, with ranges, to the page's
+`<img>`, `<video>` and PDF viewer, which cannot send headers: it needs the `fsToken` from the
+board payload, new on every start, which only the board's own page can read. Text never comes
+raw, and raw responses carry a CSP that runs no script.
 
 ## Board keys
 

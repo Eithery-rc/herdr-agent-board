@@ -2,6 +2,8 @@ import { draftBook } from './drafts.js'
 // Agent board, web. Live data over Server-Sent Events; every change of place animates with a
 // spring from where the card is on screen (FLIP), drags stay glued to the pointer and land
 // with the pointer's velocity, and the session sheet can be flicked away.
+import { attentionTime, nextAttention, recordView, resultToken, unseenResult } from './attention.js'
+import { initFiles } from './files.js'
 import { LANGUAGES, translator } from './i18n.js'
 import { updateLive } from './live.js'
 import { markdown } from './markdown.js'
@@ -50,11 +52,13 @@ const plain = s =>
     .replace(/[*_`>]+/g, '')
     .replace(/\s+/g, ' ')
     .trim()
-/** Previews of images sent from the board: their paths in a message point into the uploads folder. */
-const UPLOAD_IMAGE = /agent-board[\\/]uploads[\\/](\d{4}-\d{2}-\d{2})[\\/]([^\s\\/]+\.(?:png|jpe?g|gif|webp))/gi
+/** Previews of images sent from the board: their paths in a message point into the uploads folder. A click opens the quick look. */
+const UPLOAD_IMAGE = /((?:[A-Za-z]:[\\/]|\/)[^\s"'<>]*?agent-board[\\/]uploads[\\/](\d{4}-\d{2}-\d{2})[\\/]([^\s\\/]+\.(?:png|jpe?g|gif|webp)))/gi
 const thumbs = text => {
-  const urls = [...String(text ?? '').matchAll(UPLOAD_IMAGE)].map(m => `/uploads/${m[1]}/${encodeURIComponent(m[2])}`)
-  return urls.length ? `<div class="thumbs">${urls.map(u => `<a href="${u}" target="_blank" rel="noopener"><img src="${u}" alt="" loading="lazy"></a>`).join('')}</div>` : ''
+  const shots = [...String(text ?? '').matchAll(UPLOAD_IMAGE)].map(m => ({ path: m[1], url: `/uploads/${m[2]}/${encodeURIComponent(m[3])}` }))
+  return shots.length
+    ? `<div class="thumbs">${shots.map(s => `<a class="fs-inline" data-path="${esc(s.path)}" href="${s.url}" target="_blank" rel="noopener"><img src="${s.url}" alt="" loading="lazy"></a>`).join('')}</div>`
+    : ''
 }
 function ago(ms) {
   if (!ms) return ''
@@ -65,6 +69,9 @@ function ago(ms) {
   return h < 24 ? t('ago.h', { n: h }) : t('ago.d', { n: Math.floor(h / 24) })
 }
 const clock = ms => (ms ? new Date(ms).toLocaleTimeString(t.lang, { hour: '2-digit', minute: '2-digit' }) : '')
+
+let viewed = {}
+try { viewed = JSON.parse(store.get('board.viewed', '{}')) ?? {} } catch {}
 
 // ---------------------------------------------------------------- state
 const state = {
@@ -228,6 +235,7 @@ function setLanguage(lang) {
   if (state.open) renderSheetBody(false)
   renderAttachments()
   syncComposer()
+  files.relabel()
 }
 
 function applyTexts() {
@@ -335,9 +343,14 @@ function cardHTML(it) {
   const sleep = !it.sleeping && it.session && !inTurn(it) ? `<button data-act="sleep" title="${esc(t('card.sleep'))}">${ICON.moon}</button>` : ''
   const actions = `<div class="card-actions">${dismiss}${sleep}<button data-act="write" title="${esc(t('card.write'))}">${ICON.write}</button><button data-act="focus" title="${esc(t('card.focus'))}">${ICON.focus}</button></div>`
   const dot = it.sleeping ? ICON.moon : `<span class="dot ${it.column}" style="--c:${COLORS[it.column]}"></span>`
-  const age = ago(it.column === 'ext' ? it.waitSince || it.activity : it.activity)
+  // Under "Needs me" the age says how long it has waited for you: since its question, else since its last activity.
+  const waiting = attentionTime(it)
+  const age = ago(waiting || (it.column === 'ext' ? it.waitSince || it.activity : it.activity))
+  const ageTitle = waiting ? t(it.askSince ? 'attention.waitAge' : 'attention.activityAge', { age: ago(waiting) }) : ''
   const pin = it.pin && it.pin === it.column ? `<span class="pinned" title="${esc(t('card.pinned'))}">${ICON.pin}</span>` : ''
-  const top = `<div class="card-top">${dot}<span class="name">${esc(it.name)}</span>${pin}<span class="age">${esc(age)}</span></div>`
+  // A result you have not opened yet: a dot by the name.
+  const unseen = unseenResult(it, viewed) ? `<span class="unseen-dot" title="${esc(t('attention.unseen'))}"></span>` : ''
+  const top = `<div class="card-top">${dot}<span class="name">${esc(it.name)}</span>${unseen}${pin}<span class="age"${ageTitle ? ` title="${esc(ageTitle)}"` : ''}>${esc(age)}</span></div>`
   if (compact(it)) return top + actions
   // What it works on: its own words, else Claude's title of the session, else your last request.
   const own = plain(it.doing || (it.title && it.title !== it.name ? it.title : ''))
@@ -365,6 +378,7 @@ function updateCard(card, it) {
   }
   card.dataset.col = it.column
   card.classList.toggle('compact', compact(it))
+  card.classList.toggle('unseen', unseenResult(it, viewed))
   card.classList.toggle('selected', state.open === it.key)
   const busy = state.busy.get(it.key)
   card.classList.toggle('busy', !!busy)
@@ -728,7 +742,7 @@ class Panel {
 // selection ending outside the panel) is not a click.
 {
   let down = null
-  const keeps = '.sheet, .card, .lane-head, button, input, textarea, select, label, a, [data-act]'
+  const keeps = '.sheet, .ql, .card, .lane-head, button, input, textarea, select, label, a, [data-act]'
   addEventListener('pointerdown', e => (down = e.button === 0 ? { x: e.clientX, y: e.clientY, target: e.target } : null), true)
   addEventListener('click', e => {
     const d = down
@@ -742,6 +756,8 @@ class Panel {
 
 // ---------------------------------------------------------------- the session sheet
 const sheetBody = $('#sheet-body')
+// Paths in the thread become chips with a quick look; web links open in the default browser.
+const files = initFiles({ t: () => t, token: () => state.data.fsToken, toast })
 const sessionPanel = new Panel($('#sheet'), {
   onClose: () => {
     saveDraft()
@@ -789,6 +805,11 @@ async function loadDetail(key) {
     if (seq !== detailSeq || state.open !== key) return
     if (!res.ok) return toast(d.error || t('err.unavailable'), true)
     state.detail = d
+    if (!state.data.stale && d.item.column === 'done' && resultToken(d.item) === resultToken(itemOf(key) ?? {})) {
+      viewed = recordView(viewed, d.item)
+      store.set('board.viewed', JSON.stringify(viewed))
+      render()
+    }
     renderSheetBody(false)
   } catch {}
 }
@@ -865,6 +886,7 @@ function renderSheetBody(reset) {
     sheetBody._html = html
     for (const d of sheetBody.querySelectorAll('details')) if (open.has(d.dataset.i)) d.open = true
   }
+  files.upgrade(sheetBody, it.cwd)
   if (reset || atBottom) sheetBody.scrollTop = sheetBody.scrollHeight
 }
 
@@ -879,7 +901,7 @@ function thread(conv, it) {
     const live = !lastTool.done && it.column === 'work'
     const summary = live ? t('run.now', { tool: lastTool.label }) : `${t('run.actions', { n: run.length })} · ${lastTool.label}`
     html += `<details class="tools" data-i="${i++}"><summary>${live ? ICON.spin : ICON.chev}<span>${esc(summary)}</span></summary>${run
-      .map(x => `<div class="tool-line${x.done ? '' : ' pending'}"><span class="t">${esc(x.label)}</span><span class="d">${esc(x.detail)}</span></div>`)
+      .map(x => `<div class="tool-line${x.done ? '' : ' pending'}"><span class="t">${esc(x.label)}</span><span class="d${x.path ? ' fs-inline' : ''}"${x.path ? ` data-path="${esc(x.path)}"` : ''}>${esc(x.detail)}</span></div>`)
       .join('')}</details>`
     run = []
   }
@@ -1517,6 +1539,12 @@ $('#sleepers').addEventListener('click', e => {
 })
 $('#sleepers').setAttribute('aria-pressed', String(state.sleepers))
 
+function openNextAttention() {
+  const key = nextAttention(visibleItems().filter(it => laneShown(catOf(it))), state.open, viewed)
+  if (key) openSheet(key)
+}
+$('#next-attention').addEventListener('click', openNextAttention)
+
 addEventListener('keydown', e => {
   const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName)
   if (e.key === 'Escape') {
@@ -1527,6 +1555,9 @@ addEventListener('keydown', e => {
       $('#search').value = state.query = ''
       render()
     }
+  } else if (['n', 'т'].includes(e.key.toLowerCase()) && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !files.isOpen()) {
+    e.preventDefault()
+    openNextAttention()
   } else if (e.key === '/' && !typing) {
     e.preventDefault()
     $('#search').focus()
