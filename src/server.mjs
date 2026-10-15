@@ -13,6 +13,7 @@ import { pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { focus, send, sleepSession, wake } from './actions.mjs'
 import { checkoutChanges, isCheckout } from './changes.mjs'
+import { searchHistory } from './history.mjs'
 import { conversation } from './claude.mjs'
 import { describe, FILE_TOKEN, MEDIA_TYPES, openWith, preview, resolvePath } from './files.mjs'
 import { categoryInfo, colorHex, editCategories, editSettings, laneRank, liveConfig, PALETTE } from './config.mjs'
@@ -366,6 +367,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
         const item = find(m[1])
         if (!item) return json(404, { error: t('err.gone') })
         if (req.method === 'GET' && m[2] === 'changes') return json(200, await checkoutChanges(item.cwd))
+        if (req.method === 'GET' && m[2] === 'history') return json(200, await searchHistory(item.cwd, url.searchParams.get('q'), undefined, item.session))
         if (req.method === 'GET' && !m[2]) return json(200, await detail(item))
         if (req.method === 'POST' && m[2]) {
           if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })

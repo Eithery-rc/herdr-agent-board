@@ -775,6 +775,7 @@ let currentDraft = null
 let draftFor = null // the session the composer's attachments were added for; outlives a close
 
 function openSheet(key, { compose = false } = {}) {
+  ++historySeq
   const switching = sessionPanel.isOpen && state.open !== key
   // Attachments belong to the session they were added for, never to the next one. Closing the
   // panel and opening the same session again keeps them.
@@ -790,6 +791,8 @@ function openSheet(key, { compose = false } = {}) {
   syncComposer()
   state.detail = null
   $('#sheet-changes').hidden = true // until the detail says the folder is in git
+  state.history = null
+  $('#history-query').value = ''
   lastDetailStamp = ''
   if (!sessionPanel.open() && switching && !reducedMotion.matches) {
     sheetBody.animate([{ opacity: 0.3 }, { opacity: 1 }], { duration: 180, easing: 'ease-out' })
@@ -870,7 +873,8 @@ function renderSheetBody(reset) {
   if (!it) return
   renderSheetCard(it)
   const atBottom = sheetBody.scrollHeight - sheetBody.scrollTop - sheetBody.clientHeight < 40
-  let html = ''
+  const history = state.history?.key === it.key ? state.history.data : null
+  let html = history ? `<section class="history-results"><h3>${esc(t('history.title'))}</h3><p>${esc(t('history.scope'))}</p>${history.unavailable ? esc(t('history.unavailable')) : history.results.length ? history.results.map(result => `<article><p>${esc(result.date ? new Date(result.date).toLocaleString() : t('history.unknownDate'))} · ${esc(result.session)}</p><blockquote>${esc(result.excerpt)}</blockquote><small>${esc(result.source)} · byte ${result.byteOffset}</small></article>`).join('') : esc(t('history.empty'))}${history.truncated ? `<p>${esc(t('history.limited'))}</p>` : ''}</section>` : ''
   if (it.column === 'me') {
     const later = it.attention === 'later'
     const why = t(it.attention ? `why.${it.attention}` : 'why.default')
@@ -1584,3 +1588,18 @@ connect()
 
 // The checkout changes of the session's folder open in the quick look as a diff (files.js).
 $('#sheet-changes').addEventListener('click', e => state.open && files.lookChanges(state.open, e.currentTarget))
+let historySeq = 0
+$('#history-search').addEventListener('submit', async event => {
+  event.preventDefault()
+  const key = state.open, seq = ++historySeq
+  const query = $('#history-query').value.trim()
+  if (!key || query.length < 2) return
+  try {
+    const res = await fetch(`/api/session/${encodeURIComponent(key)}/history?q=${encodeURIComponent(query)}`)
+    if (!res.ok) throw new Error(t('history.unavailable'))
+    const data = await res.json()
+    if (seq !== historySeq || state.open !== key) return
+    state.history = { key, data }
+    renderSheetBody(false)
+  } catch (err) { if (state.open === key) toast(err.message, true) }
+})
