@@ -146,12 +146,16 @@ export function startServer({ cfg, log = () => {} } = {}) {
   }
 
   /**
-   * Claude's usage windows from the usagebar cache, when one exists (usage.mjs): null otherwise.
-   * No age in it, so a cache that does not change does not make the board go out again.
+   * Claude's usage windows (usage.mjs): from the board's own status line when Claude Code runs it,
+   * else from the usagebar cache, else null. Windows past their reset are left out: Claude starts
+   * them over. No age in it, so data that does not change does not make the board go out again.
    */
   function claudeLimits() {
-    const l = localUsage().limits
-    return l.available ? { observedAt: l.observedAt, stale: l.stale, windows: l.windows } : null
+    for (const [source, l] of [['statusline', localUsage(STATE_DIR).limits], ['usagebar', localUsage().limits]]) {
+      const windows = l.available ? l.windows.filter(w => !w.expired) : []
+      if (windows.length) return { source, observedAt: l.observedAt, stale: Date.now() - l.observedAt > 30 * 60_000, windows }
+    }
+    return null
   }
 
   // GET always answers with the latest payload. Live clients get it again only when the board
