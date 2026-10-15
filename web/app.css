@@ -579,7 +579,7 @@ body.dragging { cursor: grabbing; }
 .tool-line.pending .t { color: var(--green); }
 
 .composer { padding: 10px 14px 14px 18px; }
-.composer-actions { display: flex; gap: 8px; margin-bottom: 10px; }
+.composer-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 .button {
   display: inline-flex;
   align-items: center;
@@ -959,6 +959,35 @@ button.swatch:active { transform: scale(0.88); }
 .dl.hunk { margin-top: 4px; background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--label-2); }
 .dl.note { color: var(--label-3); }
 .ql-dnote { margin: 0; padding: 12px 16px; color: var(--label-2); font-size: 12.5px; }
+
+/* History of a project: a search field over the hits; a hit opens to the whole message. */
+.ql-body.k-history { display: flex; flex-direction: column; }
+.ql-search { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; margin: 0; padding: 12px 16px; border-bottom: 0.5px solid var(--separator); background: var(--material-thick); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); }
+.ql-search svg { width: 16px; height: 16px; color: var(--label-3); }
+.ql-search input { flex: 1; min-width: 0; padding: 7px 10px; border: 0; border-radius: 9px; outline: none; background: var(--fill); color: var(--label); font: 14px var(--font); }
+.ql-search input:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); }
+.ql-hits { display: flex; flex-direction: column; gap: 8px; padding: 12px 16px 20px; }
+.ql-hits .ql-empty { height: auto; padding-top: 60px; }
+.ql-hit { padding: 10px 12px; border-radius: 12px; background: var(--fill-2); cursor: pointer; outline: none; transition: background 120ms ease; }
+.ql-hit:hover { background: var(--fill); }
+.ql-hit:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+.ql-hit header { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 12px; color: var(--label-2); }
+.ql-hit header b { flex: 1; min-width: 0; overflow: hidden; color: var(--label); font-size: 13px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
+.ql-hit header time { flex: none; font-variant-numeric: tabular-nums; }
+.ql-hit .who { flex: none; padding: 1px 6px; border-radius: 5px; font-size: 11px; font-weight: 600; }
+.ql-hit .who.you { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.ql-hit .who.agent { background: var(--fill); }
+.ql-hit .ex { margin: 6px 0 0; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.ql-hit mark { padding: 0 1px; border-radius: 3px; background: color-mix(in srgb, var(--orange) 35%, transparent); color: inherit; }
+.ql-hit .full { margin-top: 8px; font-size: 13.5px; line-height: 1.5; cursor: text; user-select: text; }
+
+/* Claude's usage windows, when the usagebar cache has them: by the live dot. */
+.limits { display: inline-flex; gap: 8px; padding: 3px 9px; border-radius: 999px; background: var(--fill); color: var(--label-2); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.limits[hidden] { display: none; }
+.limits b { color: var(--label); font-weight: 600; }
+.limits .warm b { color: var(--orange); }
+.limits .hot b { color: var(--red); }
+.limits.stale { opacity: 0.55; }
 
 /* ---------------------------------------------------------------- narrow windows */
 @media (max-width: 760px) {

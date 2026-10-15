@@ -133,6 +133,7 @@ export async function collect(cfg) {
       title: info.title ?? '',
       prompt: info.prompt ?? '',
       lastText: info.lastText ?? '',
+      context: info.context ?? null, // tokens in its last request
       tool,
       attention,
       question: askedText(attention, card, info, tool),

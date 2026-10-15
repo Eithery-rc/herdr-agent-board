@@ -13,6 +13,8 @@ import { pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { focus, send, sleepSession, wake } from './actions.mjs'
 import { checkoutChanges, isCheckout } from './changes.mjs'
+import { searchHistory } from './history.mjs'
+import { localUsage } from './usage.mjs'
 import { conversation } from './claude.mjs'
 import { describe, FILE_TOKEN, MEDIA_TYPES, openWith, preview, resolvePath } from './files.mjs'
 import { categoryInfo, colorHex, editCategories, editSettings, laneRank, liveConfig, PALETTE } from './config.mjs'
@@ -140,7 +142,16 @@ export function startServer({ cfg, log = () => {} } = {}) {
         return { id, title: c.title, color: colorHex(c.color), colorName: c.color, paths: c.paths ?? [], configured, fallback: id === 'other' }
       })
     const list = items.map(({ transcript, ...rest }) => rest)
-    return { version, lang: lang(), language: cfg.language ?? 'auto', languages: LANGUAGES, fsToken: FILE_TOKEN, stale, items: list, categories, swatches: SWATCHES, columns: COLUMNS.map(({ id, title }) => ({ id, title })) }
+    return { version, lang: lang(), language: cfg.language ?? 'auto', languages: LANGUAGES, fsToken: FILE_TOKEN, stale, limits: claudeLimits(), items: list, categories, swatches: SWATCHES, columns: COLUMNS.map(({ id, title }) => ({ id, title })) }
+  }
+
+  /**
+   * Claude's usage windows from the usagebar cache, when one exists (usage.mjs): null otherwise.
+   * No age in it, so a cache that does not change does not make the board go out again.
+   */
+  function claudeLimits() {
+    const l = localUsage().limits
+    return l.available ? { observedAt: l.observedAt, stale: l.stale, windows: l.windows } : null
   }
 
   // GET always answers with the latest payload. Live clients get it again only when the board
@@ -366,6 +377,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
         const item = find(m[1])
         if (!item) return json(404, { error: t('err.gone') })
         if (req.method === 'GET' && m[2] === 'changes') return json(200, await checkoutChanges(item.cwd))
+        if (req.method === 'GET' && m[2] === 'history') return json(200, await searchHistory(item.cwd, url.searchParams.get('q'), undefined, item.session))
         if (req.method === 'GET' && !m[2]) return json(200, await detail(item))
         if (req.method === 'POST' && m[2]) {
           if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })

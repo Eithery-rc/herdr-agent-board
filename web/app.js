@@ -263,6 +263,7 @@ function renderToolbar(visible) {
   if (asleep) parts.push(`${asleep} ${t('sum.asleep', { n: asleep })}`)
   $('#summary').innerHTML = parts.join(' · ')
   document.title = count('me') ? `(${count('me')}) Agent board` : 'Agent board'
+  renderLimits()
 
   // Lanes control: "All" and the categories that have sessions.
   const seg = $('#lanes')
@@ -291,6 +292,18 @@ function renderToolbar(visible) {
     .map(c => `<div class="col-head"><span class="dot" style="--c:${COLORS[c.id]}"></span>${esc(colTitle(c.id))}<span class="n">${visible.filter(i => i.column === c.id && laneShown(catOf(i))).length}</span></div>`)
     .join('')
   if (head.innerHTML !== html) head.innerHTML = html
+}
+
+/** Claude's usage windows from the usagebar cache, when there is one: a small pill by the live dot. */
+function renderLimits() {
+  const lim = state.data.limits
+  const pill = $('#limits')
+  pill.hidden = !lim
+  if (!lim) return
+  const heat = p => (p >= 90 ? ' class="hot"' : p >= 70 ? ' class="warm"' : '')
+  pill.innerHTML = lim.windows.map(w => `<span${heat(w.usedPercentage)}>${esc(t(w.minutes === 300 ? 'limits.5h' : 'limits.7d'))} <b>${Math.round(w.usedPercentage)}%</b></span>`).join('')
+  pill.classList.toggle('stale', lim.stale)
+  pill.title = t(lim.stale ? 'limits.stale' : 'limits.hint', { time: new Date(lim.observedAt).toLocaleString(t.lang, { dateStyle: 'medium', timeStyle: 'short' }) })
 }
 
 function placeThumb(jump) {
@@ -826,7 +839,10 @@ function renderSheetHead() {
   pill.style.setProperty('--c', COLORS[it.column])
   pill.innerHTML = it.sleeping ? `${ICON.moon}${esc(t('sheet.asleep'))}` : `<span class="dot ${it.column}" style="--c:${COLORS[it.column]}"></span>${esc(colTitle(it.column))}`
   $('#sheet-name').textContent = it.name
-  $('#sheet-meta').textContent = [catInfo(catOf(it)).title, it.workspace && t('meta.workspace', { name: it.workspace }), it.activity && (ago(it.activity) === t('ago.now') ? t('meta.activeNow') : t('meta.active', { ago: ago(it.activity) }))].filter(Boolean).join(' · ')
+  const context = it.context ? t('meta.context', { tokens: it.context >= 1000 ? `${Math.round(it.context / 1000)}k` : it.context }) : ''
+  $('#sheet-meta').textContent = [catInfo(catOf(it)).title, it.workspace && t('meta.workspace', { name: it.workspace }), it.activity && (ago(it.activity) === t('ago.now') ? t('meta.activeNow') : t('meta.active', { ago: ago(it.activity) })), context].filter(Boolean).join(' · ')
+  $('#sheet-meta').title = context ? t('meta.contextHint') : ''
+  $('#sheet-history').hidden = !it.session // a Claude project to look back in
   $('#sheet-wake').hidden = !it.sleeping
   const sleep = $('#sheet-sleep')
   sleep.hidden = it.sleeping || !it.session
@@ -1584,3 +1600,5 @@ connect()
 
 // The checkout changes of the session's folder open in the quick look as a diff (files.js).
 $('#sheet-changes').addEventListener('click', e => state.open && files.lookChanges(state.open, e.currentTarget))
+// Past sessions of the project, searched in the quick look (files.js).
+$('#sheet-history').addEventListener('click', e => state.open && files.lookHistory(state.open, itemOf(state.open)?.cwd ?? '', e.currentTarget))
