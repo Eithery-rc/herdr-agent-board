@@ -11,6 +11,7 @@ const settingsFile = join(homedir(), '.claude', 'settings.json')
 const binDir = join(homedir(), '.local', 'bin')
 const cli = join(ROOT, 'src', 'cli.mjs')
 const hook = join(ROOT, 'src', 'hook.mjs')
+const statusline = join(ROOT, 'src', 'statusline.mjs')
 
 // --- board command
 mkdirSync(binDir, { recursive: true })
@@ -40,6 +41,14 @@ function put(event) {
 }
 put('SessionStart')
 put('UserPromptSubmit')
+
+// --- status line: Claude Code's own numbers for the board (usage windows, context fill). A status
+// line someone else set stays; the board then reads the usagebar cache, if there is one.
+const ourLine = command => /agent-board.*statusline\.mjs/.test(command ?? '')
+if (!settings.statusLine || ourLine(settings.statusLine.command)) {
+  settings.statusLine = { type: 'command', command: `node "${statusline.replace(/\\/g, '/')}"` }
+  console.log(`status line: ${statusline}`)
+} else console.log('status line: left as it was (not ours)')
 writeFileSync(settingsFile, `${JSON.stringify(settings, null, 2)}\n`)
 
 console.log(`board command: ${join(binDir, 'board')} (+ board.cmd)`)

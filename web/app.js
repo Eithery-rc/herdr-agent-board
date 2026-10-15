@@ -317,7 +317,7 @@ function renderLimits() {
   const heat = p => (p >= 90 ? ' class="hot"' : p >= 70 ? ' class="warm"' : '')
   pill.innerHTML = lim.windows.map(w => `<span${heat(w.usedPercentage)}>${esc(t(w.minutes === 300 ? 'limits.5h' : 'limits.7d'))} <b>${Math.round(w.usedPercentage)}%</b></span>`).join('')
   pill.classList.toggle('stale', lim.stale)
-  pill.title = t(lim.stale ? 'limits.stale' : 'limits.hint', { time: new Date(lim.observedAt).toLocaleString(t.lang, { dateStyle: 'medium', timeStyle: 'short' }) })
+  pill.title = t(lim.stale ? 'limits.stale' : lim.source === 'usagebar' ? 'limits.hintUsagebar' : 'limits.hint', { time: new Date(lim.observedAt).toLocaleString(t.lang, { dateStyle: 'medium', timeStyle: 'short' }) })
 }
 
 function placeThumb(jump) {
@@ -865,7 +865,8 @@ function renderSheetHead() {
   pill.style.setProperty('--c', COLORS[it.column])
   pill.innerHTML = it.sleeping ? `${ICON.moon}${esc(t('sheet.asleep'))}` : `<span class="dot ${it.column}" style="--c:${COLORS[it.column]}"></span>${esc(colTitle(it.column))}`
   $('#sheet-name').textContent = it.name
-  const context = it.context ? t('meta.context', { tokens: it.context >= 1000 ? `${Math.round(it.context / 1000)}k` : it.context }) : ''
+  const tokens = it.context >= 1000 ? `${Math.round(it.context / 1000)}k` : it.context
+  const context = it.contextPct != null ? t('meta.contextPct', { pct: Math.round(it.contextPct), tokens }) : it.context ? t('meta.context', { tokens }) : ''
   $('#sheet-meta').textContent = [catInfo(catOf(it)).title, it.workspace && t('meta.workspace', { name: it.workspace }), it.activity && (ago(it.activity) === t('ago.now') ? t('meta.activeNow') : t('meta.active', { ago: ago(it.activity) })), context].filter(Boolean).join(' · ')
   $('#sheet-meta').title = context ? t('meta.contextHint') : ''
   $('#sheet-history').hidden = !it.session // a Claude project to look back in
