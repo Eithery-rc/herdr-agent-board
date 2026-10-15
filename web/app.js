@@ -789,7 +789,7 @@ function openSheet(key, { compose = false } = {}) {
   message.value = currentDraft?.text ?? ''
   syncComposer()
   state.detail = null
-  state.changes = null
+  $('#sheet-changes').hidden = true // until the detail says the folder is in git
   lastDetailStamp = ''
   if (!sessionPanel.open() && switching && !reducedMotion.matches) {
     sheetBody.animate([{ opacity: 0.3 }, { opacity: 1 }], { duration: 180, easing: 'ease-out' })
@@ -809,6 +809,7 @@ async function loadDetail(key) {
     if (seq !== detailSeq || state.open !== key) return
     if (!res.ok) return toast(d.error || t('err.unavailable'), true)
     state.detail = d
+    $('#sheet-changes').hidden = !d.checkout
     if (!state.data.stale && d.item.column === 'done' && resultToken(d.item) === resultToken(itemOf(key) ?? {})) {
       viewed = recordView(viewed, d.item)
       store.set('board.viewed', JSON.stringify(viewed))
@@ -869,8 +870,7 @@ function renderSheetBody(reset) {
   if (!it) return
   renderSheetCard(it)
   const atBottom = sheetBody.scrollHeight - sheetBody.scrollTop - sheetBody.clientHeight < 40
-  const changes = state.changes?.key === it.key ? state.changes.data : null
-  let html = changes ? `<section class="checkout-changes"><h3>${esc(t('changes.title'))}</h3><p>${esc(t('changes.scope'))}</p>${changes.available ? `<p>${esc(changes.root)} · ${esc(changes.branch)}</p><p>${esc(t('changes.captured', { time: clock(changes.collectedAt) }))}</p><pre>${esc(changes.status || t('changes.clean'))}</pre><pre>${esc(changes.diff)}</pre>${changes.truncated ? `<p>${esc(t('changes.truncated'))}</p>` : ''}` : `<p>${esc(t('changes.unavailable'))}</p>`}</section>` : ''
+  let html = ''
   if (it.column === 'me') {
     const later = it.attention === 'later'
     const why = t(it.attention ? `why.${it.attention}` : 'why.default')
@@ -1582,17 +1582,5 @@ fetch('/api/board')
   .catch(() => {})
 connect()
 
-let changesSeq = 0
-$('#sheet-changes').addEventListener('click', async () => {
-  const key = state.open
-  const seq = ++changesSeq
-  if (!key) return
-  try {
-    const res = await fetch(`/api/session/${encodeURIComponent(key)}/changes`)
-    if (!res.ok) throw new Error(t('changes.unavailable'))
-    const data = await res.json()
-    if (seq !== changesSeq || state.open !== key) return
-    state.changes = { key, data }
-    renderSheetBody(false)
-  } catch (err) { if (state.open === key) toast(err.message, true) }
-})
+// The checkout changes of the session's folder open in the quick look as a diff (files.js).
+$('#sheet-changes').addEventListener('click', e => state.open && files.lookChanges(state.open, e.currentTarget))

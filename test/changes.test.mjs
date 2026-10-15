@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { checkoutChanges } from '../src/changes.mjs'
 function repo(t) {
   const dir = mkdtempSync(join(tmpdir(), 'board-git-'))
-  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }))
   const git = args => execFileSync('git', ['-c','core.hooksPath=/dev/null','-c','commit.gpgsign=false','-C',dir,...args], { encoding:'utf8' })
   git(['init','--quiet'])
   writeFileSync(join(dir,'tracked.txt'),'before\n')
@@ -35,7 +35,7 @@ test('preview resolves the exact worktree, includes staged/unstaged names, prese
   assert.ok(bounded.diff.length <= 256*1024)
 })
 test('missing cwd, non-repository and unborn repository are unavailable', async t => {
-  const dir=mkdtempSync(join(tmpdir(),'board-no-git-'));t.after(()=>rmSync(dir,{recursive:true,force:true}))
+  const dir=mkdtempSync(join(tmpdir(),'board-no-git-'));t.after(()=>rmSync(dir,{recursive:true,force:true,maxRetries:10,retryDelay:100}))
   assert.equal((await checkoutChanges(null)).available,false)
   assert.equal((await checkoutChanges(dir)).available,false)
   execFileSync('git',['init','--quiet',dir])

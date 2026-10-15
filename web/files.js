@@ -6,6 +6,7 @@
 //
 // The quick look grows out of the chip it was opened from and shrinks back into it, on a spring
 // that can be caught midway; it dims the board, Esc closes it, Backspace walks back.
+import { changedFiles } from './diff.js'
 import { markdown } from './markdown.js'
 import { reducedMotion, Spring } from './spring.js'
 
@@ -30,6 +31,9 @@ export const ICONS = {
   copy: svg('<rect x="7" y="7" width="9.5" height="9.5" rx="2"/><path d="M13 7V5a1.5 1.5 0 0 0-1.5-1.5h-6A1.5 1.5 0 0 0 4 5v6a1.5 1.5 0 0 0 1.5 1.5H7"/>'),
   back: svg('<path d="m12 4.5-5.5 5.5 5.5 5.5"/>'),
   close: svg('<path d="m5.5 5.5 9 9m0-9-9 9"/>'),
+  changes: svg('<circle cx="6" cy="4.8" r="1.8"/><circle cx="6" cy="15.2" r="1.8"/><circle cx="14" cy="7.6" r="1.8"/><path d="M6 6.6v6.8M14 9.4c0 3-2.6 3.6-6.4 4.6"/>'),
+  clean: svg('<circle cx="10" cy="10" r="7"/><path d="m6.8 10.2 2.2 2.2 4.2-4.6"/>'),
+  refresh: svg('<path d="M15.6 10a5.6 5.6 0 1 1-1.7-4M15.6 3.8V7h-3.2"/>'),
 }
 const iconOf = kind => ICONS[kind] ?? (kind === 'binary' ? ICONS.file : ICONS.text)
 
@@ -153,6 +157,7 @@ export function initFiles({ t, token, toast }) {
         <div class="ql-tools">
           <div class="ql-mode" hidden><button data-mode="view"></button><button data-mode="source"></button></div>
           <button class="button primary ql-open"></button>
+          <button class="icon-button ql-refresh" hidden>${ICONS.refresh}</button>
           <button class="icon-button ql-reveal">${ICONS.reveal}</button>
           <button class="icon-button ql-copy">${ICONS.copy}</button>
           <button class="icon-button ql-close">${ICONS.close}</button>
@@ -199,7 +204,7 @@ export function initFiles({ t, token, toast }) {
     $(root, '.ql-back').title = tr('ql.back')
     $(root, '.ql-back').setAttribute('aria-label', tr('ql.back'))
     $(root, '.ql-open').textContent = tr('ql.open')
-    for (const [sel, k] of [['.ql-reveal', 'ql.reveal'], ['.ql-copy', 'ql.copy'], ['.ql-close', 'sheet.close']]) {
+    for (const [sel, k] of [['.ql-refresh', 'changes.refresh'], ['.ql-reveal', 'ql.reveal'], ['.ql-copy', 'ql.copy'], ['.ql-close', 'sheet.close']]) {
       $(root, sel).title = tr(k)
       $(root, sel).setAttribute('aria-label', tr(k))
     }
@@ -207,9 +212,9 @@ export function initFiles({ t, token, toast }) {
     $(root, '[data-mode="source"]').textContent = tr('ql.source')
   }
 
-  /** Open the quick look on { path, line }, grown from element `el`. */
+  /** Open the quick look on { path, line }, or on { changes: session key }, grown from element `el`. */
   function look(target, el) {
-    if (!target?.path) return
+    if (!target?.path && !target?.changes) return
     if (!root.hidden && motion.target === 1) {
       ql.stack.push(target)
       return show()
@@ -243,10 +248,12 @@ export function initFiles({ t, token, toast }) {
     show()
   }
 
-  async function show() {
+  async function show(fresh = false) {
     const target = ql.stack.at(-1)
     const seq = ++ql.seq
     $(root, '.ql-back').hidden = ql.stack.length < 2
+    $(root, '.ql-refresh').hidden = !target.changes
+    if (target.changes) return showChanges(target, seq, fresh)
     head({ path: target.path, name: target.path.split(/[\\/]/).filter(Boolean).pop() ?? target.path, kind: 'file' })
     body.className = 'ql-body loading'
     body.innerHTML = `<div class="ql-wait">${esc(tr('loading'))}</div>`
@@ -259,18 +266,44 @@ export function initFiles({ t, token, toast }) {
     render()
   }
 
+  /**
+   * The changes of a session's checkout, read by the server (git status and diff against HEAD).
+   * Kept on the stack entry, so a step back from a file shows them again without git; the
+   * refresh button reads them anew.
+   */
+  async function showChanges(target, seq, fresh) {
+    if (target.cache && !fresh) {
+      ql.data = target.cache
+      head(ql.data)
+      return render()
+    }
+    head({ kind: 'changes', name: tr('changes.title'), path: target.cache?.path ?? '' })
+    body.className = 'ql-body loading'
+    body.innerHTML = `<div class="ql-wait">${esc(tr('loading'))}</div>`
+    $(root, '.ql-foot').textContent = ''
+    let d = { available: false }
+    try {
+      d = await (await fetch(`/api/session/${encodeURIComponent(target.changes)}/changes`)).json()
+    } catch {}
+    if (seq !== ql.seq) return
+    target.cache = { ...d, kind: 'changes', name: d.branch || tr('changes.title'), path: d.root ?? '', error: d.available ? null : 'unavailable' }
+    ql.data = target.cache
+    head(ql.data)
+    render()
+  }
+
   function head(d) {
     $(root, '.ql-icon').innerHTML = iconOf(d.error === 'missing' ? 'missing' : d.dir ? 'dir' : d.kind)
     $(root, '#ql-name').textContent = d.name ?? ''
-    // The folders above it, each one a step to walk to.
-    const parts = String(d.path ?? '').split(/[\\/]/)
+    // The folders above it, each one a step to walk to (for changes, up to the checkout itself).
+    const parts = String(d.path ?? '').split(/[\\/]/).filter((p, i) => p || i === 0)
     const sep = d.path?.includes('\\') ? '\\' : '/'
-    const crumbs = parts.slice(0, -1).map((name, i) => ({ name: name || sep, path: parts.slice(0, i + 1).join(sep) + (i === 0 ? sep : '') }))
+    const crumbs = parts.slice(0, d.kind === 'changes' ? parts.length : -1).map((name, i) => ({ name: name || sep, path: parts.slice(0, i + 1).join(sep) + (i === 0 ? sep : '') }))
     const nav = $(root, '.ql-path')
     nav.innerHTML = crumbs.map(c => `<button data-go="${esc(c.path)}">${esc(c.name)}</button>`).join('<span>›</span>')
     nav.scrollLeft = nav.scrollWidth
-    const exists = !d.error || d.error === 'denied'
-    for (const sel of ['.ql-open', '.ql-reveal']) $(root, sel).disabled = !exists
+    const exists = (!d.error || d.error === 'denied') && !!d.path
+    for (const sel of ['.ql-open', '.ql-reveal', '.ql-copy']) $(root, sel).disabled = !exists
   }
 
   function render() {
@@ -279,7 +312,9 @@ export function initFiles({ t, token, toast }) {
     body.className = `ql-body k-${d.dir ? 'dir' : d.kind}`
     $(root, '.ql-mode').hidden = d.kind !== 'markdown'
     for (const b of root.querySelectorAll('.ql-mode button')) b.setAttribute('aria-pressed', String(b.dataset.mode === ql.mode))
-    if (d.error === 'missing') {
+    if (d.kind === 'changes') {
+      changes(d, foot)
+    } else if (d.error === 'missing') {
       body.innerHTML = empty('missing', tr('ql.missing', { path: d.path }))
     } else if (d.error) {
       body.innerHTML = empty('file', d.error === 'denied' ? tr('ql.denied') : d.error)
@@ -312,6 +347,49 @@ export function initFiles({ t, token, toast }) {
     if (hit) requestAnimationFrame(() => (body.scrollTop = hit.offsetTop - body.clientHeight / 3))
     else body.scrollTop = 0
   }
+
+  /** Changed files on the left, their diff on the right; a file's name opens the file itself. */
+  function changes(d, foot) {
+    if (!d.available) {
+      body.innerHTML = empty('changes', tr('changes.unavailable'))
+      return
+    }
+    const files = changedFiles(d.status, d.diff)
+    if (!files.length) {
+      body.innerHTML = empty('clean', tr('changes.clean'))
+      foot.push(tr('changes.read', { time: new Date(d.collectedAt).toLocaleTimeString(t().lang, { hour: '2-digit', minute: '2-digit' }) }))
+      return
+    }
+    const sep = d.root.includes('\\') ? '\\' : '/'
+    const abs = p => d.root.replace(/[\\/]$/, '') + sep + p.split('/').join(sep)
+    const code = f => (f.code === '??' ? 'N' : f.code)
+    const badge = f => `<span class="st st-${code(f)}" title="${esc(tr(`changes.st.${code(f)}`))}">${code(f)}</span>`
+    const count = f => (f.diff && !f.diff.binary ? `<span class="cnt">${f.diff.added ? `<i class="a">+${f.diff.added}</i>` : ''}${f.diff.removed ? `<i class="r">−${f.diff.removed}</i>` : ''}</span>` : '')
+    const name = p => {
+      const i = p.lastIndexOf('/')
+      return i < 0 ? `<b>${esc(p)}</b>` : `<span class="dir">${esc(p.slice(0, i + 1))}</span><b>${esc(p.slice(i + 1))}</b>`
+    }
+    const list = files.map((f, i) => `<button class="ql-file" data-jump="${i}" title="${esc(f.from ? `${f.from} → ${f.path}` : f.path)}">${badge(f)}<span class="p">${name(f.path)}</span>${count(f)}</button>`).join('')
+    const line = l =>
+      l.kind === 'hunk' || l.kind === 'note'
+        ? `<div class="dl ${l.kind}"><span class="o"></span><span class="n"></span><span class="x">${esc(l.text)}</span></div>`
+        : `<div class="dl ${l.kind}"><span class="o">${l.old ?? ''}</span><span class="n">${l.new ?? ''}</span><span class="x">${esc(l.text) || ' '}</span></div>`
+    const lines = f => {
+      if (f.diff?.binary) return `<p class="ql-dnote">${esc(tr('changes.binary'))}</p>`
+      if (f.diff?.lines.length) return `<div class="ql-dlines"><div class="ql-dl">${f.diff.lines.map(line).join('')}</div></div>`
+      return `<p class="ql-dnote">${esc(tr(f.code === '??' ? 'changes.untracked' : 'changes.noDiff'))}</p>`
+    }
+    const open = f => (f.code === 'D' ? '' : `<button class="icon-button" data-go="${esc(abs(f.path))}" title="${esc(tr('changes.openFile'))}" aria-label="${esc(tr('changes.openFile'))}">${iconOf(kindOfName(f.path))}</button>`)
+    const diff = files.map((f, i) => `<section class="ql-dfile" data-i="${i}"><header>${badge(f)}<span class="p">${name(f.path)}</span>${count(f)}${open(f)}</header>${lines(f)}</section>`).join('')
+    body.innerHTML = `<div class="ql-changes"><nav class="ql-files">${list}</nav><div class="ql-diff">${diff}</div></div>`
+    const added = files.reduce((s, f) => s + (f.diff?.added ?? 0), 0)
+    const removed = files.reduce((s, f) => s + (f.diff?.removed ?? 0), 0)
+    foot.push(tr('changes.files', { n: files.length }), `+${added} −${removed}`, tr('changes.read', { time: new Date(d.collectedAt).toLocaleTimeString(t().lang, { hour: '2-digit', minute: '2-digit' }) }))
+    if (d.truncated) foot.push(tr('changes.truncated'))
+    foot.push(tr('changes.scope'))
+  }
+  // The kind of a file by its name, for the icon only (the server decides the rest).
+  const kindOfName = p => ({ md: 'markdown', markdown: 'markdown', json: 'json', csv: 'csv', tsv: 'csv', png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', svg: 'image', pdf: 'pdf' })[p.split('.').pop().toLowerCase()] ?? 'text'
 
   const date = ms => new Date(ms).toLocaleString(t().lang, { dateStyle: 'medium', timeStyle: 'short' })
   function size(n) {
@@ -350,6 +428,12 @@ export function initFiles({ t, token, toast }) {
       ql.stack.push({ path: go.dataset.go, line: null })
       return show()
     }
+    const jump = e.target.closest('[data-jump]')
+    if (jump) {
+      for (const b of root.querySelectorAll('.ql-file')) b.setAttribute('aria-current', String(b === jump))
+      return $(body, `.ql-dfile[data-i="${jump.dataset.jump}"]`)?.scrollIntoView({ block: 'start', behavior: reducedMotion.matches ? 'auto' : 'smooth' })
+    }
+    if (e.target.closest('.ql-refresh')) return show(true)
     const mode = e.target.closest('[data-mode]')
     if (mode && ql.data) {
       ql.mode = mode.dataset.mode
@@ -381,5 +465,5 @@ export function initFiles({ t, token, toast }) {
     true,
   )
 
-  return { upgrade, look, close, isOpen: () => !root.hidden && motion.target === 1, relabel: () => !root.hidden && (labels(), ql.data && render()) }
+  return { upgrade, look, lookChanges: (key, el) => look({ changes: key }, el), close, isOpen: () => !root.hidden && motion.target === 1, relabel: () => !root.hidden && (labels(), ql.data && render()) }
 }
