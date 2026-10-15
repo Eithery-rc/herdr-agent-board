@@ -20,6 +20,12 @@ if (mode === 'open') {
       process.send({ refreshed: true })
     }
   })
+} else if (mode === 'scheduler') {
+  const { useLanguage } = await import('../../src/lang.mjs')
+  const { startScheduler } = await import('../../src/scheduler.mjs')
+  useLanguage('en')
+  startScheduler({ cfg: JSON.parse(process.env.TEST_INPUT), log: text => process.send({ log: text }) })
+  process.send({ ready: true })
 } else if (mode === 'write') {
   const { existsSync } = await import('node:fs')
   const { writeCard } = await import('../../src/store.mjs')

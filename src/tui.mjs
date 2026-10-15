@@ -14,7 +14,10 @@ import { goBack } from './nav.mjs'
 import { startServer } from './server.mjs'
 import { openWeb } from './web-open.mjs'
 import { BOARD_FILE, CARDS_DIR, STATE_DIR } from './paths.mjs'
+import { listEntries } from './schedule.mjs'
+import { startScheduler } from './scheduler.mjs'
 import { writeCard } from './store.mjs'
+import { shortWhen } from '../web/when.js'
 
 // Updated in place when config.json changes (by hand or from the web board).
 const cfg = liveConfig(() => {
@@ -87,6 +90,8 @@ function age(ms) {
 
 // ---------------------------------------------------------------- state
 let items = []
+let alarms = new Map() // session key -> its soonest schedule entry
+let scheduled = 0
 let lanes = [] // [{ cat, info, num, cols: [[item]] }], after the filter
 let allCats = [] // every category on the board, in lane order (the 1-9 filter keys)
 let sel = null // key of the selected item
@@ -155,6 +160,10 @@ async function refresh() {
   refreshing = true
   try {
     items = await collect(cfg)
+    const entries = listEntries()
+    alarms = new Map()
+    for (const e of entries) if (!alarms.has(e.key)) alarms.set(e.key, e)
+    scheduled = entries.length
     loadError = null
   } catch (err) {
     loadError = err.message
@@ -401,10 +410,16 @@ function narrowOrder() {
   return lanes.flatMap(l => l.cols.flat().sort((a, b) => order.get(a.column) - order.get(b.column)))
 }
 
+/** "⏰15:30 " when the session has something scheduled. */
+function alarm(it) {
+  const e = alarms.get(it.key)
+  return e ? `⏰${shortWhen(e.next, t)} ` : ''
+}
+
 function cardLines(it, w, isSel) {
   const col = colOf(it.column)
   const icon = it.sleeping && it.column === 'idle' ? 'z' : col.icon
-  const right = busy.get(it.key) ?? (it.column === 'ext' ? age(it.waitSince || it.activity) : age(it.activity))
+  const right = busy.get(it.key) ?? alarm(it) + (it.column === 'ext' ? age(it.waitSince || it.activity) : age(it.activity))
   const nameW = Math.max(1, w - 3 - width(right))
   const note = noteOf(it)
   // A sleeping session with nothing pending takes one line: it is there to be found, not read.
@@ -472,7 +487,7 @@ function bodyNarrow(W) {
     hits.push([])
     for (const it of l.cols.flat().sort((a, b) => order.get(a.column) - order.get(b.column))) {
       const col = colOf(it.column)
-      const right = busy.get(it.key) ?? age(it.column === 'ext' ? it.waitSince || it.activity : it.activity)
+      const right = busy.get(it.key) ?? alarm(it) + age(it.column === 'ext' ? it.waitSince || it.activity : it.activity)
       const nameW = Math.min(24, Math.floor(W / 3))
       const stateW = 14
       const noteW = Math.max(0, W - 2 - 2 - nameW - 1 - stateW - 1 - width(right) - 1)
@@ -491,7 +506,7 @@ function bodyNarrow(W) {
 function header(W, colW) {
   const asleep = items.filter(i => i.sleeping).length
   const counts = colW
-    ? paint(`${t('tui.sessions', { n: items.length })}${asleep ? `, ${t('tui.asleep', { n: asleep })}` : ''}`, 'gray')
+    ? paint(`${t('tui.sessions', { n: items.length })}${asleep ? `, ${t('tui.asleep', { n: asleep })}` : ''}${scheduled ? `, ⏰ ${t('tui.sched', { n: scheduled })}` : ''}`, 'gray')
     : COLUMNS.map(c => `${paint(c.icon, c.color)} ${items.filter(i => i.column === c.id).length}`).join('  ')
   const time = new Date().toTimeString().slice(0, 5)
   const filt = filter ? paint(`  ${t('tui.filter', { title: categoryInfo(cfg, filter).title })}`, 'yellow') : ''
@@ -615,3 +630,5 @@ async function serve(tries = 8) {
   }
 }
 if (cfg.web !== false) serve()
+// The web board's server runs the schedule; without it, this board does.
+else startScheduler({ cfg, log: webLog, onChange: refresh })

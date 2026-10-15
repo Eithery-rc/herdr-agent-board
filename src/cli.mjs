@@ -9,14 +9,24 @@
 //   board clear              clears doing, wait, ask and result
 //   board list               every session on the board, one line each
 //   board cats               the known categories
+//   board remind <when> <text>   the board types "[board reminder] <text>" into the session then,
+//                            waking it if it sleeps (when: in 30m, at 15:30, tomorrow 9:00, ...)
+//   board every <cron> <text>    the same on a cron schedule (5 fields, quoted)
+//   board schedule [--all]   this session's entries (every session's)
+//   board unschedule <id|all>    removes an entry (all: every entry of this session)
 // --session <id|name|pane> targets another session's card (for coordinating sessions).
 import { categoryFor, categoryInfo, CONFIG_FILE, editCategories, laneRank, loadConfig } from './config.mjs'
 import { liveSessions } from './claude.mjs'
 import { snapshot } from './herdr.mjs'
+import { t } from './lang.mjs'
 import { COLUMNS, collect, noteOf, statusText } from './model.mjs'
+import { addEntry, listEntries, removeEntry } from './schedule.mjs'
 import { readCard, writeCard } from './store.mjs'
+import { nextRun, parseCron, parseWhen } from './when.mjs'
+import { shortWhen } from '../web/when.js'
 
-const USAGE = `board [cat <id> ["<Title>"] | doing <text> | wait <text> | ask <question> | done [text] | clear | list | cats] [--session <id|name|pane>]`
+const USAGE = `board [cat <id> ["<Title>"] | doing <text> | wait <text> | ask <question> | done [text] | clear | list | cats | remind <when> "<text>" | every "<cron>" "<text>" | schedule [--all] | unschedule <id|all>] [--session <id|name|pane>]`
+const WHEN_HELP = 'in 30m, in 2h, at 15:30, tomorrow 9:00, fri 17:00, 2026-10-20 14:00 (local time)'
 
 const args = process.argv.slice(2)
 let target = null
@@ -50,6 +60,31 @@ async function resolveSession() {
   throw new Error('cannot tell which session this is: run it from a Claude session, or pass --session')
 }
 
+// Times for agents: unambiguous, in local time.
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const pad = n => String(n).padStart(2, '0')
+function stamp(ms) {
+  const d = new Date(ms)
+  return `${WEEKDAYS[d.getDay()]} ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+function fromNow(ms, now) {
+  const min = Math.round(Math.abs(ms - now) / 60_000)
+  const d = Math.floor(min / 1440)
+  const h = Math.floor((min % 1440) / 60)
+  const parts = d ? [`${d} d`, h && `${h} h`] : h ? [`${h} h`, min % 60 && `${min % 60} min`] : [`${min} min`]
+  const span = parts.filter(Boolean).join(' ')
+  return ms >= now ? `in ${span}` : `${span} ago`
+}
+const clip = (s, n = 60) => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
+
+function entryLine(e, now, withSession) {
+  const parts = [e.id, `${stamp(e.next)} (${fromNow(e.next, now)})`, e.cron ? `every "${e.cron}"` : 'once']
+  if (withSession) parts.push(e.name || e.key)
+  if (e.pendingSince) parts.push(`due, waits for the session since ${stamp(e.pendingSince)}`)
+  parts.push(clip(e.text, 80))
+  return parts.join(' · ')
+}
+
 function line(key, cwd) {
   const card = readCard(key) ?? {}
   const cat = card.category || categoryFor(cfg, cwd)
@@ -73,12 +108,28 @@ async function main() {
     const items = await collect(cfg)
     const order = new Map(COLUMNS.map((c, i) => [c.id, i]))
     items.sort((a, b) => laneRank(cfg, a.category) - laneRank(cfg, b.category) || a.category.localeCompare(b.category) || order.get(a.column) - order.get(b.column))
+    const soonest = new Map()
+    for (const e of listEntries()) if (!soonest.has(e.key)) soonest.set(e.key, e.next)
     for (const i of items) {
       const col = COLUMNS.find(c => c.id === i.column).title
       const note = noteOf(i)
-      console.log(`${i.name} [${i.category}] ${col}${i.sleeping ? ` (${statusText('sleeping')})` : ''}${note ? `: ${note.slice(0, 80)}` : ''}`)
+      const alarm = soonest.has(i.key) ? ` ⏰ ${shortWhen(soonest.get(i.key), t)}` : ''
+      console.log(`${i.name} [${i.category}] ${col}${i.sleeping ? ` (${statusText('sleeping')})` : ''}${alarm}${note ? `: ${note.slice(0, 80)}` : ''}`)
     }
     return
+  }
+
+  // Neither needs to know which session asks.
+  if (cmd === 'schedule' && rest.includes('--all')) {
+    const list = listEntries()
+    if (!list.length) return console.log('nothing scheduled')
+    for (const e of list) console.log(entryLine(e, Date.now(), true))
+    return
+  }
+  if (cmd === 'unschedule' && rest[0] && rest[0].toLowerCase() !== 'all') {
+    const e = removeEntry(rest[0].toLowerCase())
+    if (!e) throw new Error(`no entry "${rest[0]}"; see board schedule`)
+    return console.log(`ok · removed ${e.id} (${e.cron ? `every "${e.cron}"` : stamp(e.next)}${e.name ? `, ${e.name}` : ''}): ${clip(e.text)}`)
   }
 
   const s = await resolveSession()
@@ -119,6 +170,54 @@ async function main() {
     case 'clear':
       writeCard(s.key, { doing: '', wait: '', waitSince: '', ask: '', askSince: '', result: '' })
       break
+    case 'remind': {
+      // The time is the first one to five words that read as one; the rest is the text.
+      let at = null
+      let words = 0
+      for (let k = Math.min(5, rest.length - 1); k >= 1 && at === null; k--) {
+        at = parseWhen(rest.slice(0, k).join(' '), now)
+        words = k
+      }
+      const msg = rest.slice(words).join(' ').replace(/\s+/g, ' ').trim()
+      if (at === null || !msg) throw new Error(`usage: board remind <when> "<text>"; when: ${WHEN_HELP}`)
+      if (at <= now) throw new Error(`${stamp(at)} is in the past`)
+      const e = addEntry({ key: s.key, name: s.name ?? '', text: msg, at, next: at, by: 'agent' })
+      return console.log(`ok · reminder ${e.id} ${stamp(at)} (${fromNow(at, now)}): ${clip(msg)} · cancel: board unschedule ${e.id}`)
+    }
+    case 'every': {
+      // The cron in one quoted word, or its five fields as they are (PowerShell leaves * alone).
+      let expr = rest[0] ?? ''
+      let words = 1
+      if (!/\s/.test(expr) && !expr.startsWith('@') && rest.length > 5) {
+        expr = rest.slice(0, 5).join(' ')
+        words = 5
+      }
+      let cron
+      try {
+        cron = parseCron(expr)
+      } catch (err) {
+        throw new Error(`${err.message}. usage: board every "<minute hour day month weekday>" "<text>", e.g. board every "0 9 * * 1-5" "check the inbox"; quote the schedule`)
+      }
+      const msg = rest.slice(words).join(' ').replace(/\s+/g, ' ').trim()
+      if (!msg) throw new Error('usage: board every "<cron>" "<text>"')
+      const next = nextRun(cron, now)
+      if (next === null) throw new Error(`"${cron.expr}" never runs`)
+      const e = addEntry({ key: s.key, name: s.name ?? '', text: msg, cron: cron.expr, next, by: 'agent' })
+      return console.log(`ok · every ${e.id} "${cron.expr}", next ${stamp(next)} (${fromNow(next, now)}): ${clip(msg)} · cancel: board unschedule ${e.id}`)
+    }
+    case 'schedule': {
+      const list = listEntries().filter(e => e.key === s.key)
+      if (!list.length) return console.log('nothing scheduled for this session')
+      for (const e of list) console.log(entryLine(e, now, false))
+      return
+    }
+    case 'unschedule': {
+      // An id is removed above, whoever set it; here only "all" of this session's.
+      if (rest[0]?.toLowerCase() !== 'all') throw new Error('usage: board unschedule <id|all>')
+      const mine = listEntries().filter(e => e.key === s.key)
+      for (const e of mine) removeEntry(e.id)
+      return console.log(`ok · removed ${mine.length} ${mine.length === 1 ? 'entry' : 'entries'}`)
+    }
     default:
       throw new Error(`unknown command "${cmd}". ${USAGE}`)
   }

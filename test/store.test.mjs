@@ -39,7 +39,7 @@ test('an occupied card lock times out without deleting another writer lock or ch
   const proc = box.run('write', { key: 'shared', patch: { doing: 'changed' } })
   const out = await proc.exited
   assert.equal(out.code, 0, out.stderr)
-  assert.match(message(proc, 'error')?.error ?? '', /Timed out waiting for card lock/)
+  assert.match(message(proc, 'error')?.error ?? '', /Timed out waiting for lock/)
   assert.equal(JSON.parse(readFileSync(join(box.cards, 'shared.json'), 'utf8')).doing, 'original')
   assert.ok(existsSync(join(box.cards, 'shared.json.lock')))
 })

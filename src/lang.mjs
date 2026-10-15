@@ -5,8 +5,9 @@ import { LANGUAGE_NAMES, resolveLanguage, translator } from '../web/i18n.js'
 let current = translator(resolveLanguage('auto'))
 const listeners = new Set()
 
-/** Text in the board's language: t('col.me'), t('sent.files', { n: 2 }). */
+/** Text in the board's language: t('col.me'), t('sent.files', { n: 2 }); t.lang is its code. */
 export const t = (key, vars) => current(key, vars)
+Object.defineProperty(t, 'lang', { get: () => current.lang })
 
 export const lang = () => current.lang
 
