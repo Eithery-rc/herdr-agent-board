@@ -71,8 +71,16 @@ const ANSI = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07/g
 export function launcherError(stdout, stderr) {
   const lines = `${stderr ?? ''}\n${stdout ?? ''}`.replace(ANSI, '').split(/\r?\n/).map(l => l.trimEnd())
   const err = String(stderr ?? '').replace(ANSI, '').split(/\r?\n/).map(l => l.trim()).filter(Boolean)
-  const barred = err.map(l => /^\|\s+(.*\S)/.exec(l)?.[1]).filter(s => s && !/^[~\s]+$/.test(s))
-  const message = (barred.at(-1) ?? err.filter(l => !/^(At |Line \||\+ |CategoryInfo|FullyQualifiedErrorId|~)/.test(l)).at(-1) ?? lines.filter(Boolean).at(-1) ?? '').replace(/^(Exception|Error|Write-Error):\s*/i, '').trim()
+  // PowerShell 7: the message follows the ~~~ line under the code, wrapped over "| " lines.
+  const marker = err.findLastIndex(l => /^\|\s*~+$/.test(l))
+  const barred = marker >= 0 ? err.slice(marker + 1).map(l => /^\|\s?(.*)$/.exec(l)?.[1]?.trim()).filter(Boolean).join(' ') : ''
+  // Windows PowerShell: the message first, cut at the console's width, then "At …", "+ …" and
+  // CategoryInfo lines.
+  const raw = String(stderr ?? '').replace(ANSI, '').split(/\r?\n/).filter(l => l.trim())
+  const at = raw.findIndex(l => /^At \S/.test(l))
+  const legacy = at > 0 && raw.some(l => /^\s*\+ CategoryInfo/.test(l)) ? raw.slice(0, at).reduce((s, l, i, all) => s + (i && all[i - 1].length < 110 ? ' ' : '') + l, '').trim() : ''
+  const plain = err.filter(l => !/^(At |Line \||\+ |\| |CategoryInfo|FullyQualifiedErrorId|~)/.test(l)).at(-1)
+  const message = (barred || legacy || plain || lines.filter(Boolean).at(-1) || '').replace(/^\S+\.ps1\s*:\s*/i, '').replace(/^(Exception|Error|Write-Error):\s*/i, '').trim()
   const pane = /\b(w[A-Za-z0-9]+:p[A-Za-z0-9]+)\b/.exec(lines.join('\n'))?.[1] ?? null
   return { message, pane }
 }
@@ -302,7 +310,7 @@ export function checkRequest(body) {
     workspaceLabel = String(ws.label ?? '').slice(0, 60)
   } else {
     workspaceLabel = String(ws.create ?? '').trim()
-    if (!workspaceLabel || workspaceLabel.length > 40 || /[\u0000-\u001f\u007f]/.test(workspaceLabel)) return fail('workspace', 'launch.err.workspaceName')
+    if (!workspaceLabel || workspaceLabel.length > 40 || /[\u0000-\u001f\u007f]/.test(workspaceLabel) || workspaceLabel.startsWith('-')) return fail('workspace', 'launch.err.workspaceName')
   }
   const message = String(body?.message ?? '').trim()
   if (message.length > MESSAGE_MAX) return fail('message', 'launch.err.message', { n: MESSAGE_MAX })
@@ -380,7 +388,7 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
   function ownSessionId(l) {
     l.sessionId = randomUUID()
     writeCard(l.sessionId, { category: l.category })
-    l.carded = true
+    l.carded = l.sessionId
   }
 
   async function viaHerdr(l) {
@@ -406,7 +414,8 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
       await herdr(['agent', 'start', l.agent, '--kind', kind, '--pane', pane, '--timeout', String(Math.min(ms, 300_000)), ...(args.length ? ['--', ...args] : [])], ms + 15_000)
     } catch (err) {
       if (err.code !== 'agent_not_ready' && !/agent_not_ready/.test(err.message)) {
-        throw new LaunchError(/timeout|timed out/i.test(err.message) ? t('launch.err.notReady', { s: ms / 1000 }) : err.message, failureKind(err.message))
+        const agent = kind === 'claude' ? 'Claude' : kind
+        throw new LaunchError(/timeout|timed out/i.test(err.message) ? t('launch.err.notReady', { s: ms / 1000, agent }) : err.message, failureKind(err.message))
       }
       // A dialog holds it (trusting the folder, usually): the user answers it, the board waits and goes on.
       l.state = 'waiting'
@@ -472,18 +481,18 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
         if (!l.pane && e.pane) l.pane = e.pane
         throw new LaunchError(e.message || r.error?.message || t('err.status', { code: r.code }), failureKind(e.message, r.error?.code))
       }
-      // A new workspace starts with a shell of its own; the launcher opened its own tab beside it.
-      if (l.rootPane && l.pane && l.pane !== l.rootPane) await tidy(l.rootPane)
+      // A new workspace starts with a tab of shells; the launcher opened its own tab beside it.
+      if (l.rootTab && l.pane && l.pane !== l.rootPane) await tidy(l.workspaceId, l.rootTab, l.pane)
     } finally {
       if (file) try { unlinkSync(file) } catch {}
     }
   }
 
-  /** Close the shell a new workspace came with, if nothing runs in it. */
-  async function tidy(pane) {
+  /** Close the tab a new workspace came with, if no agent runs in it (the session is elsewhere). */
+  async function tidy(workspace, tab, pane) {
     try {
-      const p = (await herdr(['pane', 'get', pane]))?.pane
-      if (p && !p.agent) await herdr(['pane', 'close', pane])
+      const panes = ((await herdr(['pane', 'list', '--workspace', workspace]))?.panes ?? []).filter(p => p.tab_id === tab)
+      if (panes.length && !panes.some(p => p.agent || p.pane_id === pane)) await herdr(['tab', 'close', tab])
     } catch {}
   }
 
@@ -498,10 +507,12 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
       claimed.add(it.key)
       l.key = it.key
       l.pane ??= it.pane
-      if (!l.carded && it.session) {
+      // Its card gets the lane under the key it has now. A Claude pane is keyed by its session id
+      // in a moment, so only other agents get a card by their pane.
+      if (l.carded !== it.key && (it.session || it.agent !== 'claude')) {
         try {
-          writeCard(it.session, { category: l.category })
-          l.carded = true
+          writeCard(it.key, { category: l.category })
+          l.carded = it.key
         } catch {}
       }
     }

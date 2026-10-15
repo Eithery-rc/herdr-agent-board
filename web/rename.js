@@ -49,6 +49,7 @@ export function renameInPlace(target, { value, auto, claude = null, t, onCommit,
   field.select()
 
   let done = false
+  let saving = false // a field that goes disabled loses the focus: that is no second commit
   const finish = () => {
     if (done) return
     done = true
@@ -58,12 +59,14 @@ export function renameInPlace(target, { value, auto, claude = null, t, onCommit,
     onClose()
   }
   const commit = async () => {
-    if (done) return
+    if (done || saving) return
     const name = field.value.trim()
     const claudeToo = !!check?.checked
     if (name === value && !claudeToo) return finish()
+    saving = true
     field.disabled = true
     const r = await onCommit(name, { claude: claudeToo })
+    saving = false
     if (r?.ok === false) {
       field.disabled = false
       field.focus()

@@ -340,7 +340,11 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
     } else {
       const { dir, prefix } = splitPathInput(f.cwd.value)
       if (!dir) {
-        items = []
+        // Nothing but "C:" or "~" yet: the drives and home.
+        const r = await dirs('')
+        if (seq !== popSeq || !s) return
+        const p = prefix.toLowerCase()
+        items = (r?.roots ?? []).filter(x => x.name.toLowerCase().startsWith(p) || x.path.toLowerCase().startsWith(p)).map(x => ({ path: x.path, label: x.name === '~' ? tr('launch.home') : x.name, detail: x.path }))
       } else {
         const r = await dirs(dir)
         if (seq !== popSeq || !s) return

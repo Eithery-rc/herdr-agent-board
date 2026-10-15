@@ -97,11 +97,15 @@ test('launch.command: one argument per element, optional groups, no values in th
 test('what a launcher said: its pane when it worked, the reason when it did not', () => {
   assert.deepEqual(parseLauncherOutput('waiting…\npane=w2:p14 name=Acme agent=acme\n'), { pane: 'w2:p14', agent: 'acme' })
   assert.deepEqual(parseLauncherOutput('nothing'), {})
-  const pwsh = 'Exception: C:\\bin\\spawn-agent.ps1:46\nLine |\n  46 |  …   throw "Claude in $pane waits"\n     |      ~~~~~~~~~~~~~~~~~~\n     | Claude in w2:p14 waits for a dialog (folder trust?). Answer it in that tab.\n'
+  // PowerShell 7 wraps the message over "| " lines under the code it points at, in color.
+  const pwsh = '\x1b[31;1mException: \x1b[0mC:\\bin\\spawn-agent.ps1:46\x1b[0m\r\n\x1b[36;1mLine |\x1b[0m\r\n\x1b[36;1m  46 | \x1b[0m …   \x1b[36;1mthrow "Claude in $pane waits for a dialog"\x1b[0m\r\n\x1b[36;1m     | \x1b[31;1m     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\x1b[0m\r\n\x1b[36;1m     | \x1b[31;1mClaude in w2:p14 waits for a dialog (folder trust?). Answer it in that tab, then: herdr agent prompt w2:p14\x1b[0m\r\n\x1b[36;1m     | \x1b[31;1m"/rename x" and send the brief.\x1b[0m\r\n'
   const e = launcherError('', pwsh)
-  assert.equal(e.message, 'Claude in w2:p14 waits for a dialog (folder trust?). Answer it in that tab.')
+  assert.equal(e.message, 'Claude in w2:p14 waits for a dialog (folder trust?). Answer it in that tab, then: herdr agent prompt w2:p14 "/rename x" and send the brief.')
   assert.equal(e.pane, 'w2:p14')
   assert.equal(failureKind(e.message), 'dialog')
+  // Windows PowerShell puts it first, cut at the console's width, then where it was thrown.
+  const legacy = `${'Claude in w2:p14 waits for a dialog (folder trust?). Answer it in that tab, then: herdr agent prompt w2:p14 "/rename x" and send the brief.'.replace(/^(.{120})/, '$1\r\n')}\r\nAt C:\\bin\\spawn-agent.ps1:46 char:5\r\n+     throw "Claude in $pane waits for a dialog"\r\n+     ~~~~~~~~~~\r\n    + CategoryInfo          : OperationStopped: (Claude in w2:p1...send the brief.:String) [], RuntimeException\r\n    + FullyQualifiedErrorId : Claude in w2:p14 waits\r\n`
+  assert.equal(launcherError('', legacy).message, e.message)
   assert.equal(launcherError('', '\x1b[31mError: No such folder: C:\\nope\x1b[0m\n').message, 'No such folder: C:\\nope')
   assert.equal(failureKind('Claude did not get ready in w2:p1 within 120 s'), 'timeout')
   assert.equal(failureKind('No such folder: C:\\x'), 'folder')
@@ -153,8 +157,8 @@ const HERDR = {
   'agent get': { result: { agent: { agent_session: { value: 's1' }, agent_status: 'idle', name: 'work-10' } } },
   'agent rename': { result: null },
   'pane read': { text: 'Session renamed to: Alpha job' },
-  'pane get': { result: { pane: { pane_id: 'wN:p1', agent: null, tab_id: 'wN:t1' } } },
-  'pane close': { result: null },
+  'pane list': { result: { panes: [{ pane_id: 'wN:p1', agent: null, tab_id: 'wN:t1' }, { pane_id: 'wN:p2', agent: null, tab_id: 'wN:t1' }] } },
+  'tab close': { result: null },
 }
 
 async function boardServer(t, cfg = {}) {
@@ -237,8 +241,8 @@ test('a new session through the configured launcher: a new workspace, the values
   assert.equal(seen.pane, null)
   const calls = box.calls()
   assert.deepEqual(calls.find(a => a[0] === 'workspace' && a[1] === 'create'), ['workspace', 'create', '--cwd', dir, '--label', 'Beta space', '--no-focus'])
-  // The shell the new workspace came with goes, the launcher made its own tab.
-  assert.ok(calls.some(a => a.join(' ') === 'pane close wN:p1'))
+  // The tab of shells the new workspace came with goes, the launcher made its own tab.
+  assert.ok(calls.some(a => a.join(' ') === 'tab close wN:t1'))
   assert.equal(JSON.parse(readFileSync(join(box.cards, `${session}.json`), 'utf8')).category, 'acme')
 
   const failing = await (await post('/api/launch', { name: 'Will fail', cwd: dir, workspace: { id: 'wA' } })).json()

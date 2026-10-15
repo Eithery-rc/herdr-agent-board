@@ -111,10 +111,11 @@ export function categoryForDir(categories, dir) {
  */
 export function folderSuggestions({ context = {}, categories = [], items = [], recent = [] }, limit = 10) {
   const out = []
-  // Scratch folders under the system's temp are where sessions try things, not where work starts.
+  // Scratch folders under the system's temp are where sessions try things, not where work
+  // starts: other sessions' and recent ones are left out there; the card's and the lanes' stay.
   const temp = p => /[\\/](appdata[\\/]local[\\/]temp|tmp)([\\/]|$)/i.test(p)
   const add = (path, why) => {
-    if (path && isAbsolutePath(path) && (why === 'card' || !temp(path)) && !out.some(o => sameDir(o.path, path))) out.push({ path, why })
+    if (path && isAbsolutePath(path) && !((why === 'session' || why === 'recent') && temp(path)) && !out.some(o => sameDir(o.path, path))) out.push({ path, why })
   }
   add(context.cwd, 'card')
   const lane = categories.find(c => c.id === context.category)
