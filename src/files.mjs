@@ -53,7 +53,8 @@ export function kindOf(path) {
 export function resolvePath(raw, cwd = '') {
   let p = String(raw ?? '').trim().replace(/^["'`]|["'`]$/g, '')
   if (/^herdr-reveal:/i.test(p) || /^file:/i.test(p)) {
-    p = p.replace(/^herdr-reveal:/i, '').replace(/^file:(\/\/\/?)?/i, '')
+    // file:///work/x keeps its root slash; file:///C:/x loses it below.
+    p = p.replace(/^herdr-reveal:/i, '').replace(/^file:(\/\/)?/i, '')
     try {
       p = decodeURIComponent(p)
     } catch {}

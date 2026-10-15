@@ -142,14 +142,20 @@ const connection = boardConnection({
     syncAvailability()
   },
 })
+// Two conditions. Edits the board keeps itself (cards, lanes, language, files) need only the
+// board; what goes through herdr (a message, going to a session, waking, putting to sleep) also
+// needs fresh herdr data, or it would act on a session that may have moved on.
 const canMutate = () => state.connected && state.data.stale === false && state.data.lastSuccessfulRefreshAt != null
+const canEdit = () => !!state.connected
+const HERDR_ACTIONS = ['focus', 'wake', 'sleep', 'message']
 function syncAvailability() {
   const blocked = !canMutate()
   for (const banner of document.querySelectorAll('#connection-state, #sheet-connection-state')) {
     banner.hidden = !blocked
-    banner.textContent = t('mobile.readOnly')
+    banner.textContent = t(canEdit() ? 'mobile.readOnly' : 'live.off')
   }
-  for (const element of document.querySelectorAll('#sheet-focus, #sheet-sleep, #sheet-wake, #attach, #lang, #cat-new, #sheet-card button, #sheet-card input, #cats-sheet button:not([data-close]), #cats-sheet input, [data-act="focus"], [data-act="sleep"], [data-act="dismiss"]')) element.disabled = blocked || (element.id === 'sheet-sleep' && inTurn(itemOf(state.open) ?? {}))
+  for (const element of document.querySelectorAll('#sheet-focus, #sheet-sleep, #sheet-wake, [data-act="focus"], [data-act="sleep"]')) element.disabled = blocked || (element.id === 'sheet-sleep' && inTurn(itemOf(state.open) ?? {}))
+  for (const element of document.querySelectorAll('#attach, #lang, #cat-new, #sheet-card button, #sheet-card input, #cats-sheet button:not([data-close]), #cats-sheet input, [data-act="dismiss"]')) element.disabled = !canEdit()
   files.refreshAvailability()
   syncComposer()
 }
@@ -160,7 +166,7 @@ addEventListener('offline', () => connection.suspend())
 document.addEventListener('visibilitychange', () => document.hidden ? connection.suspend() : resumeBoard())
 
 async function act(key, action, body = {}) {
-  if (!canMutate()) return { ok: false, error: t('mobile.readOnly') }
+  if (HERDR_ACTIONS.includes(action) ? !canMutate() : !canEdit()) return { ok: false, error: t(canEdit() ? 'mobile.readOnly' : 'live.off') }
   try {
     const res = await fetch(`/api/session/${encodeURIComponent(key)}/${action}`, {
       method: 'POST',
@@ -562,7 +568,7 @@ function appear(el) {
 let drag = null
 
 function onCardDown(e) {
-  if (!canMutate() || e.pointerType === 'touch' || e.button !== 0 || e.target.closest('[data-act]')) return
+  if (!canEdit() || e.pointerType === 'touch' || e.button !== 0 || e.target.closest('[data-act]')) return
   const card = e.currentTarget
   const rect = card.getBoundingClientRect()
   drag = {
@@ -789,7 +795,7 @@ class Panel {
 // ---------------------------------------------------------------- the session sheet
 const sheetBody = $('#sheet-body')
 // Paths in the thread become chips with a quick look; web links open in the default browser.
-const files = initFiles({ t: () => t, token: () => state.data.fsToken, toast, canMutate, onDialogChange: () => { dialogBack.sync(); syncAvailability() } })
+const files = initFiles({ t: () => t, token: () => state.data.fsToken, toast, canMutate: canEdit, onDialogChange: () => { dialogBack.sync(); syncAvailability() } })
 const dialogBack = dialogHistory({
   history,
   mobile: () => matchMedia('(max-width: 760px)').matches,
@@ -1058,7 +1064,7 @@ async function upload(a, file) {
 }
 
 function addFiles(files) {
-  if (!canMutate()) return toast(t('mobile.readOnly'), true)
+  if (!canEdit()) return toast(t('live.off'), true)
   for (let file of files) {
     // A pasted screenshot arrives as "image.png": give it a name that says what it is.
     if (/^image\.(png|jpe?g)$/i.test(file.name)) {
@@ -1233,7 +1239,7 @@ const GRIP = '<svg viewBox="0 0 20 20"><path d="M7.5 5h0M12.5 5h0M7.5 10h0M12.5 
 const TRASH = '<svg viewBox="0 0 20 20"><path d="M4.5 6h11M8 6V4.5h4V6m-6 0 .7 9.5h6.6L14 6"/></svg>'
 
 async function editCats(body) {
-  if (!canMutate()) return { ok: false, error: t('mobile.readOnly') }
+  if (!canEdit()) return { ok: false, error: t('live.off') }
   try {
     const res = await fetch('/api/categories', { method: 'POST', headers: { 'content-type': 'application/json', 'x-board': '1' }, body: JSON.stringify(body) })
     const r = await res.json().catch(() => ({}))
@@ -1568,7 +1574,7 @@ $('#lanes').addEventListener('click', e => {
   render()
 })
 $('#lang').addEventListener('click', async () => {
-  if (!canMutate()) return toast(t('mobile.readOnly'), true)
+  if (!canEdit()) return toast(t('live.off'), true)
   const codes = Object.keys(state.data.languages ?? LANGUAGES)
   const next = codes[(codes.indexOf(t.lang) + 1) % codes.length]
   state.langAsked = { lang: next, at: Date.now() }

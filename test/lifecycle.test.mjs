@@ -30,7 +30,7 @@ test('wide desktop does not add dialog history entries',()=>{
  controller.sync();assert.equal(pushes,0)
 })
 
-test('stale/offline server refuses mutations while read-only previews remain available', {timeout:15000}, async t=>{
+test('stale herdr data: herdr actions wait, the board’s own edits and previews go on', {timeout:15000}, async t=>{
  const http=await import('node:http');const {writeFileSync}=await import('node:fs');const {join}=await import('node:path')
  const {sandbox,until}=await import('./fixtures/sandbox.mjs');const box=sandbox(t)
  const reserve=http.createServer();await new Promise(r=>reserve.listen(0,'127.0.0.1',r));const port=reserve.address().port;await new Promise(r=>reserve.close(r))
@@ -44,10 +44,13 @@ test('stale/offline server refuses mutations while read-only previews remain ava
  const post=(path,body)=>fetch(url+path,{method:'POST',headers:{'content-type':'application/json','x-board':'1'},body:JSON.stringify(body)})
  assert.equal((await post('/api/session/a/focus',{})).status,409)
  assert.equal((await post('/api/session/a/message',{text:'must not send'})).status,409)
- assert.equal((await post('/api/settings',{language:'ru'})).status,409)
- assert.equal((await post('/api/open-url',{url:'https://example.invalid'})).status,409)
+ // What the board does itself goes on without herdr: settings, card edits, opening files and links
+ // (checked here by the answers they give, without opening anything).
+ assert.equal((await post('/api/settings',{language:'ru'})).status,200)
+ assert.equal((await post('/api/session/a/card',{doing:'still editable'})).status,200)
+ assert.equal((await post('/api/open-url',{url:'javascript:alert(1)'})).status,400)
+ assert.equal((await post('/api/fs/open',{path:join(box.dir,'missing.txt')})).status,404)
  const file=join(box.dir,'preview.txt');writeFileSync(file,'synthetic')
- assert.equal((await post('/api/fs/open',{path:file})).status,409)
  assert.equal((await post('/api/fs/preview',{path:file})).status,200)
  assert.equal(box.calls().some(args=>args[0]==='agent'),false)
 })
