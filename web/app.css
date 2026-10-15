@@ -759,7 +759,7 @@ button.swatch:active { transform: scale(0.88); }
 
 /* ---------------------------------------------------------------- files in the chat */
 /* A path the server found on disk becomes a chip; a click opens the quick look. */
-.chip {
+.fs-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -776,14 +776,14 @@ button.swatch:active { transform: scale(0.88); }
   cursor: pointer;
   transition: background 120ms ease, transform 100ms ease-out;
 }
-.msg code.chip { padding: 0 7px 0 5px; font: 500 12.5px/1.6 var(--font); background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.chip svg { width: 13px; height: 13px; stroke-width: 1.7; }
-.chip-label { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.chip:hover, .msg code.chip:hover { background: color-mix(in srgb, var(--accent) 17%, transparent); text-decoration: none; }
-.chip:active { transform: scale(0.96); }
-.chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.msg.user .chip, .msg.user code.chip { background: rgba(255, 255, 255, 0.2); box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.4); color: #fff; }
-.msg.user .chip:hover { background: rgba(255, 255, 255, 0.3); }
+.msg code.fs-chip { padding: 0 7px 0 5px; font: 500 12.5px/1.6 var(--font); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.fs-chip svg { width: 13px; height: 13px; stroke-width: 1.7; }
+.fs-chip-label { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.fs-chip:hover, .msg code.fs-chip:hover { background: color-mix(in srgb, var(--accent) 17%, transparent); text-decoration: none; }
+.fs-chip:active { transform: scale(0.96); }
+.fs-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.msg.user .fs-chip, .msg.user code.fs-chip { background: rgba(255, 255, 255, 0.2); box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.4); color: #fff; }
+.msg.user .fs-chip:hover { background: rgba(255, 255, 255, 0.3); }
 .md a.fs { color: var(--accent); }
 .md a.fs[data-fs="missing"] { color: inherit; opacity: 0.6; border-bottom: 1px dotted currentColor; cursor: default; }
 .tool-line .d[data-fs="file"] { cursor: pointer; }
@@ -857,7 +857,7 @@ button.swatch:active { transform: scale(0.88); }
 .ql-md p { margin: 0 0 12px; }
 .ql-md code { padding: 1px 5px; border-radius: 5px; background: var(--fill); font: 0.88em var(--mono); }
 .ql-md pre code { padding: 0; background: none; font-size: 12.5px; }
-.ql-md .chip { font-size: 0.9em; }
+.ql-md .fs-chip { font-size: 0.9em; }
 
 .ql-table table { min-width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .ql-table th, .ql-table td { max-width: 420px; padding: 6px 14px; overflow: hidden; border-bottom: 0.5px solid var(--separator); text-align: left; white-space: nowrap; text-overflow: ellipsis; }
