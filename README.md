@@ -15,7 +15,7 @@ current with the `board` command; a SessionStart / UserPromptSubmit hook tells e
 
 ```sh
 herdr plugin install Eithery-rc/herdr-agent-board   # or clone it and: herdr plugin link <folder>
-herdr plugin action invoke agent-board.install      # board command in ~/.local/bin, hooks in ~/.claude/settings.json
+herdr plugin action invoke agent-board.install      # board command in ~/.local/bin; hooks and status line in ~/.claude/settings.json
 ```
 
 Node 20 or newer, no dependencies. Then set up the lanes: "Categories" on the web board (titles,
@@ -119,6 +119,15 @@ A failed refresh keeps the last snapshot and marks it stale; the indicator turns
 Herdr data can be collected again. Opening the SSE connection alone does not mark data live.
 SSE sends the board again only when it changed (stale included); GET always has the latest
 `lastSuccessfulRefreshAt`.
+
+Claude usage (`src/statusline.mjs`, `src/usage.mjs`): the install action sets Claude Code's status line
+to the board's own command when there is none (a status line someone else set stays). Claude runs it
+after every reply with the session's state; it keeps the account's 5h and 7d usage windows
+(`claude-limits-latest.json` in the state folder, the usagebar shape) and each session's context fill
+(`context/<session id>.json`), and prints a short line under the prompt: `ctx 34% · 5h 23% · 7d 41%`.
+The board shows the windows as a pill by the live dot (windows past their reset left out) and the
+context fill in the sheet; without the status line it falls back to the usagebar cache and to the
+tokens of the last request in the transcript.
 
 Files (`src/files.mjs`, `web/files.js`): `POST /api/fs/stat` (which of these paths exist),
 `POST /api/fs/preview`, `POST /api/fs/open` (`open` or `reveal`, through explorer.exe, `open`
