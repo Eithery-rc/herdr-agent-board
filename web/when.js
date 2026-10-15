@@ -31,7 +31,10 @@ export function shortWhen(ms, t, now = Date.now()) {
   return d.toLocaleDateString(t.lang, { day: 'numeric', month: 'short' })
 }
 
-/** A day in words: "Today", "Tomorrow", "Friday, 16 October". */
+/** For the start of a line: "завтра 9:00" -> "Завтра 9:00". */
+export const capital = (s, t) => (s ? s[0].toLocaleUpperCase(t.lang) + s.slice(1) : s)
+
+/** A day in words, as in a sentence: "today", "tomorrow", "Friday, 16 October". */
 export function dayLabel(ms, t, now = Date.now()) {
   const days = daysFrom(ms, now)
   if (days === 0) return t('when.today')
@@ -41,7 +44,7 @@ export function dayLabel(ms, t, now = Date.now()) {
   return new Date(ms).toLocaleDateString(t.lang, { weekday: 'long', day: 'numeric', month: 'long', ...(sameYear ? {} : { year: 'numeric' }) })
 }
 
-/** A moment in words: "15:30" today, else "Tomorrow 9:00", "Friday, 16 October 9:00". */
+/** A moment in words: "15:30" today, else "tomorrow 9:00", "Friday, 16 October 9:00". */
 export function longWhen(ms, t, now = Date.now()) {
   return daysFrom(ms, now) === 0 ? timeOf(ms, t) : `${dayLabel(ms, t, now)} ${timeOf(ms, t)}`
 }

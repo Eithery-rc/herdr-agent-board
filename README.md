@@ -68,6 +68,10 @@ raised when it is already open.
 - "Categories" (or a click on a lane title): rename, recolor, add or remove the folders that
   sort sessions into the lane, create, delete (two clicks; its sessions fall back to the folder
   guess), drag rows by the handle to reorder lanes. Written to config.json at once.
+- A clock on a card: the session has something scheduled, with the soonest time (orange while a
+  due one waits for the session to be free). The sheet lists its next three; "Schedule" on the
+  toolbar shows every entry by day, then what was sent or missed lately. The trash can cancels
+  an entry (two clicks). See [Schedule](#schedule).
 
 ## When a card is under "Needs me"
 
@@ -89,6 +93,48 @@ sorts it by itself as before. Dragged while the session works, it stays under "W
 moves once that turn is over. A terminal dialog still puts it under "Needs me". Dropped back on
 the column the board would pick, or with the "Auto" chip, the pin goes. "Working" takes no
 cards. The pin is `pin` in the card file; the hook and the board clear it.
+
+## Schedule
+
+An agent can ask the board to come back to it later: `board remind in 2h "check the CI run"`,
+or on a cron schedule, `board every "0 9 * * 1-5" "go through the inbox"`. When an entry is due,
+the board types `[board reminder] <text>` into that session as a prompt (`[board schedule <id>:
+<cron>] <text>` for a repeating one), waking it through herdr-wake first when it sleeps. The
+agent wrote the text for itself, so it knows what to do.
+
+This is what Claude Code's own CronCreate and ScheduleWakeup cannot do here: they live inside
+the Claude process, and herdr-wake ends that process after an idle hour. The board's entries
+are files, and the board keeps running.
+
+- Times are local: `in 30m`, `in 1h30m`, `at 15:30` (the next 15:30), `tomorrow 9:00`,
+  `fri 17:00`, `2026-10-20 14:00`, or an ISO time with a zone. A date alone means 9:00.
+- Cron has the usual 5 fields (minute, hour, day of month, month, day of week; names, ranges,
+  lists and steps) or `@hourly`, `@daily`, `@weekly`, `@monthly`, `@yearly`. Day fields work as
+  in Vixie cron: two restricted ones are either-or, one that starts with `*` narrows the other.
+  Runs closer than 5 minutes apart are refused: each one is a turn of the session. On a DST
+  change, a time that does not exist that day is skipped and a repeated hour runs once.
+- A session that works, waits on a dialog, or has text the user started typing in its input
+  box (read from the screen as herdr-wake does: dim suggestions do not count) is not
+  interrupted: the scheduler tries again every tick (15 s) and sends once it is free. After
+  `scheduleWaitMin` (240) minutes of trying, the run is logged as missed: a one-off entry goes,
+  a cron one moves to its next time.
+- An entry belongs to the session that set it. After `/clear`, which gives the session a new
+  id, it goes to the Claude session now in the same pane and folder.
+- At most two sleeping sessions are woken at once. An entry cancelled while its session wakes
+  up is not sent.
+- Runs that came due while the board was off: a one-off is sent once, saying how late it is; a
+  cron entry sends one prompt for all the runs it missed, saying how many. Time the board was
+  off does not count against the wait.
+- A reminder prompt is not the user writing: the hook leaves the card's `ask` in place.
+- One file per entry in `%LOCALAPPDATA%\herdr\plugins\agent-board\schedule\<id>.json`, written
+  under the same per-file lock as the cards, so an agent cancelling an entry while the
+  scheduler marks its run never brings it back. Before sending, the scheduler claims the entry
+  in its file: a second board running at the same time (a restart that overlaps) never sends a
+  run twice. `log.jsonl` there keeps the last 200 runs.
+- The scheduler runs in the web board's server (`src/scheduler.mjs`), one per machine since
+  only one board holds the port; with `web: false` the terminal board runs it.
+- At most 30 entries per session.
+- The terminal board shows `⏰` and the soonest time by a card's age, the count in its header.
 
 ## Language
 
@@ -157,6 +203,10 @@ board ask "<question>"    needs your answer: "Needs me" until you reply
 board done ["<text>"]     finished: clears doing, wait and ask
 board list                every session, one line each
 board cats                known categories
+board remind <when> "<text>"   at that time, "[board reminder] <text>" goes into the session
+board every "<cron>" "<text>"  the same on a cron schedule
+board schedule [--all]    this session's entries (every session's)
+board unschedule <id|all> remove an entry (all: every entry of this session)
 --session <id|name|pane>  for another session's card
 ```
 
@@ -165,7 +215,8 @@ board cats                known categories
 `%APPDATA%\herdr\plugins\config\agent-board\config.json`: `language` (`auto`, `en`, `ru`),
 categories (id, title, color, folders that guess the category), `placement` (`workspace`
 default: the board lives in a workspace of its own and stays open; `tab`; `overlay`),
-`refreshSec`, `wakeUrl` (herdr-wake router), `port` (web board, 12422), `web` (false turns the
+`refreshSec`, `wakeUrl` (herdr-wake router), `scheduleWaitMin` (how long a due entry waits for a
+busy session, 240), `port` (web board, 12422), `web` (false turns the
 web board off), `browser` (path for the app window), `terminalTitle` (window title pattern to
 raise, default `<COMPUTERNAME>:*`), `raiseTerminal`.
 

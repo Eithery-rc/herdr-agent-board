@@ -195,7 +195,8 @@ export function transcriptInfo(path) {
       if (!o || o.isSidechain) continue
       if (o.type === 'user') {
         if (Array.isArray(content)) for (const b of content) if (b.type === 'tool_result') results.add(b.tool_use_id)
-        if (!info.lastText && !o.isMeta && userText(content)) info.replied = true
+        // A reminder the board typed in (scheduler.mjs) is not the user answering.
+        if (!info.lastText && !o.isMeta && userText(content) && !/^\[board (reminder|schedule)\b/.test(userText(content))) info.replied = true
         continue
       }
       if (o.type !== 'assistant' || !Array.isArray(content)) continue

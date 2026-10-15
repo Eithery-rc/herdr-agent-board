@@ -58,6 +58,7 @@ export function addEntry(fields) {
 /** Change an entry that still exists: `change(entry)` returns the new entry or undefined. */
 export function updateEntry(id, change) {
   if (!ID.test(String(id))) return undefined
+  mkdirSync(SCHEDULE_DIR, { recursive: true }) // the lock lives next to the file
   return updateJson(fileOf(id), entry => (entry ? change(entry) : undefined))
 }
 
@@ -65,6 +66,7 @@ export function updateEntry(id, change) {
 export function removeEntry(id) {
   let removed = null
   if (!ID.test(String(id))) return null
+  mkdirSync(SCHEDULE_DIR, { recursive: true })
   updateJson(fileOf(id), entry => {
     removed = entry
     return entry ? null : undefined

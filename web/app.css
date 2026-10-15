@@ -829,7 +829,6 @@ button.swatch:active { transform: scale(0.88); }
 .sched-entry.waiting .sched-time b { color: var(--orange); }
 .sched-time span { display: inline-flex; align-items: center; gap: 4px; min-width: 0; color: var(--label-3); font-size: 11.5px; }
 .sched-time svg { width: 12px; height: 12px; flex: none; }
-.sched-time code { overflow: hidden; font: 11px var(--mono); white-space: nowrap; text-overflow: ellipsis; }
 .sched-main { min-width: 0; }
 .sched-who {
   display: inline-flex;
@@ -851,7 +850,9 @@ button.swatch:active { transform: scale(0.88); }
 .sched-who:disabled { opacity: 0.7; }
 .sched-text { font-size: 13.5px; line-height: 1.4; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .sched-state { margin-top: 4px; font-size: 12px; color: var(--orange); }
-.sched-stats { margin-top: 3px; font-size: 11.5px; color: var(--label-3); }
+.sched-state.muted { color: var(--label-3); }
+.sched-stats { margin-top: 4px; font-size: 11.5px; color: var(--label-3); }
+.sched-stats code { padding: 1px 5px; border-radius: 5px; background: var(--fill-2); font: 11px var(--mono); color: var(--label-2); }
 .sched-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 56px 24px; text-align: center; color: var(--label-2); }
 .sched-empty svg { width: 42px; height: 42px; margin-bottom: 6px; color: var(--label-3); stroke-width: 1.2; }
 .sched-empty p { margin: 0; }

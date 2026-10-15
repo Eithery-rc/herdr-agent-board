@@ -70,7 +70,8 @@ export function parseWhen(text, now = Date.now()) {
   let m = /^(?:in|\+) ?(.+)$/.exec(s)
   if (m) {
     const ms = parseDuration(m[1])
-    return ms === null ? null : now + ms
+    // Past what Date can hold ("in 99999999999d") is not a time.
+    return ms === null || !(now + ms < 8.64e15) ? null : now + ms
   }
   // An ISO time with its own zone is a moment as it is.
   if (/^\d{4}-\d{2}-\d{2}t\d{2}:\d{2}(:\d{2}(\.\d+)?)?(z|[+-]\d{2}:?\d{2})$/.test(s)) {
@@ -173,17 +174,15 @@ export function parseCron(text) {
     throw new Error(`a cron schedule has 5 fields (minute hour day-of-month month day-of-week), "${expr}" has ${parts[0] ? parts.length : 0}`)
   }
   const [minute, hour, dom, month, dow] = parts.map((p, i) => fieldSet(p, FIELDS[i]))
-  // As in cron: with both days restricted, either one matches.
   return { expr, minute, hour, dom, month, dow, anyDom: parts[2].startsWith('*'), anyDow: parts[4].startsWith('*') }
 }
 
+// As in Vixie cron: a day field that starts with "*" (so "*/2" too) narrows the other one;
+// two restricted day fields are either-or.
 function dayMatches(c, d) {
   const dom = c.dom.has(d.getDate())
   const dow = c.dow.has(d.getDay())
-  if (c.anyDom && c.anyDow) return true
-  if (c.anyDom) return dow
-  if (c.anyDow) return dom
-  return dom || dow
+  return c.anyDom || c.anyDow ? dom && dow : dom || dow
 }
 
 const HORIZON_MS = 8 * 366 * 86400e3
@@ -213,6 +212,19 @@ export function nextRun(cron, after) {
     if (d.getTime() <= was) d.setTime(was + 60_000)
   }
   return null
+}
+
+/** The shortest gap between its next `runs` runs after `after`, in ms (Infinity when it runs once or never). */
+export function shortestGap(cron, after, runs = 50) {
+  const c = typeof cron === 'string' ? parseCron(cron) : cron
+  let gap = Infinity
+  let at = nextRun(c, after)
+  for (let i = 1; i < runs && at !== null; i++) {
+    const next = nextRun(c, at)
+    if (next !== null) gap = Math.min(gap, next - at)
+    at = next
+  }
+  return gap
 }
 
 /** How many runs fall in [from, to], counting at most `cap`. */

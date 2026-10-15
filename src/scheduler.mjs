@@ -1,19 +1,19 @@
 // Runs the schedule (schedule.mjs) in the board's process: when an entry is due, its text goes
 // into the session's prompt as "[board reminder] <text>", waking the session first when
-// herdr-wake put it to sleep. A session that works or waits on a dialog is not interrupted: it
-// gets the text once it is free, tried on every tick, up to `scheduleWaitMin` minutes of trying;
-// then the run is logged as missed. A one-off entry goes after its run; a cron one moves to its
-// next time.
+// herdr-wake put it to sleep. A session that works, waits on a dialog or has the user's unsent
+// text in its input box is not interrupted: it gets the text once it is free, tried on every
+// tick, up to `scheduleWaitMin` minutes of trying; then the run is logged as missed. A one-off
+// entry goes after its run; a cron one moves to its next time.
 //
 // Runs that came due while the board was off: a one-off is sent once, saying how late it is; the
 // missed runs of a cron entry go as one, saying how many. Time the board was off does not count
 // against the wait. An entry is claimed in its file before it is sent, so a second board (a
 // restart that overlaps, a test copy) never sends the same run twice.
 import { mkdirSync, watch } from 'node:fs'
-import { send } from './actions.mjs'
+import { send, wake } from './actions.mjs'
 import { t } from './lang.mjs'
 import { busy, collect, forgetSleepers } from './model.mjs'
-import { listEntries, logRun, removeEntry, SCHEDULE_DIR, updateEntry } from './schedule.mjs'
+import { getEntry, listEntries, logRun, removeEntry, SCHEDULE_DIR, updateEntry } from './schedule.mjs'
 import { countRuns, nextRun } from './when.mjs'
 import { longWhen, span } from '../web/when.js'
 
@@ -21,6 +21,8 @@ import { longWhen, span } from '../web/when.js'
 const CLAIM_MS = 5 * 60_000
 // Later than this, the prompt says by how much.
 const LATE_MS = 2 * 60_000
+// Sessions woken at once, so a board back after a night does not start every sleeper together.
+const MAX_WAKING = 2
 
 /** What the session gets: "[board reminder] text", with a note when it is late or stands for several runs. */
 export function promptOf(entry, now) {
@@ -36,14 +38,32 @@ export function promptOf(entry, now) {
   return `[${tag}${notes.length ? `; ${notes.join('; ')}` : ''}] ${entry.text}`
 }
 
+const folder = p => String(p ?? '').replace(/[\\/]+/g, '/').replace(/\/$/, '').toLowerCase()
+
+/**
+ * The session an entry is for: by its id, else the Claude session now in its pane and folder.
+ * /clear gives a session a new id in the same pane; the reminder follows it there.
+ */
+export function targetOf(entry, items) {
+  const own = items.find(i => i.key === entry.key)
+  if (own || !entry.pane || !entry.cwd) return own
+  return items.find(i => i.pane === entry.pane && i.session && !i.sleeping && folder(i.cwd) === folder(entry.cwd))
+}
+
+const positive = (v, fallback) => (Number(v) > 0 ? Number(v) : fallback)
+
 /**
  * Start sending due entries. `cfg` is the live config: scheduleTickSec (15), scheduleWaitMin
  * (240). Returns { tick, stop }.
  */
 export function startScheduler({ cfg, log = () => {}, onChange = () => {} }) {
-  const tickMs = () => Math.max(0.1, cfg.scheduleTickSec ?? 15) * 1000
-  const patience = () => (cfg.scheduleWaitMin ?? 240) * 60_000
+  const tickMs = () => Math.max(0.1, positive(cfg.scheduleTickSec, 15)) * 1000
+  const patience = () => positive(cfg.scheduleWaitMin, 240) * 60_000
   const flying = new Set() // sessions with a run on its way: one at a time per session
+  // Runs that went out but whose entry could not be updated (its lock was taken): the next
+  // tick finishes the entry instead of sending it again.
+  const delivered = new Map() // id -> next
+  let waking = 0
   let timer = null
   let ticking = false
   let stopped = false
@@ -59,12 +79,18 @@ export function startScheduler({ cfg, log = () => {}, onChange = () => {} }) {
       // Fresh: whether a session sleeps or works decides what happens now.
       const items = await collect(cfg)
       for (const entry of due) {
-        if (flying.has(entry.key)) continue
-        flying.add(entry.key)
-        run(entry, items.find(i => i.key === entry.key))
+        if (delivered.get(entry.id) === entry.next) {
+          finish(entry)
+          continue
+        }
+        const item = targetOf(entry, items)
+        if (flying.has(entry.key) || (item && flying.has(item.key)) || (item?.sleeping && waking >= MAX_WAKING)) continue
+        const keys = [entry.key, item?.key].filter(Boolean)
+        for (const k of keys) flying.add(k)
+        run(entry, item)
           .catch(err => log(`schedule ${entry.id}: ${err.message}`))
           .finally(() => {
-            flying.delete(entry.key)
+            for (const k of keys) flying.delete(k)
             onChange()
           })
       }
@@ -77,14 +103,27 @@ export function startScheduler({ cfg, log = () => {}, onChange = () => {} }) {
 
   async function run(entry, item) {
     const now = Date.now()
-    // A sleeping session is woken by send(); one at work or at a dialog is left alone.
     let why = !item ? 'gone' : !item.sleeping && busy(item.status) ? 'busy' : ''
     if (!why) {
       if (!claim(entry.id, now)) return
-      const r = await send(cfg, item, promptOf(entry, Date.now()), { idle: true })
-      if (item.sleeping) forgetSleepers()
+      if (item.key !== entry.key) {
+        // Followed into the session that took its pane: the card and the log say the new one.
+        entry = { ...entry, key: item.key, name: item.name }
+        updateEntry(entry.id, e => ({ ...e, key: item.key, name: item.name }))
+      }
+      let r = { ok: true }
+      if (item.sleeping) {
+        waking++
+        r = await wake(cfg, item).finally(() => {
+          waking--
+          forgetSleepers()
+        })
+        // Cancelled while the session woke up: nothing to send.
+        if (r.ok && !getEntry(entry.id)) return
+      }
+      if (r.ok) r = await send(cfg, { ...item, sleeping: false }, promptOf(entry, Date.now()), { idle: true })
       if (r.ok) return sent(entry)
-      why = r.busy ? 'busy' : r.error
+      why = r.draft ? 'draft' : r.busy ? 'busy' : r.error
     }
     wait(entry, now, why)
   }
@@ -100,9 +139,20 @@ export function startScheduler({ cfg, log = () => {}, onChange = () => {} }) {
 
   function sent(entry) {
     const now = Date.now()
-    if (entry.cron) updateEntry(entry.id, e => settle(e, now, { lastRun: now, runs: (e.runs ?? 0) + 1 }))
-    else removeEntry(entry.id)
+    delivered.set(entry.id, entry.next)
+    finish(entry, now)
     logRun(record(entry, now, 'sent'))
+  }
+
+  /** After a run went out: a one-off goes, a cron entry moves on. */
+  function finish(entry, now = Date.now()) {
+    try {
+      if (entry.cron) updateEntry(entry.id, e => settle(e, now, { lastRun: now, runs: (e.runs ?? 0) + 1 }))
+      else removeEntry(entry.id)
+      delivered.delete(entry.id)
+    } catch (err) {
+      log(`schedule ${entry.id}: ${err.message}`)
+    }
   }
 
   const record = (entry, at, result, why) => ({ id: entry.id, key: entry.key, name: entry.name, text: entry.text, cron: entry.cron, due: entry.next, at, result, why })
@@ -140,10 +190,11 @@ export function startScheduler({ cfg, log = () => {}, onChange = () => {} }) {
     plan(Math.min(tickMs(), soonest - now + 50))
   }
   // A new entry may be due sooner than the next tick.
+  let watcher = null
   let watchTimer = null
   try {
     mkdirSync(SCHEDULE_DIR, { recursive: true })
-    watch(SCHEDULE_DIR, () => {
+    watcher = watch(SCHEDULE_DIR, () => {
       clearTimeout(watchTimer)
       watchTimer = setTimeout(() => plan(0), 300)
     })
@@ -155,6 +206,8 @@ export function startScheduler({ cfg, log = () => {}, onChange = () => {} }) {
     stop() {
       stopped = true
       clearTimeout(timer)
+      clearTimeout(watchTimer)
+      watcher?.close()
     },
   }
 }

@@ -2,8 +2,9 @@
 // returns { ok: true } or { ok: false, error } with a message for the user.
 import { execFile } from 'node:child_process'
 import { hostname } from 'node:os'
-import { herdr } from './herdr.mjs'
+import { herdr, herdrText } from './herdr.mjs'
 import { t } from './lang.mjs'
+import { inputDraft } from './screen.mjs'
 
 /** Wake a session herdr-wake put to sleep (takes 10 to 30 s). */
 export async function wake(cfg, item) {
@@ -71,8 +72,9 @@ export async function focus(cfg, item, { raise = false } = {}) {
 
 /**
  * Type a message into the session's prompt, waking it first. Refused while it waits for a
- * decision; with `idle`, also while it works (the scheduler waits for a free session instead of
- * queueing into a turn). A refusal for either reason says `busy`.
+ * decision; with `idle`, also while it works or the user has unsent text in its input box (the
+ * scheduler waits for a free session instead of queueing into a turn). Those refusals say `busy`,
+ * and `draft` for the text.
  */
 export async function send(cfg, item, text, { idle = false } = {}) {
   text = String(text ?? '').trim()
@@ -91,6 +93,11 @@ export async function send(cfg, item, text, { idle = false } = {}) {
     }
     if (agent.agent_status === 'blocked') return { ok: false, busy: true, error: t('err.blocked', { name: item.name }) }
     if (idle && agent.agent_status === 'working') return { ok: false, busy: true, error: t('err.working', { name: item.name }) }
+    if (idle && agent.agent === 'claude') {
+      // Typed after what the user started in the input box, Enter would send both.
+      const draft = inputDraft(await herdrText(['agent', 'read', item.pane, '--source', 'recent', '--lines', '40', '--ansi'], 10_000))
+      if (draft !== '') return { ok: false, busy: true, draft: draft !== null, error: t(draft === null ? 'err.blocked' : 'err.draft', { name: item.name }) }
+    }
     // This read and prompt are separate CLI calls, not an atomic identity check and send.
     // A leading dash would be read as an option by the herdr CLI.
     await herdr(['agent', 'prompt', item.pane, /^-/.test(text) ? ` ${text}` : text])

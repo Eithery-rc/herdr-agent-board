@@ -20,10 +20,20 @@ const read = (box, id) => (existsSync(join(dirOf(box), `${id}.json`)) ? JSON.par
 const runs = box => (existsSync(join(dirOf(box), 'log.jsonl')) ? readFileSync(join(dirOf(box), 'log.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)) : [])
 const prompts = box => box.calls().filter(a => a[1] === 'prompt').map(a => a[3])
 
+/** Claude's input box as `herdr agent read --ansi` shows it; a suggestion is drawn dim. */
+const RULE = '─'.repeat(40)
+const screen = (typed = '', dim = '') => ['● done', RULE, `❯ ${typed}${dim ? `\x1b[2m${dim}\x1b[0m` : ''}`, RULE, '  ⏵⏵ bypass permissions on'].join('\n')
+
 /** herdr with one Claude session s1 in pane p1. */
 function herdrWith(box, status, extra = {}) {
   const snapshot = { panes: [{ pane_id: 'p1', agent: 'claude', agent_session: { value: 's1' }, agent_status: status, cwd: box.dir }], tabs: [], workspaces: [] }
-  box.state({ 'api snapshot': { result: { snapshot } }, 'agent get': { result: { agent: { agent_status: status, agent_session: { value: 's1' } } } }, 'agent prompt': { result: {} }, ...extra })
+  box.state({
+    'api snapshot': { result: { snapshot } },
+    'agent get': { result: { agent: { agent: 'claude', agent_status: status, agent_session: { value: 's1' } } } },
+    'agent read': { text: screen('', 'try: run the tests') },
+    'agent prompt': { result: {} },
+    ...extra,
+  })
 }
 
 async function scheduler(box, cfg = {}) {
@@ -59,6 +69,9 @@ test('board remind / every / schedule / unschedule keep entries for the session'
   assert.match((await cli(box, ['remind', ...s, 'today', '0:00', 'past'])).out, /in the past/)
   assert.match((await cli(box, ['remind', ...s, 'soon', 'text'])).out, /usage/)
   assert.match((await cli(box, ['every', ...s, '0 0 30 2 *', 'never'])).out, /never runs/)
+  assert.match((await cli(box, ['every', ...s, '*/2 * * * *', 'too often'])).out, /more often than every 5 minutes/)
+  assert.match((await cli(box, ['remind', ...s, 'in', '99999999999d', 'never'])).out, /usage/)
+  assert.match((await cli(box, ['remind', ...s, 'in', '3000d', 'far'])).out, /five years/)
   assert.match((await cli(box, ['every', ...s, '* * *', 'bad'])).out, /5 fields/)
   const list = await cli(box, ['schedule', ...s])
   assert.equal(list.out.split('\n').length, 3)
@@ -133,6 +146,31 @@ test('a working session gets it once it is free; one that stays busy has it logg
   assert.equal(cron.missed, 1)
   assert.ok(cron.next > Date.now() - 1000)
   assert.equal(cron.pendingSince, undefined)
+})
+
+test('text the user left in the input box holds the reminder back until it is gone', { timeout: 15_000 }, async t => {
+  const box = sandbox(t)
+  herdrWith(box, 'idle', { 'agent read': { text: screen('half a thought') } })
+  put(box, { id: 'ddddd2', text: 'not over your draft', at: Date.now() - 1000, next: Date.now() - 1000 })
+  await scheduler(box)
+  await until(() => read(box, 'ddddd2')?.why === 'draft')
+  assert.deepEqual(prompts(box), [])
+  herdrWith(box, 'idle')
+  await until(() => prompts(box).length === 1)
+  assert.deepEqual(prompts(box), ['[board reminder] not over your draft'])
+})
+
+test('after /clear the reminder goes to the new session in the same pane and folder', { timeout: 15_000 }, async t => {
+  const box = sandbox(t)
+  herdrWith(box, 'idle')
+  // Set by session s0, which /clear replaced with s1 in pane p1.
+  put(box, { id: 'ddddd3', key: 's0', pane: 'p1', cwd: box.dir, text: 'still yours', at: Date.now() - 1000, next: Date.now() - 1000 })
+  put(box, { id: 'ddddd4', key: 's8', pane: 'p1', cwd: join(box.dir, 'elsewhere'), text: 'another folder', at: Date.now() - 1000, next: Date.now() - 1000 })
+  await scheduler(box)
+  await until(() => prompts(box).length === 1 && runs(box).length === 1)
+  assert.deepEqual(prompts(box), ['[board reminder] still yours'])
+  assert.equal(runs(box)[0].key, 's1')
+  await until(() => read(box, 'ddddd4')?.why === 'gone')
 })
 
 test('a sleeping session is woken through herdr-wake before it gets the text', { timeout: 15_000 }, async t => {

@@ -22,10 +22,13 @@ import { t } from './lang.mjs'
 import { COLUMNS, collect, noteOf, statusText } from './model.mjs'
 import { addEntry, listEntries, removeEntry } from './schedule.mjs'
 import { readCard, writeCard } from './store.mjs'
-import { nextRun, parseCron, parseWhen } from './when.mjs'
+import { nextRun, parseCron, parseWhen, shortestGap } from './when.mjs'
 import { shortWhen } from '../web/when.js'
 
 const USAGE = `board [cat <id> ["<Title>"] | doing <text> | wait <text> | ask <question> | done [text] | clear | list | cats | remind <when> "<text>" | every "<cron>" "<text>" | schedule [--all] | unschedule <id|all>] [--session <id|name|pane>]`
+// The session an entry is for; its pane and folder find it again after /clear gives it a new id.
+const where = s => ({ key: s.key, name: s.name ?? '', ...(s.pane && { pane: s.pane }), ...(s.cwd && { cwd: s.cwd }) })
+const MIN_REPEAT_MS = 5 * 60_000
 const WHEN_HELP = 'in 30m, in 2h, at 15:30, tomorrow 9:00, fri 17:00, 2026-10-20 14:00 (local time)'
 
 const args = process.argv.slice(2)
@@ -48,14 +51,14 @@ async function resolveSession() {
     const t = target.toLowerCase()
     const item = (await collect(cfg)).find(i => [i.name, i.pane, i.session].some(v => v && v.toLowerCase() === t))
     if (!item) throw new Error(`no session "${target}" on the board`)
-    return { key: item.key, cwd: item.cwd, name: item.name }
+    return { key: item.key, cwd: item.cwd, name: item.name, pane: item.pane }
   }
   const own = process.env.CLAUDE_CODE_SESSION_ID
-  if (own) return { key: own, cwd: process.cwd(), name: liveSessions().get(own)?.name }
+  if (own) return { key: own, cwd: process.cwd(), name: liveSessions().get(own)?.name, pane: process.env.HERDR_PANE_ID }
   const pane = process.env.HERDR_PANE_ID
   if (pane) {
     const p = (await snapshot()).panes.find(x => x.pane_id === pane)
-    if (p?.agent) return { key: p.agent_session?.value ?? `pane-${pane}`, cwd: p.cwd ?? '' }
+    if (p?.agent) return { key: p.agent_session?.value ?? `pane-${pane}`, cwd: p.cwd ?? '', pane }
   }
   throw new Error('cannot tell which session this is: run it from a Claude session, or pass --session')
 }
@@ -181,7 +184,8 @@ async function main() {
       const msg = rest.slice(words).join(' ').replace(/\s+/g, ' ').trim()
       if (at === null || !msg) throw new Error(`usage: board remind <when> "<text>"; when: ${WHEN_HELP}`)
       if (at <= now) throw new Error(`${stamp(at)} is in the past`)
-      const e = addEntry({ key: s.key, name: s.name ?? '', text: msg, at, next: at, by: 'agent' })
+      if (at > now + 5 * 366 * 86_400_000) throw new Error(`${stamp(at)} is more than five years ahead`)
+      const e = addEntry({ ...where(s), text: msg, at, next: at, by: 'agent' })
       return console.log(`ok · reminder ${e.id} ${stamp(at)} (${fromNow(at, now)}): ${clip(msg)} · cancel: board unschedule ${e.id}`)
     }
     case 'every': {
@@ -202,7 +206,9 @@ async function main() {
       if (!msg) throw new Error('usage: board every "<cron>" "<text>"')
       const next = nextRun(cron, now)
       if (next === null) throw new Error(`"${cron.expr}" never runs`)
-      const e = addEntry({ key: s.key, name: s.name ?? '', text: msg, cron: cron.expr, next, by: 'agent' })
+      // Every run is a turn of the session, waking it if need be.
+      if (shortestGap(cron, now) < MIN_REPEAT_MS) throw new Error(`"${cron.expr}" runs more often than every ${MIN_REPEAT_MS / 60_000} minutes; for a one-off wait use board remind`)
+      const e = addEntry({ ...where(s), text: msg, cron: cron.expr, next, by: 'agent' })
       return console.log(`ok · every ${e.id} "${cron.expr}", next ${stamp(next)} (${fromNow(next, now)}): ${clip(msg)} · cancel: board unschedule ${e.id}`)
     }
     case 'schedule': {

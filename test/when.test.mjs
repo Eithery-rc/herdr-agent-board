@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { countRuns, nextRun, parseCron, parseDuration, parseWhen } from '../src/when.mjs'
+import { countRuns, nextRun, parseCron, parseDuration, parseWhen, shortestGap } from '../src/when.mjs'
 import { translator } from '../web/i18n.js'
-import { dayLabel, shortWhen, span } from '../web/when.js'
+import { capital, dayLabel, shortWhen, span } from '../web/when.js'
 
 // Local time throughout: Thursday 15 October 2026, 14:00.
 const now = new Date(2026, 9, 15, 14, 0).getTime()
@@ -82,6 +82,18 @@ test('cron: next run', () => {
   assert.equal(nextRun('30 8 1 * mon', now), local(2026, 9, 19, 8, 30))
   assert.equal(nextRun('0 0 29 2 *', now), local(2028, 1, 29, 0, 0))
   assert.equal(nextRun('0 0 30 2 *', now), null)
+  // A step in one day field narrows the other one, "*" or not.
+  assert.equal(nextRun('0 9 */2 * *', now), local(2026, 9, 17, 9, 0))
+  assert.equal(nextRun('0 9 */2 * *', local(2026, 9, 17, 9, 0)), local(2026, 9, 19, 9, 0))
+  assert.equal(nextRun('0 9 * * */2', now), local(2026, 9, 17, 9, 0)) // Saturday (6)
+  assert.equal(nextRun('0 9 */2 * 1', now), local(2026, 9, 19, 9, 0)) // the 19th is a Monday and odd
+  assert.equal(nextRun('0 9 */2 * 1', local(2026, 9, 19, 9, 0)), local(2026, 10, 9, 9, 0))
+})
+
+test('cron: the shortest gap between runs', () => {
+  assert.equal(shortestGap('*/2 * * * *', now), 2 * 60e3)
+  assert.equal(shortestGap('0 9 * * 1-5', now), 86400e3)
+  assert.equal(shortestGap('0,1 9 * * *', now), 60e3)
 })
 
 test('cron: runs stay in order and on their minute across a whole year, DST included', () => {
@@ -109,12 +121,13 @@ test('scheduled times in words', () => {
   assert.equal(span(45 * 60e3, t), '45 min')
   assert.equal(span(130 * 60e3, t), '2 h 10 min')
   assert.equal(span(3 * 86400e3 + 4 * 3600e3, t), '3 d 4 h')
-  assert.equal(dayLabel(local(2026, 9, 16, 9, 0), t, now), 'Tomorrow')
-  assert.equal(dayLabel(local(2026, 9, 15, 20, 0), t, now), 'Today')
+  assert.equal(dayLabel(local(2026, 9, 16, 9, 0), t, now), 'tomorrow')
+  assert.equal(capital(dayLabel(local(2026, 9, 16, 9, 0), t, now), t), 'Tomorrow')
+  assert.equal(dayLabel(local(2026, 9, 15, 20, 0), t, now), 'today')
   assert.match(shortWhen(local(2026, 9, 15, 15, 30), t, now), /^3:30\s?PM$/)
   assert.match(shortWhen(local(2026, 9, 16, 9, 0), t, now), /^Fri 9:00\s?AM$/)
   assert.match(shortWhen(local(2026, 10, 20, 9, 0), t, now), /Nov 20|20 Nov/)
-  assert.equal(dayLabel(local(2026, 9, 16, 9, 0), translator('ru'), now), 'Завтра')
+  assert.equal(dayLabel(local(2026, 9, 16, 9, 0), translator('ru'), now), 'завтра')
 })
 
 test('the brief tells agents about the schedule', async () => {

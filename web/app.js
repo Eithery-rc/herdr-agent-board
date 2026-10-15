@@ -8,7 +8,7 @@ import { LANGUAGES, translator } from './i18n.js'
 import { updateLive } from './live.js'
 import { markdown } from './markdown.js'
 import { project, reducedMotion, rubberband, Spring, velocityOf } from './spring.js'
-import { dayLabel, daysFrom, longWhen, shortWhen, span, timeOf } from './when.js'
+import { capital, dayLabel, longWhen, shortWhen, span, timeOf } from './when.js'
 
 const $ = sel => document.querySelector(sel)
 
@@ -895,7 +895,7 @@ function scheduleRow(it) {
   const list = schedulesOf(it.key)
   if (!list.length) return ''
   const shown = list.slice(0, 3).map(e => {
-    const what = e.cron ? `${ICON.repeat}${esc(longWhen(e.next, t))}` : `${ICON.alarm}${esc(longWhen(e.next, t))}`
+    const what = `${e.cron ? ICON.repeat : ICON.alarm}${esc(capital(longWhen(e.next, t), t))}`
     return `<div class="sched-mini" data-id="${esc(e.id)}"><span class="when${overdue(e) ? ' due' : ''}" title="${esc(e.cron ? `${t('sched.repeat')}: ${e.cron}` : t('sched.once'))}">${what}</span><span class="text" title="${esc(e.text)}">${esc(e.text)}</span>${cancelButton(e)}</div>`
   })
   const more = list.length > 3 ? `<button class="sched-more" data-sched-more>${esc(t('sched.more', { n: list.length - 3 }))}</button>` : ''
@@ -1579,20 +1579,22 @@ const cancelButton = e => {
 /** Why a due entry has not gone out yet. */
 function pendingText(e) {
   if (!e.pendingSince) return ''
-  const vars = { time: longWhen(e.next, t), why: e.why }
-  return t(e.why === 'gone' ? 'sched.gone' : e.why && e.why !== 'busy' ? 'sched.failed' : 'sched.pending', vars)
+  const own = { gone: 'sched.gone', draft: 'sched.draft', busy: 'sched.pending' }
+  return t(own[e.why] ?? (e.why ? 'sched.failed' : 'sched.pending'), { why: e.why })
 }
 
 function entryHTML(e, when) {
   const it = itemOf(e.key)
-  const stats = e.cron ? [e.runs && t('sched.runs', { n: e.runs }), e.missed && t('sched.missedN', { n: e.missed })].filter(Boolean).join(' · ') : ''
   const pending = pendingText(e)
+  // A session that left the board keeps its entries until they run out of patience or are cancelled.
+  const note = pending || (it ? '' : t('sched.gone'))
+  const stats = e.cron ? [`<code>${esc(e.cron)}</code>`, e.runs && esc(t('sched.runs', { n: e.runs })), e.missed && esc(t('sched.missedN', { n: e.missed }))].filter(Boolean).join(' · ') : ''
   return `<div class="sched-entry${pending ? ' waiting' : ''}" data-id="${esc(e.id)}" data-key="${esc(e.key)}">
-    <div class="sched-time"><b>${esc(when(e))}</b><span>${e.cron ? `${ICON.repeat}<code>${esc(e.cron)}</code>` : esc(t('sched.once'))}</span></div>
+    <div class="sched-time"><b>${esc(when(e))}</b><span>${e.cron ? `${ICON.repeat}${esc(t('sched.repeat'))}` : esc(t('sched.once'))}</span></div>
     <div class="sched-main">
       <button class="sched-who" data-open="${esc(e.key)}" style="--lane:${it ? catInfo(catOf(it)).color : 'var(--gray)'}"${it ? ` title="${esc(t('sched.open'))}"` : ' disabled'}>${esc(it?.name || e.name || t('session'))}</button>
       <div class="sched-text">${esc(e.text)}</div>
-      ${pending ? `<div class="sched-state">${esc(pending)}</div>` : ''}${stats ? `<div class="sched-stats">${esc(stats)}</div>` : ''}
+      ${stats ? `<div class="sched-stats">${stats}</div>` : ''}${note ? `<div class="sched-state${pending ? '' : ' muted'}">${esc(note)}</div>` : ''}
     </div>
     ${cancelButton(e)}
   </div>`
@@ -1601,8 +1603,8 @@ function entryHTML(e, when) {
 function logHTML(r) {
   const it = itemOf(r.key)
   const late = r.at - r.due
-  const note = r.result === 'missed' ? (['busy', 'gone'].includes(r.why) ? t(`sched.why.${r.why}`) : r.why) : late > 120_000 ? t('sched.lateBy', { late: span(late, t) }) : ''
-  return `<div class="log-row ${r.result}"><span class="log-icon" title="${esc(t(r.result === 'sent' ? 'sched.sent' : 'sched.missed'))}">${r.result === 'sent' ? ICON.check : '!'}</span><span class="log-when">${esc(longWhen(r.at, t))}</span><span class="log-what"><b>${esc(it?.name || r.name || t('session'))}</b> ${esc(r.text)}</span>${note ? `<span class="log-note">${esc(note)}</span>` : ''}</div>`
+  const note = r.result === 'missed' ? (['busy', 'gone', 'draft'].includes(r.why) ? t(`sched.why.${r.why}`) : r.why) : late > 120_000 ? t('sched.lateBy', { late: span(late, t) }) : ''
+  return `<div class="log-row ${r.result}"><span class="log-icon" title="${esc(t(r.result === 'sent' ? 'sched.sent' : 'sched.missed'))}">${r.result === 'sent' ? ICON.check : '!'}</span><span class="log-when">${esc(capital(longWhen(r.at, t), t))}</span><span class="log-what"><b>${esc(it?.name || r.name || t('session'))}</b> ${esc(r.text)}</span>${note ? `<span class="log-note">${esc(note)}</span>` : ''}</div>`
 }
 
 function renderSchedule() {
@@ -1613,7 +1615,7 @@ function renderSchedule() {
   const waiting = list.filter(overdue)
   if (waiting.length) groups.push({ title: t('sched.waiting'), list: waiting, when: e => shortWhen(e.next, t) })
   for (const e of list.filter(e => !overdue(e))) {
-    const title = dayLabel(e.next, t)
+    const title = capital(dayLabel(e.next, t), t)
     if (groups.at(-1)?.title !== title) groups.push({ title, list: [], when: e => timeOf(e.next, t) })
     groups.at(-1).list.push(e)
   }
