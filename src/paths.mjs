@@ -14,3 +14,6 @@ export const CARDS_DIR = join(STATE_DIR, 'cards')
 export const SCHEDULE_DIR = join(STATE_DIR, 'schedule')
 export const BOARD_FILE = join(STATE_DIR, 'board.json')
 export const CLAUDE_DIR = join(homedir(), '.claude')
+// From Claude Code's status line (statusline.mjs): the account's usage windows, each session's context.
+export const USAGE_FILE = join(STATE_DIR, 'claude-limits-latest.json')
+export const CONTEXT_DIR = join(STATE_DIR, 'context')

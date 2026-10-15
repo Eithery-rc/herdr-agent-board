@@ -3,7 +3,10 @@
 import { categoryFor } from './config.mjs'
 import { liveSessions, transcriptInfo, transcriptPath } from './claude.mjs'
 import { snapshot } from './herdr.mjs'
+import { readFileSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import { t } from './lang.mjs'
+import { CONTEXT_DIR } from './paths.mjs'
 import { allCards, writeCard } from './store.mjs'
 
 // Titles read in the board's language at the moment they are used.
@@ -104,6 +107,33 @@ function askedText(attention, card, info, tool) {
   return tool.name === 'AskUserQuestion' ? tool.detail : t('note.permission', { what: `${tool.label}${tool.detail ? ` · ${tool.detail}` : ''}` })
 }
 
+const contextCache = new Map() // session -> { mtimeMs, data }
+
+/**
+ * How full a session's context is. The status line (statusline.mjs) says it best, percentage and
+ * window size included; without it, the tokens of the last request from the transcript.
+ */
+function contextOf(session, info) {
+  const own = { context: info.context ?? null, contextPct: null, contextSize: null }
+  if (!session) return own
+  const file = join(CONTEXT_DIR, `${String(session).replace(/[^A-Za-z0-9_-]/g, '_')}.json`)
+  const st = statSync(file, { throwIfNoEntry: false })
+  if (!st) return own
+  let hit = contextCache.get(session)
+  if (!hit || hit.mtimeMs !== st.mtimeMs) {
+    try {
+      hit = { mtimeMs: st.mtimeMs, data: JSON.parse(readFileSync(file, 'utf8')) }
+      contextCache.set(session, hit)
+    } catch {
+      return own
+    }
+  }
+  const d = hit.data
+  // The transcript can be newer (a reply the status line has not run for yet): its tokens win then.
+  const fresh = !info.activity || d.at >= info.activity - 5000
+  return { context: (fresh && d.tokens) || own.context, contextPct: fresh ? (d.usedPercentage ?? null) : null, contextSize: d.size ?? null }
+}
+
 /** All board items, newest activity first. */
 export async function collect(cfg) {
   const [snap, asleep] = await Promise.all([snapshot(), sleepers(cfg.wakeUrl)])
@@ -133,6 +163,7 @@ export async function collect(cfg) {
       title: info.title ?? '',
       prompt: info.prompt ?? '',
       lastText: info.lastText ?? '',
+      ...contextOf(base.session, info), // context: tokens of its last request; contextPct, contextSize when the status line said
       tool,
       attention,
       question: askedText(attention, card, info, tool),

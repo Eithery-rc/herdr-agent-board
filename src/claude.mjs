@@ -200,6 +200,12 @@ export function transcriptInfo(path) {
         continue
       }
       if (o.type !== 'assistant' || !Array.isArray(content)) continue
+      // How full the context is: what the last real request carried, cached parts included.
+      const u = o.message?.usage
+      if (info.context == null && u && o.message.model !== '<synthetic>') {
+        const tokens = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0)
+        if (tokens) info.context = tokens
+      }
       for (let j = content.length - 1; j >= 0; j--) {
         const b = content[j]
         if (b.type === 'tool_use' && !info.tool) {

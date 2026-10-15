@@ -13,6 +13,8 @@ import { pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { focus, send, sleepSession, wake } from './actions.mjs'
 import { checkoutChanges, isCheckout } from './changes.mjs'
+import { searchHistory } from './history.mjs'
+import { localUsage } from './usage.mjs'
 import { conversation } from './claude.mjs'
 import { describe, FILE_TOKEN, MEDIA_TYPES, openWith, preview, resolvePath } from './files.mjs'
 import { categoryInfo, colorHex, editCategories, editSettings, laneRank, liveConfig, PALETTE } from './config.mjs'
@@ -144,7 +146,20 @@ export function startServer({ cfg, log = () => {} } = {}) {
     const list = items.map(({ transcript, ...rest }) => rest)
     // The schedule without the scheduler's bookkeeping; the log is what was sent or missed lately.
     const schedules = listEntries().map(({ claim, tried, waited, ...entry }) => entry)
-    return { version, lang: lang(), language: cfg.language ?? 'auto', languages: LANGUAGES, fsToken: FILE_TOKEN, stale, items: list, categories, swatches: SWATCHES, columns: COLUMNS.map(({ id, title }) => ({ id, title })), schedules, scheduleLog: readLog(20) }
+    return { version, lang: lang(), language: cfg.language ?? 'auto', languages: LANGUAGES, fsToken: FILE_TOKEN, stale, limits: claudeLimits(), items: list, categories, swatches: SWATCHES, columns: COLUMNS.map(({ id, title }) => ({ id, title })), schedules, scheduleLog: readLog(20) }
+  }
+
+  /**
+   * Claude's usage windows (usage.mjs): from the board's own status line when Claude Code runs it,
+   * else from the usagebar cache, else null. Windows past their reset are left out: Claude starts
+   * them over. No age in it, so data that does not change does not make the board go out again.
+   */
+  function claudeLimits() {
+    for (const [source, l] of [['statusline', localUsage(STATE_DIR).limits], ['usagebar', localUsage().limits]]) {
+      const windows = l.available ? l.windows.filter(w => !w.expired) : []
+      if (windows.length) return { source, observedAt: l.observedAt, stale: Date.now() - l.observedAt > 30 * 60_000, windows }
+    }
+    return null
   }
 
   // GET always answers with the latest payload. Live clients get it again only when the board
@@ -254,6 +269,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
       if (!new RegExp(`^(127\\.0\\.0\\.1|localhost):${port}$`).test(req.headers.host ?? '')) return json(403, { error: 'host' })
       const url = new URL(req.url, `http://127.0.0.1:${port}`)
       const path = decodeURIComponent(url.pathname)
+      const refuseStale = () => stale || !lastSuccessfulRefreshAt || Date.now()-lastSuccessfulRefreshAt > Math.max(10000,(cfg.refreshSec ?? 2)*3000)
 
       if (req.method === 'GET' && path === '/api/board') {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
@@ -378,9 +394,12 @@ export function startServer({ cfg, log = () => {} } = {}) {
         const item = find(m[1])
         if (!item) return json(404, { error: t('err.gone') })
         if (req.method === 'GET' && m[2] === 'changes') return json(200, await checkoutChanges(item.cwd))
+        if (req.method === 'GET' && m[2] === 'history') return json(200, await searchHistory(item.cwd, url.searchParams.get('q'), undefined, item.session))
         if (req.method === 'GET' && !m[2]) return json(200, await detail(item))
         if (req.method === 'POST' && m[2]) {
           if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })
+          // Actions that go through herdr wait for a board that can reach it; card edits and the rest do not.
+          if (['focus', 'wake', 'sleep', 'message'].includes(m[2]) && refuseStale()) return json(409, { ok: false, error: t('mobile.readOnly') })
           const body = await readBody(req)
           const r = await act(item, m[2], body)
           refresh()
