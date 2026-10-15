@@ -116,8 +116,8 @@ export function initFiles({ t, token, toast }) {
     // Thumbnails and tool lines keep their look; everything else becomes a chip.
     if (el.classList.contains('fs-inline')) return
     const label = el.matches('a') ? el.innerHTML : esc(info.name + (info.line ? `:${info.line}` : ''))
-    el.classList.add('chip')
-    el.innerHTML = `${iconOf(info.kind)}<span class="chip-label">${label}</span>`
+    el.classList.add('fs-chip')
+    el.innerHTML = `${iconOf(info.kind)}<span class="fs-chip-label">${label}</span>`
   }
 
   document.addEventListener('click', e => {
