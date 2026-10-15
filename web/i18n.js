@@ -25,6 +25,10 @@ const STRINGS = {
     'attention.nextHint': 'Open the next card that needs you (N). Opening it does not accept a result.',
     'attention.waitAge': 'Waiting: {age}',
     'attention.activityAge': 'Last activity: {age}',
+    'draft.cancel': 'Discard the draft',
+    'err.msg.busy': 'A message to this session is still on its way',
+    'err.msg.id': 'A malformed message request',
+
     // columns and states
     'col.work': 'Working',
     'col.me': 'Needs me',
@@ -287,6 +291,10 @@ const STRINGS = {
     'attention.nextHint': 'Открыть следующую карточку, которой нужно внимание (N). Открыть не значит принять результат.',
     'attention.waitAge': 'Ожидает: {age}',
     'attention.activityAge': 'Последняя активность: {age}',
+    'draft.cancel': 'Удалить черновик',
+    'err.msg.busy': 'Предыдущее сообщение этой сессии ещё отправляется',
+    'err.msg.id': 'Некорректный запрос сообщения',
+
     'col.work': 'Работает',
     'col.me': 'Ждёт меня',
     'col.ext': 'Ждёт внешнего',

@@ -2,6 +2,7 @@
 // spring from where the card is on screen (FLIP), drags stay glued to the pointer and land
 // with the pointer's velocity, and the session sheet can be flicked away.
 import { attentionTime, nextAttention, recordView, resultToken, unseenResult } from './attention.js'
+import { draftBook } from './drafts.js'
 import { initFiles } from './files.js'
 import { LANGUAGES, translator } from './i18n.js'
 import { updateLive } from './live.js'
@@ -115,6 +116,7 @@ function onData(data) {
   for (const [key, cat] of state.moved) if (itemOf(key)?.category === cat) state.moved.delete(key)
   for (const [key, m] of state.movedCol) if (itemOf(key)?.column === m.col || Date.now() - m.at > 8000) state.movedCol.delete(key)
   render()
+  syncComposer()
   if (state.open) {
     const it = itemOf(state.open)
     const stamp = it ? `${it.activity}|${it.status}|${it.column}|${it.wait}|${it.doing}|${it.category}` : ''
@@ -758,11 +760,18 @@ const sheetBody = $('#sheet-body')
 const files = initFiles({ t: () => t, token: () => state.data.fsToken, toast })
 const sessionPanel = new Panel($('#sheet'), {
   onClose: () => {
+    saveDraft()
     state.open = null
     render()
   },
 })
 let detailSeq = 0
+// The text being written to a session stays with that session (this browser only), through a
+// close, a switch to another session or a reload; a session without a Claude id goes by its card.
+const drafts = draftBook({ getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value), removeItem: key => localStorage.removeItem(key) })
+const draftKey = it => it?.session || it?.key
+const sending = new Set() // sessions with a message on its way
+let currentDraft = null
 let draftFor = null // the session the composer's attachments were added for; outlives a close
 
 function openSheet(key, { compose = false } = {}) {
@@ -773,8 +782,12 @@ function openSheet(key, { compose = false } = {}) {
     clearAttachments()
     toast(t('toast.attachDropped'))
   }
+  if (state.open && state.open !== key) saveDraft()
   draftFor = key
   state.open = key
+  currentDraft = drafts.read(draftKey(itemOf(key)))
+  message.value = currentDraft?.text ?? ''
+  syncComposer()
   state.detail = null
   lastDetailStamp = ''
   if (!sessionPanel.open() && switching && !reducedMotion.matches) {
@@ -956,7 +969,10 @@ const syncComposer = () => {
   message.style.height = `${Math.min(180, message.scrollHeight)}px`
   const uploading = attachments.some(a => a.status === 'uploading')
   const ready = attachments.some(a => a.status === 'done')
-  sendBtn.disabled = uploading || !(message.value.trim() || ready)
+  sendBtn.disabled = sending.has(state.open) || !state.connected || uploading || !(message.value.trim() || ready)
+  const discard = $('#draft-cancel')
+  discard.hidden = !(message.value || attachments.length)
+  discard.disabled = sending.has(state.open)
   sendBtn.title = t(uploading ? 'compose.uploading' : 'compose.send')
 }
 
@@ -1066,7 +1082,22 @@ message.addEventListener('paste', e => {
   })
 }
 
-message.addEventListener('input', syncComposer)
+function saveDraft() {
+  const key = draftKey(itemOf(state.open))
+  if (!key) return
+  if (currentDraft?.text === message.value) return
+  currentDraft = drafts.save(key, message.value)
+}
+message.addEventListener('input', () => { saveDraft(); syncComposer() })
+$('#draft-cancel').addEventListener('click', () => {
+  if (sending.has(state.open)) return
+  drafts.clear(draftKey(itemOf(state.open)))
+  currentDraft = null
+  message.value = ''
+  clearAttachments()
+  syncComposer()
+  message.focus()
+})
 message.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault()
@@ -1078,15 +1109,24 @@ $('#composer').addEventListener('submit', async e => {
   const key = state.open
   const text = message.value.trim()
   const files = attachments.filter(a => a.status === 'done').map(a => a.path)
-  if (!key || (!text && !files.length) || attachments.some(a => a.status === 'uploading')) return
+  if (!key || sending.has(key) || !state.connected || (!text && !files.length) || attachments.some(a => a.status === 'uploading')) return
   const it = itemOf(key)
+  if (!it) return
+  saveDraft()
+  const request = currentDraft ?? (currentDraft = drafts.save(draftKey(it), message.value))
+  sending.add(key)
   sendBtn.disabled = true
   if (it?.sleeping) setBusy(key, t('busy.waking'))
-  const r = await act(key, 'message', { text, files })
+  const r = await act(key, 'message', { text, files, session: it.session ?? null, requestId: request.id })
+  sending.delete(key)
   setBusy(key, null)
   if (r.ok) {
-    message.value = ''
-    clearAttachments()
+    drafts.clear(draftKey(it), request.id)
+    if (state.open === key && currentDraft?.id === request.id) {
+      message.value = ''
+      currentDraft = null
+      clearAttachments()
+    }
     toast(`${t('sent.to', { name: it?.name ?? t('session.lower') })}${files.length ? ` · ${t('sent.files', { n: files.length })}` : ''}`)
     setTimeout(() => state.open === key && loadDetail(key), 800)
   } else toast(r.error, true)
