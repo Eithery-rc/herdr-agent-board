@@ -20,6 +20,17 @@ const PLURAL = {
 
 const STRINGS = {
   en: {
+    'usage.open': 'Claude usage',
+    'usage.title': 'Local Claude status cache',
+    'usage.contextUnknown': 'Session context: unavailable. No supported session-scoped status cache was found; no context size is inferred.',
+    'usage.scope': 'Limits belong to the existing usagebar default-profile cache. Matching this session to that account is unverified. Click again to reread.',
+    'usage.observed': 'Observed {time} · age {age}',
+    'usage.stale': 'Old/expired observation: {time} · age {age}',
+    'usage.used': 'used',
+    'usage.reset': 'reset {time}',
+    'usage.expired': 'recorded window has expired; current usage unknown',
+    'usage.unavailable': 'Limits unavailable. No valid existing cache; no setup or network request performed.',
+
     'attention.unseen': 'Not viewed',
     'attention.next': 'Next',
     'attention.nextHint': 'Open the next card that needs you (N). Opening it does not accept a result.',
@@ -314,6 +325,17 @@ const STRINGS = {
   },
 
   ru: {
+    'usage.open': 'Лимиты Claude',
+    'usage.title': 'Локальный status cache Claude',
+    'usage.contextUnknown': 'Контекст сессии: недоступен. Поддерживаемого status cache этой сессии нет; размер контекста не вычисляется предположительно.',
+    'usage.scope': 'Лимиты из существующего usagebar cache профиля по умолчанию. Совпадение аккаунта с этой сессией не подтверждено. Нажми ещё раз, чтобы перечитать.',
+    'usage.observed': 'Наблюдение {time} · возраст {age}',
+    'usage.stale': 'Старое/истёкшее наблюдение: {time} · возраст {age}',
+    'usage.used': 'использовано',
+    'usage.reset': 'сброс {time}',
+    'usage.expired': 'сохранённое окно истекло; текущее использование неизвестно',
+    'usage.unavailable': 'Лимиты недоступны. Валидного cache нет; настройки и сетевые запросы не выполнялись.',
+
     'attention.unseen': 'Не просмотрено',
     'attention.next': 'Дальше',
     'attention.nextHint': 'Открыть следующую карточку, которой нужно внимание (N). Открыть не значит принять результат.',
