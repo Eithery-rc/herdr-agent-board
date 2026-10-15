@@ -151,7 +151,7 @@ test('on time, a working session gets it queued into its turn; a dialog and a dr
   herdrWith(dialog, 'blocked')
   put(dialog, { id: 'cdcd02', text: 'not into a dialog', at: Date.now() - 1000, next: Date.now() - 1000 })
   await scheduler(dialog)
-  await until(() => read(dialog, 'cdcd02')?.why === 'busy')
+  await until(() => read(dialog, 'cdcd02')?.why === 'dialog')
 
   const draft = sandbox(t)
   herdrWith(draft, 'working', { 'agent read': { text: screen('the user types') } })
@@ -182,7 +182,7 @@ test('--idle: a working session gets it once it is free; one that stays busy has
   await scheduler(busy, { scheduleWaitMin: 0.01 })
   await until(() => runs(busy).length >= 2, 8000)
   assert.deepEqual(prompts(busy), [])
-  assert.ok(runs(busy).every(r => r.result === 'missed' && r.why === 'busy'))
+  assert.ok(runs(busy).every(r => r.result === 'missed' && r.why === 'dialog'))
   assert.equal(read(busy, 'ccccc2'), null)
   const cron = read(busy, 'ccccc3')
   assert.equal(cron.missed, 1)

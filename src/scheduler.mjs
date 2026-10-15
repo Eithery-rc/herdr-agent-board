@@ -117,7 +117,7 @@ export function startScheduler({ cfg, log = () => {}, onChange = () => {} }) {
     // own mid-turn messages are; `idle` entries wait until it is free. A dialog always waits:
     // typing would answer it.
     const held = item && !item.sleeping && (item.status === 'blocked' || (entry.idle && item.status === 'working'))
-    let why = !item ? 'gone' : held ? 'busy' : ''
+    let why = !item ? 'gone' : held ? (item.status === 'blocked' ? 'dialog' : 'busy') : ''
     if (!why) {
       if (!claim(entry.id, now)) return
       if (item.key !== entry.key) {
@@ -139,7 +139,7 @@ export function startScheduler({ cfg, log = () => {}, onChange = () => {} }) {
       }
       if (r.ok) r = await send(cfg, { ...item, sleeping: false }, promptOf(entry, Date.now()), { free: !!entry.idle, draft: true })
       if (r.ok) return sent(entry)
-      why = r.draft ? 'draft' : r.busy ? 'busy' : r.error
+      why = r.draft ? 'draft' : r.dialog ? 'dialog' : r.busy ? 'busy' : r.error
     }
     wait(entry, now, why)
   }

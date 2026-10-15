@@ -48,8 +48,16 @@ raised when it is already open.
   the conversation (tool calls folded), a message box, "Go to herdr" (focuses the pane and
   brings the terminal window up), "Put to sleep" (through herdr-wake, idle sessions only; also
   the moon on a card), "Wake" for sleeping sessions. To close: click the board beside it, flick
-  it right, or Esc. Another card switches it to that session. Attachments stay with their
-  session through a close.
+  it out the way it came, or Esc. Another card switches it to that session. Attachments stay
+  with their session through a close.
+- The sheet's place and size are the viewer's own (kept in this browser): docked right, left or
+  at the bottom, where the board makes room for it, or floating over the board. The button in
+  its head picks the place; or pull the sheet by its head until it comes loose and throw it to
+  an edge (a preview shows where it lands). Its inner edge resizes it (double-click: the default
+  size; arrow keys once it has focus; flung narrower than half the smallest size, it folds
+  away); a floating one moves by its head and resizes by any edge. Wide and low (at the
+  bottom), it shows the card on the left and the conversation on the right. "Categories" opens
+  in the same place. On a phone it stays the full-height sheet.
 - `/` search, Esc closes. Light and dark, reduced motion and transparency respected.
 - The sheet's thread renders Markdown (headings, lists, tables, code, quotes, links; escaped,
   links http(s) only). Files and screenshots go with a message: the clip, Ctrl+V, or a drop on
@@ -113,11 +121,14 @@ are files, and the board keeps running.
   in Vixie cron: two restricted ones are either-or, one that starts with `*` narrows the other.
   Runs closer than 5 minutes apart are refused: each one is a turn of the session. On a DST
   change, a time that does not exist that day is skipped and a repeated hour runs once.
-- A session that works, waits on a dialog, or has text the user started typing in its input
-  box (read from the screen as herdr-wake does: dim suggestions do not count) is not
-  interrupted: the scheduler tries again every tick (15 s) and sends once it is free. After
-  `scheduleWaitMin` (240) minutes of trying, the run is logged as missed: a one-off entry goes,
-  a cron one moves to its next time.
+- On time by default: a session that works gets the text right away, and Claude Code queues it
+  into the running turn the way your own mid-turn messages arrive. With `--idle` (or the switch
+  on the entry in the panel or the sheet) it waits until the session is free instead.
+- Either way, a session that waits on a dialog (typing would answer it) or has text the user
+  started typing in its input box (read from the screen as herdr-wake does: dim suggestions do
+  not count) is not touched: the scheduler tries again every tick (15 s) and sends once it can.
+  After `scheduleWaitMin` (240) minutes of trying, the run is logged as missed: a one-off entry
+  goes, a cron one moves to its next time.
 - An entry belongs to the session it is for. After `/clear`, which gives the session a new id,
   it goes to the Claude session now in the same pane and folder (the folder herdr gives the
   pane, not the shell's after a `cd`), and the prompt says it was set before `/clear`.
@@ -143,7 +154,8 @@ are files, and the board keeps running.
 - The scheduler runs in the web board's server (`src/scheduler.mjs`), one per machine since
   only one board holds the port; with `web: false` the terminal board runs it.
 - At most 30 entries per session.
-- The terminal board shows `⏰` and the soonest time by a card's age, the count in its header.
+- The terminal board shows `⏰` (`⏳` for one that waits until the session is free) and the soonest
+  time by a card's age, the count in its header.
 
 ## Language
 
@@ -166,7 +178,8 @@ dictionary there plus its plural rule; a test checks that every dictionary has e
   changes (by its time and size: on Windows a plain read fires the watcher too); open web pages
   reload themselves when a file in `web/` changes.
 
-Code: `src/server.mjs`, `web/` (no build step, no dependencies; springs in `web/spring.js`).
+Code: `src/server.mjs`, `web/` (no build step, no dependencies; springs in `web/spring.js`, the
+sheet's place in `web/panel.js` with its geometry in `web/panel-layout.js`).
 
 The web API (`GET /api/board` and SSE `/api/events`) includes `stale` and
 `lastSuccessfulRefreshAt` (Unix milliseconds, or `null` before the first successful refresh).
@@ -223,6 +236,7 @@ board list                every session, one line each
 board cats                known categories
 board remind <when> "<text>"   at that time, "[board reminder] <text>" goes into the session
 board every "<cron>" "<text>"  the same on a cron schedule
+  --idle                  (remind, every) wait until the session is free, not on time
 board schedule [--all]    this session's entries (every session's)
 board unschedule <id|all> remove an entry (all: every entry of this session)
 --session <id|name|pane>  for another session's card

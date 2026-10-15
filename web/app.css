@@ -77,7 +77,16 @@ body {
 button, input, textarea { font: inherit; color: inherit; }
 button { cursor: default; -webkit-tap-highlight-color: transparent; }
 svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+svg .fill { fill: currentColor; stroke: none; opacity: 0.32; }
 [hidden] { display: none !important; }
+
+/* ---------------------------------------------------------------- page */
+/* The toolbar and the board. A docked panel takes its room from the page's margins (panel.js
+   moves --room-* on springs), and the page lays itself out for the width that is left. */
+.page {
+  container: page / inline-size;
+  margin: 0 var(--room-right, 0px) 0 var(--room-left, 0px);
+}
 
 /* ---------------------------------------------------------------- toolbar */
 .toolbar {
@@ -101,15 +110,20 @@ h1 {
 }
 .summary { margin: 4px 0 0; font-size: 13px; color: var(--label-2); font-variant-numeric: tabular-nums; }
 .summary b { color: var(--label); font-weight: 600; }
-.controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; max-width: 100%; }
 
+/* Never wider than the page (a phone, a board beside a wide panel): it scrolls in its own row. */
 .segmented {
   position: relative;
   display: inline-flex;
+  max-width: 100%;
   padding: 2px;
   border-radius: 9px;
   background: var(--fill);
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.segmented::-webkit-scrollbar { display: none; }
 .segmented button {
   position: relative;
   z-index: 1;
@@ -182,7 +196,7 @@ h1 {
 .col-head .n { font-weight: 500; color: var(--label-3); font-variant-numeric: tabular-nums; }
 
 /* ---------------------------------------------------------------- board */
-.board { padding: 4px var(--gutter) 140px; }
+.board { padding: 4px var(--gutter) max(140px, calc(var(--room-bottom, 0px) + 28px)); }
 .empty { padding: 80px 0; text-align: center; color: var(--label-3); font-size: 15px; }
 
 .lane { margin-top: 18px; }
@@ -360,15 +374,16 @@ body.dragging { cursor: grabbing; }
 }
 
 /* ---------------------------------------------------------------- sheet */
+/* Where it is and how big comes from panel.js (left/top 0, width, height, transform); on a phone
+   it is the full-height sheet below, and only slides. */
 .sheet {
   position: fixed;
-  top: 12px;
-  right: 12px;
-  bottom: 12px;
+  top: 0;
+  left: 0;
   z-index: 40;
-  width: min(560px, calc(100vw - 24px));
-  display: flex;
-  flex-direction: column;
+  width: 560px;
+  height: calc(100vh - 24px);
+  container: sheet / size;
   border-radius: 22px;
   background: var(--material-thick);
   backdrop-filter: blur(40px) saturate(180%);
@@ -379,8 +394,90 @@ body.dragging { cursor: grabbing; }
   touch-action: pan-y;
 }
 .sheet.open { visibility: visible; }
-.sheet-grip { position: absolute; left: 6px; top: 50%; width: 4px; height: 40px; margin-top: -20px; border-radius: 2px; background: var(--label-3); opacity: 0.35; cursor: grab; }
+.sheet-inner { position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; border-radius: inherit; }
+.sheet-grip { display: none; position: absolute; z-index: 2; left: 6px; top: 50%; width: 4px; height: 40px; margin-top: -20px; border-radius: 2px; background: var(--label-3); opacity: 0.35; cursor: grab; touch-action: none; }
+.sheet[data-dock="left"] .sheet-grip { left: auto; right: 6px; }
+.sheet[data-dock="bottom"] .sheet-grip { left: 50%; top: 6px; width: 40px; height: 4px; margin: 0 0 0 -20px; }
+@media (max-width: 760px), (pointer: coarse) { .sheet:not([data-dock="float"]) .sheet-grip { display: block; } }
 .sheet-head { display: flex; align-items: flex-start; gap: 12px; padding: 20px 18px 12px 22px; cursor: grab; }
+.sheet-tools { display: flex; flex: none; gap: 6px; }
+.sheet-tools .icon-button:hover { color: var(--label); }
+.sheet-tools [data-layout][aria-expanded="true"] { background: color-mix(in srgb, var(--accent) 18%, var(--fill)); color: var(--accent); }
+@media (max-width: 760px) {
+  .sheet { top: 12px; right: 12px; bottom: 12px; left: auto; width: min(560px, calc(100vw - 24px)); height: auto; }
+  .sheet-tools [data-layout] { display: none; }
+}
+
+/* Edges that resize: the one towards the board when docked, all of them when floating. A pill
+   shows on hover; the cursor says which way. */
+.sheet-edge { position: absolute; z-index: 3; display: none; outline: none; touch-action: none; }
+.sheet[data-dock="right"] > .sheet-edge[data-edge="w"],
+.sheet[data-dock="left"] > .sheet-edge[data-edge="e"],
+.sheet[data-dock="bottom"] > .sheet-edge[data-edge="n"],
+.sheet[data-dock="float"] > .sheet-edge { display: block; }
+.sheet-edge[data-edge="w"], .sheet-edge[data-edge="e"] { top: 22px; bottom: 22px; width: 14px; cursor: col-resize; }
+.sheet-edge[data-edge="w"] { left: -7px; }
+.sheet-edge[data-edge="e"] { right: -7px; }
+.sheet-edge[data-edge="n"], .sheet-edge[data-edge="s"] { left: 22px; right: 22px; height: 14px; cursor: row-resize; }
+.sheet-edge[data-edge="n"] { top: -7px; }
+.sheet-edge[data-edge="s"] { bottom: -7px; }
+.sheet-edge[data-edge="nw"], .sheet-edge[data-edge="ne"], .sheet-edge[data-edge="sw"], .sheet-edge[data-edge="se"] { width: 24px; height: 24px; }
+.sheet-edge[data-edge="nw"] { left: -7px; top: -7px; cursor: nwse-resize; }
+.sheet-edge[data-edge="ne"] { right: -7px; top: -7px; cursor: nesw-resize; }
+.sheet-edge[data-edge="sw"] { left: -7px; bottom: -7px; cursor: nesw-resize; }
+.sheet-edge[data-edge="se"] { right: -7px; bottom: -7px; cursor: nwse-resize; }
+.sheet-edge::after { content: ""; position: absolute; border-radius: 2px; background: var(--label-3); opacity: 0; transition: opacity 160ms ease, background-color 160ms ease; }
+.sheet-edge[data-edge="w"]::after, .sheet-edge[data-edge="e"]::after { left: 5px; top: 50%; width: 4px; height: 44px; margin-top: -22px; }
+.sheet-edge[data-edge="n"]::after, .sheet-edge[data-edge="s"]::after { top: 5px; left: 50%; width: 44px; height: 4px; margin-left: -22px; }
+.sheet-edge[data-edge="se"]::after { right: 10px; bottom: 10px; width: 9px; height: 9px; border: solid var(--label-3); border-width: 0 2.5px 2.5px 0; border-radius: 0 0 4px 0; background: none; }
+.sheet-edge:hover::after, .sheet-edge.active::after, .sheet-edge:focus-visible::after { opacity: 1; }
+.sheet-edge.active::after, .sheet-edge:focus-visible::after { background-color: var(--accent); }
+.sheet-edge[data-edge="se"]:focus-visible::after, .sheet-edge[data-edge="se"].active::after { background: none; border-color: var(--accent); }
+body.panel-grabbing, body.panel-resizing { user-select: none; -webkit-user-select: none; }
+body.panel-grabbing, body.panel-grabbing * { cursor: grabbing !important; }
+body.panel-resizing, body.panel-resizing * { cursor: var(--grab-cursor) !important; }
+
+/* Where a panel let go now would dock: grown out of the panel, on springs (panel.js). */
+.dock-preview {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 39;
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 50%, transparent);
+  backdrop-filter: blur(8px) saturate(140%);
+  -webkit-backdrop-filter: blur(8px) saturate(140%);
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+/* The place menu, out of the button in the panel's head. */
+.layout-menu {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  min-width: 210px;
+  padding: 5px;
+  border-radius: 13px;
+  background: var(--material-thick);
+  backdrop-filter: blur(30px) saturate(180%);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  box-shadow: var(--shadow-lift), inset 0 0.5px 0 var(--edge);
+  will-change: transform, opacity;
+}
+.layout-menu button { display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 9px 0 8px; border: 0; border-radius: 8px; background: none; color: var(--label); font-size: 13px; text-align: left; outline: none; }
+.layout-menu button span { flex: 1; white-space: nowrap; }
+.layout-menu button svg { color: var(--label-2); }
+.layout-menu .check { visibility: hidden; color: var(--accent); }
+.layout-menu [aria-checked="true"] .check { visibility: visible; }
+.layout-menu button:hover, .layout-menu button:focus-visible { background: var(--accent); color: #fff; }
+.layout-menu button:hover svg, .layout-menu button:focus-visible svg { color: #fff; }
+.layout-sep { height: 0.5px; margin: 4px 8px; background: var(--separator); }
+
 .sheet-title { flex: 1; min-width: 0; }
 .sheet-title h2 { margin: 6px 0 0; font: 700 22px/1.15 var(--font-display); letter-spacing: -0.018em; overflow-wrap: anywhere; }
 .sheet-meta { margin: 4px 0 0; font-size: 12.5px; color: var(--label-2); }
@@ -409,14 +506,15 @@ body.dragging { cursor: grabbing; }
   transition: transform 100ms ease-out;
 }
 .sheet-body {
-  flex: 1;
+  flex: 1 1 0;
+  min-height: 96px;
   overflow: auto;
   overscroll-behavior: contain;
   padding: 2px 18px 16px 22px;
   /* Scroll edge: content fades under the head and the composer instead of a hard line. */
   mask-image: linear-gradient(transparent, #000 10px, #000 calc(100% - 14px), transparent);
 }
-.sheet-card { padding: 0 18px 4px 22px; }
+.sheet-card { flex: 0 1 auto; min-height: 0; overflow: auto; padding: 0 18px 6px 22px; }
 .sheet-card .group { margin-top: 2px; }
 .group { margin-top: 14px; border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-card); }
 .you { color: var(--label-3); font-weight: 500; }
@@ -851,7 +949,30 @@ button.swatch:active { transform: scale(0.88); }
 .sched-text { font-size: 13.5px; line-height: 1.4; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .sched-state { margin-top: 4px; font-size: 12px; color: var(--orange); }
 .sched-state.muted { color: var(--label-3); }
-.sched-stats { margin-top: 4px; font-size: 11.5px; color: var(--label-3); }
+.sched-stats { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 6px; font-size: 11.5px; color: var(--label-3); }
+/* Delivery: on time (tinted, the default) or when the session is free (quiet); a click switches. */
+.sched-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  height: 20px;
+  padding: 0 8px 0 6px;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 600;
+  transition: background 150ms ease, color 150ms ease, transform 100ms ease-out;
+}
+.sched-mode svg { width: 12px; height: 12px; stroke-width: 1.8; }
+.sched-mode.idle { background: var(--fill-2); color: var(--label-2); }
+.sched-mode:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.sched-mode.idle:hover { background: var(--fill); }
+.sched-mode:active { transform: scale(0.94); }
+.sched-mode.short { width: 26px; height: 26px; padding: 0; justify-content: center; border-radius: 7px; }
+.sched-mode.short svg { width: 14px; height: 14px; }
 .sched-stats code { padding: 1px 5px; border-radius: 5px; background: var(--fill-2); font: 11px var(--mono); color: var(--label-2); }
 .sched-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 56px 24px; text-align: center; color: var(--label-2); }
 .sched-empty svg { width: 42px; height: 42px; margin-bottom: 6px; color: var(--label-3); stroke-width: 1.2; }
@@ -871,7 +992,7 @@ button.swatch:active { transform: scale(0.88); }
 .log-row.dropped .log-icon { background: var(--fill); color: var(--label-2); font-size: 13px; }
 
 /* ---------------------------------------------------------------- toasts */
-.toasts { position: fixed; left: 50%; bottom: 28px; z-index: 80; display: flex; flex-direction: column; align-items: center; gap: 8px; transform: translateX(-50%); pointer-events: none; }
+.toasts { position: fixed; left: calc(50% + (var(--room-left, 0px) - var(--room-right, 0px)) / 2); bottom: calc(28px + var(--room-bottom, 0px)); z-index: 80; display: flex; flex-direction: column; align-items: center; gap: 8px; transform: translateX(-50%); pointer-events: none; }
 .toast {
   padding: 9px 16px;
   border-radius: 999px;
@@ -1108,6 +1229,18 @@ button.swatch:active { transform: scale(0.88); }
 .limits .hot b { color: var(--red); }
 .limits.stale { opacity: 0.55; }
 
+/* A wide, low panel (at the bottom, or a window made so) reads side by side: the card's fields
+   on the left, the conversation and the composer on the right. */
+@container sheet (min-width: 680px) and (min-aspect-ratio: 5 / 4) {
+  .sheet-inner { display: grid; grid-template-columns: minmax(350px, 32%) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; }
+  .sheet-head { grid-column: 1 / -1; padding-bottom: 8px; }
+  .sheet-card { grid-column: 1; grid-row: 2 / 4; padding-bottom: 16px; }
+  .sheet-body { grid-column: 2; grid-row: 2; min-height: 0; padding-left: 8px; }
+  .composer { grid-column: 2; grid-row: 3; padding-left: 8px; }
+  .cats-body, .cats-body ~ .composer { grid-column: 1 / -1; padding-left: 22px; }
+  .cats-list, #cat-draft { max-width: 760px; }
+}
+
 /* ---------------------------------------------------------------- narrow windows */
 @media (max-width: 760px) {
   .ql-win { width: calc(100vw - 16px); height: calc(100vh - 16px); border-radius: 14px; }
@@ -1117,8 +1250,9 @@ button.swatch:active { transform: scale(0.88); }
   .ql-changes { grid-template-columns: 1fr; grid-template-rows: minmax(0, 32%) minmax(0, 1fr); }
   .ql-files { border-right: 0; border-bottom: 0.5px solid var(--separator); }
 }
-@media (max-width: 960px) {
-  :root { --gutter: 16px; }
+/* The page's own width, not the window's: a docked panel narrows it. */
+@container page (max-width: 960px) {
+  .toolbar, .board { --gutter: 16px; }
   .columns-head { display: none; }
   .lane-grid { grid-template-columns: 1fr; }
   .col:not(.has-cards) { display: none; }
@@ -1130,15 +1264,17 @@ button.swatch:active { transform: scale(0.88); }
 /* ---------------------------------------------------------------- accessibility */
 @media (prefers-reduced-motion: reduce) {
   .dot.work::after, .spin { animation: none; }
-  .card, .card-actions, .toolbar, .alarm, .sched-x { transition: none; }
+  .card, .card-actions, .toolbar, .alarm, .sched-x, .sched-mode { transition: none; }
 }
 @media (prefers-reduced-transparency: reduce) {
   .toolbar { background: var(--bg); backdrop-filter: none; -webkit-backdrop-filter: none; }
-  .sheet, .toast, .ql-win { background: var(--surface); backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .sheet, .toast, .ql-win, .layout-menu { background: var(--surface); backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .dock-preview { background: color-mix(in srgb, var(--accent) 22%, var(--bg)); backdrop-filter: none; -webkit-backdrop-filter: none; }
 }
 @media (prefers-contrast: more) {
   :root { --label-2: var(--label); --label-3: rgba(60, 60, 67, 0.7); }
-  .card, .group, .sheet { box-shadow: 0 0 0 1px var(--label-3); }
+  .card, .group, .sheet, .layout-menu { box-shadow: 0 0 0 1px var(--label-3); }
+  .dock-preview { box-shadow: inset 0 0 0 2px var(--accent); }
 }
 
 #connection-state, #sheet-connection-state { margin: 4px 16px; color: var(--orange); font-size: 12px; }

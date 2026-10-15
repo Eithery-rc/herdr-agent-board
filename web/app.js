@@ -8,7 +8,8 @@ import { initFiles } from './files.js'
 import { LANGUAGES, translator } from './i18n.js'
 import { updateLive } from './live.js'
 import { markdown } from './markdown.js'
-import { project, reducedMotion, rubberband, Spring, velocityOf } from './spring.js'
+import { keepInSight, menuOpen, Panel, panels, roomBelow } from './panel.js'
+import { reducedMotion, rubberband, Spring, velocityOf } from './spring.js'
 import { capital, dayLabel, longWhen, shortWhen, span, timeOf } from './when.js'
 
 const $ = sel => document.querySelector(sel)
@@ -30,6 +31,8 @@ const ICON = {
   alarm: '<svg viewBox="0 0 20 20"><circle cx="10" cy="11" r="6"/><path d="M10 8v3.2l2 1.3M3.6 5.4 6 3.3M16.4 5.4 14 3.3"/></svg>',
   repeat: '<svg viewBox="0 0 20 20"><path d="M4 9.5V8a3 3 0 0 1 3-3h8.5m-2.5-2.5L15.5 5 13 7.5M16 10.5V12a3 3 0 0 1-3 3H4.5M7 12.5 4.5 15 7 17.5"/></svg>',
   trash: '<svg viewBox="0 0 20 20"><path d="M4.5 6h11M8 6V4.5h4V6m-6 0 .7 9.5h6.6L14 6"/></svg>',
+  bolt: '<svg viewBox="0 0 20 20"><path d="M11 2.5 4.5 11H10l-1 6.5L15.5 9H10Z"/></svg>',
+  hourglass: '<svg viewBox="0 0 20 20"><path d="M6 3h8M6 17h8M7 3v2.6c0 1.2.6 2.1 1.6 2.8L10 9.4l1.4-1c1-.7 1.6-1.6 1.6-2.8V3M7 17v-2.6c0-1.2.6-2.1 1.6-2.8l1.4-1 1.4 1c1 .7 1.6 1.6 1.6 2.8V17"/></svg>',
 }
 
 // ---------------------------------------------------------------- small helpers
@@ -159,7 +162,7 @@ function syncAvailability() {
     banner.textContent = t(canEdit() ? 'mobile.readOnly' : 'live.off')
   }
   for (const element of document.querySelectorAll('#sheet-focus, #sheet-sleep, #sheet-wake, [data-act="focus"], [data-act="sleep"]')) element.disabled = blocked || (element.id === 'sheet-sleep' && inTurn(itemOf(state.open) ?? {}))
-  for (const element of document.querySelectorAll('#attach, #lang, #cat-new, #sheet-card button, #sheet-card input, #cats-sheet button:not([data-close]), #cats-sheet input, #sched-body .sched-x, [data-act="dismiss"]')) element.disabled = !canEdit()
+  for (const element of document.querySelectorAll('#attach, #lang, #cat-new, #sheet-card button, #sheet-card input, #cats-sheet button:not([data-close]):not([data-layout]), #cats-sheet input, #sched-body .sched-x, #sched-body .sched-mode, [data-act="dismiss"]')) element.disabled = !canEdit()
   files.refreshAvailability()
   syncComposer()
 }
@@ -635,7 +638,7 @@ function onDragMove(e) {
   }
   drag.target = target
   if (e.clientY < 150) scrollBy(0, -14)
-  else if (e.clientY > innerHeight - 70) scrollBy(0, 14)
+  else if (e.clientY > innerHeight - roomBelow() - 70) scrollBy(0, 14) // above a panel at the bottom
 }
 
 /**
@@ -720,97 +723,22 @@ function onCardClick(e) {
 }
 
 // ---------------------------------------------------------------- side panels
-// A panel slides in from the right edge and leaves the same way. It follows the pointer 1:1
-// when dragged by its head, resists leftwards, and the release velocity decides: a projected
-// landing point past half its width closes it. Only one panel is open at a time.
-const panels = []
-class Panel {
-  constructor(el, { onClose = () => {} } = {}) {
-    this.el = el
-    this.isOpen = false
-    this.onClose = onClose
-    this.x = new Spring({ damping: 1, response: 0.34, precision: 0.3, onUpdate: v => (el.style.transform = `translateX(${v}px)`) })
-    el.querySelector('[data-close]')?.addEventListener('click', () => this.close())
-    this.flick()
-    panels.push(this)
-  }
-
-  off() {
-    return this.el.offsetWidth + 32
-  }
-
-  /** Returns false when it was open already. */
-  open() {
-    if (this.isOpen) return false
-    this.isOpen = true
-    for (const p of panels) if (p !== this) p.close()
-    this.el.classList.add('open')
-    this.el.setAttribute('aria-hidden', 'false')
-    this.x.onRest = () => {}
-    if (!this.x.moving && !this.x.value) this.x.set(this.off())
-    this.x.to(0, { damping: 0.9, response: 0.4 })
-    dialogBack.sync()
-    return true
-  }
-
-  close(velocity = 0) {
-    if (!this.isOpen) return
-    this.isOpen = false
-    this.x.onRest = () => {
-      if (this.isOpen) return
-      this.el.classList.remove('open')
-      this.el.setAttribute('aria-hidden', 'true')
-    }
-    this.x.to(this.off(), { velocity, damping: 1, response: 0.3 })
-    this.onClose()
-    dialogBack.sync()
-  }
-
-  flick() {
-    let g = null
-    const el = this.el
-    el.addEventListener('pointerdown', e => {
-      if (e.pointerType === 'touch' && !e.target.closest('.sheet-grip')) return
-      if (e.button !== 0 || !e.target.closest('.sheet-head, .sheet-grip') || e.target.closest('button, input')) return
-      this.x.stop()
-      g = { id: e.pointerId, sx: e.clientX, base: this.x.value, samples: [{ x: e.clientX, y: 0, t: e.timeStamp }], moved: false }
-      el.setPointerCapture(e.pointerId)
-    })
-    el.addEventListener('pointermove', e => {
-      if (!g || e.pointerId !== g.id) return
-      g.samples.push({ x: e.clientX, y: 0, t: e.timeStamp })
-      if (g.samples.length > 12) g.samples.shift()
-      if (!g.moved && Math.abs(e.clientX - g.sx) < 6) return
-      g.moved = true
-      const dx = g.base + e.clientX - g.sx
-      this.x.set(dx >= 0 ? dx : rubberband(dx, el.offsetWidth))
-    })
-    const end = e => {
-      if (!g || e.pointerId !== g.id) return
-      const { moved, samples } = g
-      g = null
-      if (!moved) return
-      const v = velocityOf(samples).x
-      if (this.x.value + project(v) > el.offsetWidth / 2) this.close(v)
-      else this.x.to(0, { velocity: v, damping: 0.8, response: 0.3 })
-    }
-    el.addEventListener('pointerup', end)
-    el.addEventListener('pointercancel', end)
-  }
-}
+// The session and the categories open in a panel (panel.js): docked right, left or at the
+// bottom, or floating, sized and placed by the viewer. Only one is open at a time.
 
 // A click on the board beside an open panel closes it. A card switches the panel to its own
 // session instead, controls keep their own job, and a press that travelled (a card drag, a text
-// selection ending outside the panel) is not a click.
+// selection ending outside the panel) is not a click, nor is one that only put the panel's
+// place menu away.
 {
   let down = null
-  const keeps = '.sheet, .ql, .card, .lane-head, button, input, textarea, select, label, a, [data-act]'
-  addEventListener('pointerdown', e => (down = e.button === 0 ? { x: e.clientX, y: e.clientY, target: e.target } : null), true)
+  const keeps = '.sheet, .ql, .card, .lane-head, .layout-menu, button, input, textarea, select, label, a, [data-act]'
+  addEventListener('pointerdown', e => (down = e.button === 0 ? { x: e.clientX, y: e.clientY, target: e.target, menu: menuOpen() } : null), true)
   addEventListener('click', e => {
     const d = down
     down = null
     const open = panels.find(p => p.isOpen)
-    if (!open || !d || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 6) return
+    if (!open || !d || d.menu || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 6) return
     if (d.target.closest?.(keeps) || e.target.closest?.(keeps)) return
     open.close()
   })
@@ -833,7 +761,11 @@ const sessionPanel = new Panel($('#sheet'), {
     state.open = null
     render()
   },
+  onChange: () => dialogBack.sync(),
+  text: key => t(key),
 })
+// While the board makes room for a docked panel, the card it shows keeps its place on screen.
+keepInSight({ target: () => (state.open ? cards.get(state.open) : null), top: () => $('.toolbar').getBoundingClientRect().bottom })
 let detailSeq = 0
 // The text being written to a session stays with that session (this browser only), through a
 // close, a switch to another session or a reload; a session without a Claude id goes by its card.
@@ -945,7 +877,7 @@ function scheduleRow(it) {
   if (!list.length) return ''
   const shown = list.slice(0, 3).map(e => {
     const what = `${e.cron ? ICON.repeat : ICON.alarm}${esc(capital(longWhen(e.next, t), t))}`
-    return `<div class="sched-mini" data-id="${esc(e.id)}"><span class="when${overdue(e) ? ' due' : ''}" title="${esc(e.cron ? `${t('sched.repeat')}: ${e.cron}` : t('sched.once'))}">${what}</span><span class="text" title="${esc(e.text)}">${esc(e.text)}</span>${cancelButton(e)}</div>`
+    return `<div class="sched-mini" data-id="${esc(e.id)}"><span class="when${overdue(e) ? ' due' : ''}" title="${esc(e.cron ? `${t('sched.repeat')}: ${e.cron}` : t('sched.once'))}">${what}</span><span class="text" title="${esc(e.text)}">${esc(e.text)}</span>${modeButton(e, true)}${cancelButton(e)}</div>`
   })
   const more = list.length > 3 ? `<button class="sched-more" data-sched-more>${esc(t('sched.more', { n: list.length - 3 }))}</button>` : ''
   return `<div class="row sched-row"><span class="row-label">${esc(t('sched.row'))}</span><div class="row-value">${shown.join('')}${more}</div></div>`
@@ -1012,6 +944,8 @@ function thread(conv, it) {
 sheetCard.addEventListener('click', e => {
   const cancel = e.target.closest('[data-sched-cancel]')
   if (cancel) return cancelSchedule(cancel)
+  const mode = e.target.closest('[data-sched-mode]')
+  if (mode) return toggleMode(mode)
   if (e.target.closest('[data-sched-more]')) return openSchedule(state.open)
   const b = e.target.closest('#cats button, #cols button')
   if (!b || !state.open) return
@@ -1260,6 +1194,8 @@ const catsPanel = new Panel($('#cats-sheet'), {
     catDraft = null
     renderDraft()
   },
+  onChange: () => dialogBack.sync(),
+  text: key => t(key),
 })
 const catsList = $('#cats-list')
 const catRows = new Map() // category id -> row
@@ -1608,7 +1544,11 @@ $('#board').addEventListener('click', e => {
 // ---------------------------------------------------------------- schedule
 // What the agents set with `board remind` and `board every`: every entry by day, soonest first,
 // then what was sent or missed lately. Cancelling takes two clicks, here and in a session's sheet.
-const schedPanel = new Panel($('#sched-sheet'), { onClose: () => disarm() })
+const schedPanel = new Panel($('#sched-sheet'), {
+  onClose: () => disarm(),
+  onChange: () => dialogBack.sync(),
+  text: key => t(key),
+})
 const schedBody = $('#sched-body')
 let armed = null // { id, timer }: the entry whose cancel button asks "Cancel?"
 let collapsing = 0 // rows on their way out; the panel redraws once they are gone
@@ -1631,7 +1571,7 @@ const cancelButton = e => {
 /** Why a due entry has not gone out yet. */
 function pendingText(e) {
   if (!e.pendingSince) return ''
-  const own = { gone: 'sched.gone', draft: 'sched.draft', busy: 'sched.pending' }
+  const own = { gone: 'sched.gone', draft: 'sched.draft', dialog: 'sched.dialog', busy: 'sched.pending' }
   return t(own[e.why] ?? (e.why ? 'sched.failed' : 'sched.pending'), { why: e.why })
 }
 
@@ -1648,7 +1588,7 @@ function entryHTML(e, when) {
     <div class="sched-main">
       <button class="sched-who" data-open="${esc(e.key)}" style="--lane:${it ? catInfo(catOf(it)).color : 'var(--gray)'}"${it ? ` title="${esc(t('sched.open'))}"` : ' disabled'}>${esc(it?.name || e.name || t('session'))}</button>
       <div class="sched-text">${esc(e.text)}</div>
-      ${stats ? `<div class="sched-stats">${stats}</div>` : ''}${note ? `<div class="sched-state${pending ? '' : ' muted'}">${esc(note)}</div>` : ''}
+      <div class="sched-stats">${modeButton(e)}${stats ? `<span>${stats}</span>` : ''}</div>${note ? `<div class="sched-state${pending ? '' : ' muted'}">${esc(note)}</div>` : ''}
     </div>
     ${cancelButton(e)}
   </div>`
@@ -1659,7 +1599,7 @@ function logHTML(r) {
   const late = r.at - r.due
   const note =
     r.result === 'dropped' ? t('sched.why.dropped', { n: r.n ?? 3 })
-    : r.result === 'missed' ? (['busy', 'gone', 'draft'].includes(r.why) ? t(`sched.why.${r.why}`) : r.why)
+    : r.result === 'missed' ? (['busy', 'gone', 'draft', 'dialog'].includes(r.why) ? t(`sched.why.${r.why}`) : r.why)
     : late > 120_000 ? t('sched.lateBy', { late: span(late, t) }) : ''
   const icon = { sent: ICON.check, missed: '!', dropped: '×' }[r.result] ?? '!'
   return `<div class="log-row ${esc(r.result)}"><span class="log-icon" title="${esc(t(`sched.${r.result === 'sent' || r.result === 'dropped' ? r.result : 'missed'}`))}">${icon}</span><span class="log-when">${esc(capital(longWhen(r.at, t), t))}</span><span class="log-what"><b>${esc(it?.name || r.name || t('session'))}</b> ${esc(r.text)}</span>${note ? `<span class="log-note">${esc(note)}</span>` : ''}</div>`
@@ -1729,6 +1669,29 @@ function collapse(el) {
   })
 }
 
+/** On time or when the session is free: a pill in the panel, an icon in the sheet. */
+function modeButton(e, short = false) {
+  const label = t(e.idle ? 'sched.mode.idle' : 'sched.mode.onTime')
+  const hint = t(e.idle ? 'sched.mode.idleHint' : 'sched.mode.onTimeHint')
+  return `<button class="sched-mode${e.idle ? ' idle' : ''}${short ? ' short' : ''}" data-sched-mode="${esc(e.id)}" title="${esc(hint)}" aria-label="${esc(label)}" aria-pressed="${!e.idle}">${e.idle ? ICON.hourglass : ICON.bolt}${short ? '' : `<span>${esc(label)}</span>`}</button>`
+}
+
+async function toggleMode(btn) {
+  const entry = (state.data.schedules ?? []).find(e => e.id === btn.dataset.schedMode)
+  if (!entry) return
+  const idle = !entry.idle
+  // On screen at once; the live stream confirms it.
+  entry.idle = idle || undefined
+  render()
+  const r = await postSchedule({ op: 'mode', id: entry.id, idle })
+  if (!r.ok) {
+    entry.idle = !idle || undefined
+    render()
+    return toast(r.error, true)
+  }
+  toast(t('sched.mode.set', { mode: t(idle ? 'sched.mode.idle' : 'sched.mode.onTime') }))
+}
+
 /** First click arms the button ("Cancel?"), a second one within four seconds removes the entry. */
 async function cancelSchedule(btn) {
   const id = btn.dataset.schedCancel
@@ -1772,6 +1735,8 @@ async function postSchedule(body) {
 schedBody.addEventListener('click', e => {
   const cancel = e.target.closest('[data-sched-cancel]')
   if (cancel) return cancelSchedule(cancel)
+  const mode = e.target.closest('[data-sched-mode]')
+  if (mode) return toggleMode(mode)
   const who = e.target.closest('[data-open]')
   if (who && itemOf(who.dataset.open)) openSheet(who.dataset.open)
 })

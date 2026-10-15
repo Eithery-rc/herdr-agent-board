@@ -74,7 +74,7 @@ export async function focus(cfg, item, { raise = false } = {}) {
  * Type a message into the session's prompt, waking it first. Refused while it waits for a
  * decision; with `free`, also while it works (instead of queueing into its turn); with `draft`,
  * also while the user has unsent text in its input box (the scheduler's guards). Those refusals
- * say `busy`, and `draft` for the text.
+ * say `busy`, plus `dialog` or `draft` for those two.
  */
 export async function send(cfg, item, text, { free = false, draft: guardDraft = false } = {}) {
   text = String(text ?? '').trim()
@@ -91,12 +91,12 @@ export async function send(cfg, item, text, { free = false, draft: guardDraft = 
     if (!agent || (agent.agent_session?.value ?? null) !== expectedSession) {
       return { ok: false, error: t('err.sessionChanged', { name: item.name }) }
     }
-    if (agent.agent_status === 'blocked') return { ok: false, busy: true, error: t('err.blocked', { name: item.name }) }
+    if (agent.agent_status === 'blocked') return { ok: false, busy: true, dialog: true, error: t('err.blocked', { name: item.name }) }
     if (free && agent.agent_status === 'working') return { ok: false, busy: true, error: t('err.working', { name: item.name }) }
     if (guardDraft && agent.agent === 'claude') {
       // Typed after what the user started in the input box, Enter would send both.
       const draft = inputDraft(await herdrText(['agent', 'read', item.pane, '--source', 'recent', '--lines', '40', '--ansi'], 10_000))
-      if (draft !== '') return { ok: false, busy: true, draft: draft !== null, error: t(draft === null ? 'err.blocked' : 'err.draft', { name: item.name }) }
+      if (draft !== '') return { ok: false, busy: true, draft: draft !== null, dialog: draft === null, error: t(draft === null ? 'err.blocked' : 'err.draft', { name: item.name }) }
     }
     // This read and prompt are separate CLI calls, not an atomic identity check and send.
     // A leading dash would be read as an option by the herdr CLI.

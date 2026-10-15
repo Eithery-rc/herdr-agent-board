@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="app.css">
 </head>
 <body>
+  <div class="page">
   <header class="toolbar">
     <div class="toolbar-row">
       <div class="titles">
@@ -51,18 +52,23 @@
   </header>
 
   <main class="board" id="board"></main>
+  </div>
 
   <aside class="sheet" id="sheet" aria-hidden="true" aria-label="Session" data-i18n-label="sheet.label">
     <div class="sheet-grip" aria-hidden="true"></div>
+    <div class="sheet-inner">
     <header class="sheet-head">
       <div class="sheet-title">
         <span class="status-pill" id="sheet-status"></span>
         <h2 id="sheet-name"></h2>
         <p class="sheet-meta" id="sheet-meta"></p>
       </div>
-      <button class="icon-button" id="sheet-close" data-close title="Close (Esc)" aria-label="Close" data-i18n-title="sheet.close" data-i18n-label="sheet.closeLabel">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 5.5 9 9m0-9-9 9"/></svg>
-      </button>
+      <div class="sheet-tools">
+        <button class="icon-button" data-layout aria-haspopup="menu" aria-expanded="false" title="Panel position" aria-label="Panel position" data-i18n-title="panel.place" data-i18n-label="panel.place"></button>
+        <button class="icon-button" id="sheet-close" data-close title="Close (Esc)" aria-label="Close" data-i18n-title="sheet.close" data-i18n-label="sheet.closeLabel">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 5.5 9 9m0-9-9 9"/></svg>
+        </button>
+      </div>
     </header>
     <div class="sheet-card" id="sheet-card"></div>
     <div class="sheet-body" id="sheet-body"></div>
@@ -105,18 +111,23 @@
         </button>
       </form>
     </footer>
+    </div>
   </aside>
 
   <aside class="sheet" id="cats-sheet" aria-hidden="true" aria-label="Categories" data-i18n-label="cats.title">
     <div class="sheet-grip" aria-hidden="true"></div>
+    <div class="sheet-inner">
     <header class="sheet-head">
       <div class="sheet-title">
         <h2 data-i18n="cats.title">Categories</h2>
         <p class="sheet-meta" data-i18n="cats.about">Lanes of the board. A session goes to the lane its agent picks, and by folder until it picks one. Drag the handle to reorder.</p>
       </div>
-      <button class="icon-button" data-close title="Close (Esc)" aria-label="Close" data-i18n-title="sheet.close" data-i18n-label="sheet.closeLabel">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 5.5 9 9m0-9-9 9"/></svg>
-      </button>
+      <div class="sheet-tools">
+        <button class="icon-button" data-layout aria-haspopup="menu" aria-expanded="false" title="Panel position" aria-label="Panel position" data-i18n-title="panel.place" data-i18n-label="panel.place"></button>
+        <button class="icon-button" data-close title="Close (Esc)" aria-label="Close" data-i18n-title="sheet.close" data-i18n-label="sheet.closeLabel">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 5.5 9 9m0-9-9 9"/></svg>
+        </button>
+      </div>
     </header>
     <div class="sheet-body cats-body">
       <div class="cats-list" id="cats-list"></div>
@@ -128,20 +139,26 @@
         <span data-i18n="cats.new">New category</span>
       </button>
     </footer>
+    </div>
   </aside>
 
   <aside class="sheet" id="sched-sheet" aria-hidden="true" aria-label="Schedule" data-i18n-label="sched.title">
     <div class="sheet-grip" aria-hidden="true"></div>
+    <div class="sheet-inner">
     <header class="sheet-head">
       <div class="sheet-title">
         <h2 data-i18n="sched.title">Schedule</h2>
-        <p class="sheet-meta" data-i18n="sched.about">When an entry is due, the board wakes the session if it sleeps and types the text into it. A busy session gets it once it is free.</p>
+        <p class="sheet-meta" data-i18n="sched.about">When an entry is due, the board wakes the session if it sleeps and types the text into it, on time even mid-turn, or once the session is free.</p>
       </div>
-      <button class="icon-button" data-close title="Close (Esc)" aria-label="Close" data-i18n-title="sheet.close" data-i18n-label="sheet.closeLabel">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 5.5 9 9m0-9-9 9"/></svg>
-      </button>
+      <div class="sheet-tools">
+        <button class="icon-button" data-layout aria-haspopup="menu" aria-expanded="false" title="Panel position" aria-label="Panel position" data-i18n-title="panel.place" data-i18n-label="panel.place"></button>
+        <button class="icon-button" data-close title="Close (Esc)" aria-label="Close" data-i18n-title="sheet.close" data-i18n-label="sheet.closeLabel">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 5.5 9 9m0-9-9 9"/></svg>
+        </button>
+      </div>
     </header>
     <div class="sheet-body sched-body" id="sched-body"></div>
+    </div>
   </aside>
 
   <div class="toasts" id="toasts" aria-live="polite"></div>
