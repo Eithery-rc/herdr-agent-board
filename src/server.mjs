@@ -10,6 +10,7 @@ import { readFile } from 'node:fs/promises'
 import http from 'node:http'
 import { extname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { messageGate } from './message-gate.mjs'
 import { focus, send, sleepSession, wake } from './actions.mjs'
 import { conversation } from './claude.mjs'
 import { categoryInfo, colorHex, editCategories, editSettings, laneRank, liveConfig, PALETTE } from './config.mjs'
@@ -175,6 +176,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
     }
   }
 
+  const guardedMessage = messageGate()
   const find = key => items.find(i => i.key === key)
 
   async function detail(item) {
@@ -200,7 +202,14 @@ export function startServer({ cfg, log = () => {} } = {}) {
         // Attached files go as their paths: Claude reads them, and picks up image paths as images.
         const files = (Array.isArray(body.files) ? body.files : []).filter(p => typeof p === 'string' && p.startsWith(UPLOADS_DIR))
         const list = files.length ? `${t('msg.files', { n: files.length })}:\n${files.join('\n')}` : ''
-        return send(cfg, item, [String(body.text ?? '').trim(), list].filter(Boolean).join('\n\n'))
+        if (stale || !lastSuccessfulRefreshAt) return { ok: false, error: t('draft.stale') }
+        if (!item.session || body.session !== item.session) return { ok: false, error: t('err.sessionChanged', { name: item.name }) }
+        return guardedMessage(item.key, body.requestId, [body.session, body.text, files], async () => {
+          // Always collect a new snapshot before accepting a message, even if SSE is connected.
+          const fresh = (await collect(cfg)).find(next => next.key === item.key)
+          if (!fresh || fresh.session !== item.session || fresh.pane !== item.pane) return { ok: false, error: t('err.sessionChanged', { name: item.name }) }
+          return send(cfg, fresh, [String(body.text ?? '').trim(), list].filter(Boolean).join('\n\n'))
+        })
       }
       case 'card': {
         const patch = {}

@@ -20,6 +20,10 @@ const PLURAL = {
 
 const STRINGS = {
   en: {
+    'draft.hint': 'Text is saved per session in this browser. Attachments are not restored after reload. Nothing sends automatically.',
+    'draft.cancel': 'Discard draft',
+    'draft.stale': 'Refresh the board before sending; data is stale.',
+
     // columns and states
     'col.work': 'Working',
     'col.me': 'Needs me',
@@ -256,6 +260,10 @@ const STRINGS = {
   },
 
   ru: {
+    'draft.hint': 'Текст сохраняется на сессию в этом браузере. Вложения после перезагрузки не восстанавливаются. Автоотправки нет.',
+    'draft.cancel': 'Отменить черновик',
+    'draft.stale': 'Перед отправкой обнови доску: данные устарели.',
+
     'col.work': 'Работает',
     'col.me': 'Ждёт меня',
     'col.ext': 'Ждёт внешнего',
