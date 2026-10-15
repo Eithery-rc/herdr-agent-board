@@ -11,8 +11,9 @@ import { initLaunch } from './launch.js'
 import { updateLive } from './live.js'
 import { markdown } from './markdown.js'
 import { initMenu } from './menu.js'
+import { keepInSight, menuOpen, Panel, panels, roomBelow } from './panel.js'
 import { renameInPlace } from './rename.js'
-import { project, reducedMotion, rubberband, Spring, velocityOf } from './spring.js'
+import { reducedMotion, rubberband, Spring, velocityOf } from './spring.js'
 
 const $ = sel => document.querySelector(sel)
 
@@ -161,7 +162,7 @@ function syncAvailability() {
     banner.textContent = t(canEdit() ? 'mobile.readOnly' : 'live.off')
   }
   for (const element of document.querySelectorAll('#sheet-focus, #sheet-sleep, #sheet-wake, [data-act="focus"], [data-act="sleep"]')) element.disabled = blocked || (element.id === 'sheet-sleep' && inTurn(itemOf(state.open) ?? {}))
-  for (const element of document.querySelectorAll('#attach, #lang, #cat-new, #sheet-card button, #sheet-card input, #cats-sheet button:not([data-close]), #cats-sheet input, [data-act="dismiss"]')) element.disabled = !canEdit()
+  for (const element of document.querySelectorAll('#attach, #lang, #cat-new, #sheet-card button, #sheet-card input, #cats-sheet button:not([data-close]):not([data-layout]), #cats-sheet input, [data-act="dismiss"]')) element.disabled = !canEdit()
   // New sessions go through herdr: they wait for fresh data like going to a session does.
   for (const element of document.querySelectorAll('#new-session, #sheet-new, .lane-new')) {
     element.disabled = blocked
@@ -638,7 +639,7 @@ function onDragMove(e) {
   }
   drag.target = target
   if (e.clientY < 150) scrollBy(0, -14)
-  else if (e.clientY > innerHeight - 70) scrollBy(0, 14)
+  else if (e.clientY > innerHeight - roomBelow() - 70) scrollBy(0, 14) // above a panel at the bottom
 }
 
 /**
@@ -724,97 +725,22 @@ function onCardClick(e) {
 }
 
 // ---------------------------------------------------------------- side panels
-// A panel slides in from the right edge and leaves the same way. It follows the pointer 1:1
-// when dragged by its head, resists leftwards, and the release velocity decides: a projected
-// landing point past half its width closes it. Only one panel is open at a time.
-const panels = []
-class Panel {
-  constructor(el, { onClose = () => {} } = {}) {
-    this.el = el
-    this.isOpen = false
-    this.onClose = onClose
-    this.x = new Spring({ damping: 1, response: 0.34, precision: 0.3, onUpdate: v => (el.style.transform = `translateX(${v}px)`) })
-    el.querySelector('[data-close]')?.addEventListener('click', () => this.close())
-    this.flick()
-    panels.push(this)
-  }
-
-  off() {
-    return this.el.offsetWidth + 32
-  }
-
-  /** Returns false when it was open already. */
-  open() {
-    if (this.isOpen) return false
-    this.isOpen = true
-    for (const p of panels) if (p !== this) p.close()
-    this.el.classList.add('open')
-    this.el.setAttribute('aria-hidden', 'false')
-    this.x.onRest = () => {}
-    if (!this.x.moving && !this.x.value) this.x.set(this.off())
-    this.x.to(0, { damping: 0.9, response: 0.4 })
-    dialogBack.sync()
-    return true
-  }
-
-  close(velocity = 0) {
-    if (!this.isOpen) return
-    this.isOpen = false
-    this.x.onRest = () => {
-      if (this.isOpen) return
-      this.el.classList.remove('open')
-      this.el.setAttribute('aria-hidden', 'true')
-    }
-    this.x.to(this.off(), { velocity, damping: 1, response: 0.3 })
-    this.onClose()
-    dialogBack.sync()
-  }
-
-  flick() {
-    let g = null
-    const el = this.el
-    el.addEventListener('pointerdown', e => {
-      if (e.pointerType === 'touch' && !e.target.closest('.sheet-grip')) return
-      if (e.button !== 0 || !e.target.closest('.sheet-head, .sheet-grip') || e.target.closest('button, input, #sheet-name')) return
-      this.x.stop()
-      g = { id: e.pointerId, sx: e.clientX, base: this.x.value, samples: [{ x: e.clientX, y: 0, t: e.timeStamp }], moved: false }
-      el.setPointerCapture(e.pointerId)
-    })
-    el.addEventListener('pointermove', e => {
-      if (!g || e.pointerId !== g.id) return
-      g.samples.push({ x: e.clientX, y: 0, t: e.timeStamp })
-      if (g.samples.length > 12) g.samples.shift()
-      if (!g.moved && Math.abs(e.clientX - g.sx) < 6) return
-      g.moved = true
-      const dx = g.base + e.clientX - g.sx
-      this.x.set(dx >= 0 ? dx : rubberband(dx, el.offsetWidth))
-    })
-    const end = e => {
-      if (!g || e.pointerId !== g.id) return
-      const { moved, samples } = g
-      g = null
-      if (!moved) return
-      const v = velocityOf(samples).x
-      if (this.x.value + project(v) > el.offsetWidth / 2) this.close(v)
-      else this.x.to(0, { velocity: v, damping: 0.8, response: 0.3 })
-    }
-    el.addEventListener('pointerup', end)
-    el.addEventListener('pointercancel', end)
-  }
-}
+// The session and the categories open in a panel (panel.js): docked right, left or at the
+// bottom, or floating, sized and placed by the viewer. Only one is open at a time.
 
 // A click on the board beside an open panel closes it. A card switches the panel to its own
 // session instead, controls keep their own job, and a press that travelled (a card drag, a text
-// selection ending outside the panel) is not a click.
+// selection ending outside the panel) is not a click, nor is one that only put the panel's
+// place menu away.
 {
   let down = null
-  const keeps = '.sheet, .ql, .launch, .menu, .rename, .card, .lane-head, button, input, textarea, select, label, a, [data-act]'
-  addEventListener('pointerdown', e => (down = e.button === 0 ? { x: e.clientX, y: e.clientY, target: e.target } : null), true)
+  const keeps = '.sheet, .ql, .launch, .menu, .rename, .card, .lane-head, .layout-menu, button, input, textarea, select, label, a, [data-act]'
+  addEventListener('pointerdown', e => (down = e.button === 0 ? { x: e.clientX, y: e.clientY, target: e.target, menu: menuOpen() } : null), true)
   addEventListener('click', e => {
     const d = down
     down = null
     const open = panels.find(p => p.isOpen)
-    if (!open || !d || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 6) return
+    if (!open || !d || d.menu || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 6) return
     if (d.target.closest?.(keeps) || e.target.closest?.(keeps)) return
     open.close()
   })
@@ -855,7 +781,11 @@ const sessionPanel = new Panel($('#sheet'), {
     state.open = null
     render()
   },
+  onChange: () => dialogBack.sync(),
+  text: key => t(key),
 })
+// While the board makes room for a docked panel, the card it shows keeps its place on screen.
+keepInSight({ target: () => (state.open ? cards.get(state.open) : null), top: () => $('.toolbar').getBoundingClientRect().bottom })
 let detailSeq = 0
 // The text being written to a session stays with that session (this browser only), through a
 // close, a switch to another session or a reload; a session without a Claude id goes by its card.
@@ -1266,6 +1196,8 @@ const catsPanel = new Panel($('#cats-sheet'), {
     catDraft = null
     renderDraft()
   },
+  onChange: () => dialogBack.sync(),
+  text: key => t(key),
 })
 const catsList = $('#cats-list')
 const catRows = new Map() // category id -> row

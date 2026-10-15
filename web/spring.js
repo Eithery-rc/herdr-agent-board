@@ -3,7 +3,8 @@
 // value is now and keeps its velocity when retargeted, so any motion can be grabbed and
 // reversed mid-flight without a jump. One shared requestAnimationFrame loop drives them all.
 
-export const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)')
+// Node (the tests) has no matchMedia: there the springs and helpers still load.
+export const reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)') ?? { matches: false }
 
 const active = new Set()
 let frame = 0
