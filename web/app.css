@@ -849,6 +849,148 @@ button.swatch:active { transform: scale(0.88); }
 .cat-row.adhoc .cat-title { color: var(--label-2); }
 .cat-row.adhoc .handle { visibility: hidden; }
 
+/* ---------------------------------------------------------------- schedule */
+/* On a card: a clock with the soonest time, orange while a due one waits for the session. */
+.alarm {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  height: 18px;
+  padding: 0 6px 0 4px;
+  border-radius: 999px;
+  background: var(--fill-2);
+  color: var(--label-2);
+  font-size: 11.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  transition: opacity 120ms ease;
+}
+.alarm svg { width: 12px; height: 12px; stroke-width: 1.7; }
+.alarm.due { background: color-mix(in srgb, var(--orange) 15%, transparent); color: var(--orange); }
+.card:hover .alarm { opacity: 0; }
+.card.compact .alarm { height: 17px; background: none; padding: 0; }
+
+.pill-toggle .n { display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 5px; border-radius: 9px; background: var(--fill); color: var(--label-2); font-size: 11px; font-variant-numeric: tabular-nums; }
+.pill-toggle .n:empty { display: none; }
+.pill-toggle.due .n { background: var(--orange); color: #fff; }
+
+/* Cancel: a quiet trash can; the first click turns it into a red "Cancel?". */
+.sched-x {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  height: 26px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--label-3);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background 150ms ease, color 150ms ease, transform 100ms ease-out;
+}
+.sched-x:hover { color: var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); }
+.sched-x:active { transform: scale(0.94); }
+.sched-x[data-confirm] { color: #fff; background: var(--red); padding: 0 10px 0 8px; }
+.sched-x span:empty { display: none; }
+
+/* In a session's sheet: its next three, one line each. */
+.row.sched-row { align-items: flex-start; }
+.sched-row .row-label { padding-top: 4px; }
+.sched-row .row-value { display: flex; flex-direction: column; gap: 2px; }
+.sched-mini { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 28px; }
+.sched-mini .when { display: inline-flex; align-items: center; gap: 4px; flex: none; font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.sched-mini .when svg { width: 13px; height: 13px; color: var(--label-3); }
+.sched-mini .when.due, .sched-mini .when.due svg { color: var(--orange); }
+.sched-mini .text { flex: 1; min-width: 0; overflow: hidden; color: var(--label-2); font-size: 13px; white-space: nowrap; text-overflow: ellipsis; }
+.sched-more { align-self: flex-start; margin-top: 2px; padding: 2px 0; border: 0; background: none; color: var(--accent); font-size: 12.5px; font-weight: 500; }
+.sched-more:hover { text-decoration: underline; }
+
+/* The schedule panel: grouped by day, like a calendar's list view. */
+.sched-body { padding-top: 0; }
+.sched-body > .section-title:first-child { margin-top: 8px; }
+.sched-group, .sched-log { margin-top: 0; overflow: hidden; }
+.sched-entry {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  padding: 11px 10px 12px 14px;
+}
+.sched-entry + .sched-entry, .log-row + .log-row { box-shadow: inset 0 0.5px 0 var(--separator); }
+.sched-time { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.sched-time b { font: 600 15px/1.2 var(--font-display); letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.sched-entry.waiting .sched-time b { color: var(--orange); }
+.sched-time span { display: inline-flex; align-items: center; gap: 4px; min-width: 0; color: var(--label-3); font-size: 11.5px; }
+.sched-time svg { width: 12px; height: 12px; flex: none; }
+.sched-main { min-width: 0; }
+.sched-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  margin: 0 0 2px -2px;
+  padding: 1px 6px 1px 2px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--label-2);
+  transition: background 120ms ease, color 120ms ease;
+}
+.sched-who::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 2.5px; background: var(--lane); }
+.sched-who:not(:disabled):hover { background: var(--fill-2); color: var(--accent); }
+.sched-who:disabled { opacity: 0.7; }
+.sched-text { font-size: 13.5px; line-height: 1.4; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.sched-state { margin-top: 4px; font-size: 12px; color: var(--orange); }
+.sched-state.muted { color: var(--label-3); }
+.sched-stats { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 6px; font-size: 11.5px; color: var(--label-3); }
+/* Delivery: on time (tinted, the default) or when the session is free (quiet); a click switches. */
+.sched-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  height: 20px;
+  padding: 0 8px 0 6px;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 600;
+  transition: background 150ms ease, color 150ms ease, transform 100ms ease-out;
+}
+.sched-mode svg { width: 12px; height: 12px; stroke-width: 1.8; }
+.sched-mode.idle { background: var(--fill-2); color: var(--label-2); }
+.sched-mode:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.sched-mode.idle:hover { background: var(--fill); }
+.sched-mode:active { transform: scale(0.94); }
+.sched-mode.short { width: 26px; height: 26px; padding: 0; justify-content: center; border-radius: 7px; }
+.sched-mode.short svg { width: 14px; height: 14px; }
+.sched-stats code { padding: 1px 5px; border-radius: 5px; background: var(--fill-2); font: 11px var(--mono); color: var(--label-2); }
+.sched-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 56px 24px; text-align: center; color: var(--label-2); }
+.sched-empty svg { width: 42px; height: 42px; margin-bottom: 6px; color: var(--label-3); stroke-width: 1.2; }
+.sched-empty p { margin: 0; }
+.sched-empty .hint { font-size: 12.5px; }
+
+.log-row { display: grid; grid-template-columns: 18px auto minmax(0, 1fr) auto; align-items: baseline; gap: 10px; padding: 8px 12px; font-size: 12.5px; }
+.log-icon { display: grid; place-items: center; align-self: center; width: 18px; height: 18px; border-radius: 50%; font: 700 11px/1 var(--font); }
+.log-icon svg { width: 12px; height: 12px; stroke-width: 2.2; }
+.log-row.sent .log-icon { background: color-mix(in srgb, var(--green) 16%, transparent); color: var(--green); }
+.log-row.missed .log-icon { background: color-mix(in srgb, var(--orange) 18%, transparent); color: var(--orange); }
+.log-when { color: var(--label-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.log-what { min-width: 0; overflow: hidden; color: var(--label-2); white-space: nowrap; text-overflow: ellipsis; }
+.log-what b { color: var(--label); font-weight: 600; }
+.log-note { color: var(--label-3); white-space: nowrap; }
+.log-row.missed .log-note { color: var(--orange); }
+.log-row.dropped .log-icon { background: var(--fill); color: var(--label-2); font-size: 13px; }
+
 /* ---------------------------------------------------------------- toasts */
 .toasts { position: fixed; left: calc(50% + (var(--room-left, 0px) - var(--room-right, 0px)) / 2); bottom: calc(28px + var(--room-bottom, 0px)); z-index: 80; display: flex; flex-direction: column; align-items: center; gap: 8px; transform: translateX(-50%); pointer-events: none; }
 .toast {
@@ -1122,7 +1264,7 @@ button.swatch:active { transform: scale(0.88); }
 /* ---------------------------------------------------------------- accessibility */
 @media (prefers-reduced-motion: reduce) {
   .dot.work::after, .spin { animation: none; }
-  .card, .card-actions, .toolbar { transition: none; }
+  .card, .card-actions, .toolbar, .alarm, .sched-x, .sched-mode { transition: none; }
 }
 @media (prefers-reduced-transparency: reduce) {
   .toolbar { background: var(--bg); backdrop-filter: none; -webkit-backdrop-filter: none; }

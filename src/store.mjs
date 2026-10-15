@@ -10,8 +10,13 @@ const safe = key => String(key).replace(/[^A-Za-z0-9_-]/g, '_')
 const file = key => join(CARDS_DIR, `${safe(key)}.json`)
 
 export function readCard(key) {
+  return readJson(file(key))
+}
+
+/** A JSON file's contents, or null when it is missing or unreadable. */
+export function readJson(path) {
   try {
-    return JSON.parse(readFileSync(file(key), 'utf8'))
+    return JSON.parse(readFileSync(path, 'utf8'))
   } catch {
     return null
   }
@@ -19,7 +24,7 @@ export function readCard(key) {
 
 // An atomic mkdir serializes the whole read/merge/rename across processes. A writer holds the
 // lock for milliseconds, so one older than LOCK_STALE_MS was left by a process killed mid-write
-// (a closed terminal, a hook cut off): it is taken over, or that card could never be written
+// (a closed terminal, a hook cut off): it is taken over, or that file could never be written
 // again. Two writers taking over the same dead lock at the same instant is the one race left.
 const LOCK_TIMEOUT_MS = 2000
 const LOCK_STALE_MS = 30_000
@@ -33,7 +38,7 @@ function lockAge(lock) {
   }
 }
 
-function lockCard(path) {
+function lockFile(path) {
   const lock = `${path}.lock`
   const deadline = performance.now() + LOCK_TIMEOUT_MS
   for (;;) {
@@ -49,25 +54,31 @@ function lockCard(path) {
         continue
       }
       if (performance.now() >= deadline) {
-        throw new Error(`Timed out waiting for card lock: ${lock}`)
+        throw new Error(`Timed out waiting for lock: ${lock}`)
       }
       Atomics.wait(pause, 0, 0, 10)
     }
   }
 }
 
-/** Merge `patch` into the card and save it. Empty strings clear a field. */
-export function writeCard(key, patch) {
-  mkdirSync(CARDS_DIR, { recursive: true })
-  const path = file(key)
-  const unlock = lockCard(path)
+/**
+ * Read, change and save a JSON file under its lock, so writers in other processes never lose
+ * each other's fields. `change(current)` gets the contents (null when there is no file) and
+ * returns the new contents, null to delete the file, or undefined to leave it as it is.
+ * Returns what `change` returned.
+ */
+export function updateJson(path, change) {
+  const unlock = lockFile(path)
   const tmp = `${path}.${process.pid}.tmp`
   try {
-    const card = { ...(readCard(key) ?? { key }), ...patch, updatedAt: Date.now() }
-    for (const [k, v] of Object.entries(card)) if (v === '' || v === null) delete card[k]
-    writeFileSync(tmp, JSON.stringify(card))
-    renameSync(tmp, path)
-    return card
+    const next = change(readJson(path))
+    if (next === null) {
+      try { unlinkSync(path) } catch (err) { if (err.code !== 'ENOENT') throw err }
+    } else if (next !== undefined) {
+      writeFileSync(tmp, JSON.stringify(next))
+      renameSync(tmp, path)
+    }
+    return next
   } finally {
     try {
       try { unlinkSync(tmp) } catch (err) { if (err.code !== 'ENOENT') throw err }
@@ -75,6 +86,16 @@ export function writeCard(key, patch) {
       unlock()
     }
   }
+}
+
+/** Merge `patch` into the card and save it. Empty strings clear a field. */
+export function writeCard(key, patch) {
+  mkdirSync(CARDS_DIR, { recursive: true })
+  return updateJson(file(key), saved => {
+    const card = { ...(saved ?? { key }), ...patch, updatedAt: Date.now() }
+    for (const [k, v] of Object.entries(card)) if (v === '' || v === null) delete card[k]
+    return card
+  })
 }
 
 /** Every card by key. */

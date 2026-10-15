@@ -13,7 +13,10 @@ if (reply.waitFor) {
     await new Promise(resolve => setTimeout(resolve, 10))
   }
 }
-if (reply.error) {
+if (reply.text !== undefined) {
+  // Commands that print plain text (agent read).
+  process.stdout.write(reply.text)
+} else if (reply.error) {
   console.error(JSON.stringify({ error: { message: reply.error } }))
   process.exitCode = 1
 } else {

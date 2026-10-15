@@ -40,6 +40,8 @@ const DEFAULTS = {
   refreshSec: 2,
   // herdr-wake router, for sleeping sessions; the board works without it
   wakeUrl: 'http://127.0.0.1:12421',
+  // A reminder due while its session works or waits on a dialog is tried this long, then missed.
+  scheduleWaitMin: 240,
 }
 
 function readRaw() {
