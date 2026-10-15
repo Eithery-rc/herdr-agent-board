@@ -57,7 +57,7 @@ async function resolveSession() {
   if (target) {
     if (UUID.test(target)) return { key: target, cwd: '' }
     const t = target.toLowerCase()
-    const item = (await collect(cfg)).find(i => [i.name, i.pane, i.session].some(v => v && v.toLowerCase() === t))
+    const item = (await collect(cfg)).find(i => [i.name, i.autoName, i.pane, i.session].some(v => v && v.toLowerCase() === t))
     if (!item) throw new Error(`no session "${target}" on the board`)
     return { key: item.key, cwd: item.cwd, name: item.name, pane: item.pane }
   }

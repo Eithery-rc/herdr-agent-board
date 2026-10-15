@@ -5,6 +5,8 @@
 // A value is a string with {name} placeholders, or an array of plural forms picked by `n`
 // (English: one, other; Russian: one, few, many). A key missing in a language falls back to English.
 
+import { LAUNCH_STRINGS } from './i18n-launch.js'
+
 export const LANGUAGES = { en: 'English', ru: 'Русский' }
 /** The language's name in English, for the agents' brief. */
 export const LANGUAGE_NAMES = { en: 'English', ru: 'Russian' }
@@ -743,6 +745,9 @@ const STRINGS = {
     'key.back': 'назад',
   },
 }
+
+// New sessions, the context menus and renaming keep their texts in a file of their own.
+for (const [code, dict] of Object.entries(LAUNCH_STRINGS)) Object.assign(STRINGS[code], dict)
 
 /** "auto" or anything without a dictionary: the system's language when there is one for it, else English. */
 export function resolveLanguage(pref, locale) {

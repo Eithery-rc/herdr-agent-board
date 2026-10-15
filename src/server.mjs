@@ -21,6 +21,8 @@ import { categoryInfo, colorHex, editCategories, editSettings, laneRank, liveCon
 import { lang, t } from './lang.mjs'
 import { LANGUAGES } from '../web/i18n.js'
 import { herdrText } from './herdr.mjs'
+import { createLaunches, listDirs, renameSession } from './launch.mjs'
+import { checkName } from '../web/launch-model.js'
 import { messageGate } from './message-gate.mjs'
 import { busy, COLUMNS, collect, forgetSleepers, PINS } from './model.mjs'
 import { CARDS_DIR, ROOT, STATE_DIR } from './paths.mjs'
@@ -132,6 +134,8 @@ export function startServer({ cfg, log = () => {} } = {}) {
   let payload
   let version = assetsVersion()
   const clients = new Set()
+  // Sessions started from the board (launch.mjs): their progress goes out with the board.
+  const launches = createLaunches({ cfg, log, onChange: () => publish() })
 
   /** The board as clients see it, without the time of the last successful refresh. */
   function board() {
@@ -143,10 +147,10 @@ export function startServer({ cfg, log = () => {} } = {}) {
         const configured = cfg.categories.some(x => x.id === id)
         return { id, title: c.title, color: colorHex(c.color), colorName: c.color, paths: c.paths ?? [], configured, fallback: id === 'other' }
       })
-    const list = items.map(({ transcript, ...rest }) => rest)
+    const list = items.map(({ transcript, ...rest }) => launches.decorate(rest))
     // The schedule without the scheduler's bookkeeping; the log is what was sent or missed lately.
     const schedules = listEntries().map(({ claim, tried, waited, ...entry }) => entry)
-    return { version, lang: lang(), language: cfg.language ?? 'auto', languages: LANGUAGES, fsToken: FILE_TOKEN, stale, limits: claudeLimits(), items: list, categories, swatches: SWATCHES, columns: COLUMNS.map(({ id, title }) => ({ id, title })), schedules, scheduleLog: readLog(20) }
+    return { version, lang: lang(), language: cfg.language ?? 'auto', languages: LANGUAGES, fsToken: FILE_TOKEN, stale, limits: claudeLimits(), items: list, launches: launches.list(), categories, swatches: SWATCHES, columns: COLUMNS.map(({ id, title }) => ({ id, title })), schedules, scheduleLog: readLog(20) }
   }
 
   /**
@@ -182,6 +186,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
     refreshing = true
     try {
       items = await collect(cfg)
+      launches.observe(items)
       stale = false
       lastSuccessfulRefreshAt = Date.now()
       publish()
@@ -236,6 +241,15 @@ export function startServer({ cfg, log = () => {} } = {}) {
           return send(cfg, fresh, [String(body.text ?? '').trim(), list].filter(Boolean).join('\n\n'))
         })
       }
+      case 'rename': {
+        // The board's own name for it, kept on the card; empty gives the automatic one back.
+        const name = String(body.name ?? '').trim()
+        const bad = name && checkName(name)
+        if (bad) return { ok: false, error: t(bad) }
+        writeCard(item.key, { name })
+        // Claude and herdr only when the user asked for it: /rename is typed into the session.
+        return body.claude && name ? renameSession(item, name) : { ok: true }
+      }
       case 'card': {
         const patch = {}
         if (typeof body.category === 'string') patch.category = body.category.toLowerCase().replace(/[^a-z0-9_-]/g, '')
@@ -286,6 +300,8 @@ export function startServer({ cfg, log = () => {} } = {}) {
       if (req.method === 'POST' && path.startsWith('/api/fs/')) {
         if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })
         const body = await readBody(req)
+        // Folders only, for the new-session window's folder picker (launch.mjs).
+        if (path === '/api/fs/dirs') return json(200, await listDirs(body.path, { git: !!body.git }))
         if (path === '/api/fs/stat') {
           const raws = Array.isArray(body.paths) ? body.paths.slice(0, 300).map(String) : []
           const items = raws.map(raw => {
@@ -394,6 +410,31 @@ export function startServer({ cfg, log = () => {} } = {}) {
         const r = editCategories(await readBody(req))
         return json(r.ok ? 200 : 409, r)
       }
+      // New sessions: what the window offers, starting one, and waving a failed one off.
+      if (req.method === 'GET' && path === '/api/launch/options') return json(200, await launches.options())
+      if (req.method === 'POST' && path.startsWith('/api/launch')) {
+        if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })
+        // It starts programs: a browser must also say the request comes from this page.
+        const origin = req.headers.origin
+        if (origin && origin !== `http://127.0.0.1:${port}` && origin !== `http://localhost:${port}`) return json(403, { error: 'origin' })
+        const body = await readBody(req)
+        if (path === '/api/launch') {
+          if (refuseStale()) return json(409, { ok: false, error: t('mobile.readOnly') })
+          const r = await launches.start(body, items)
+          return json(r.ok ? 200 : 400, r)
+        }
+        const d = /^\/api\/launch\/([\w-]+)\/(dismiss|focus)$/.exec(path)
+        if (d?.[2] === 'dismiss') {
+          const r = launches.dismiss(d[1])
+          return json(r.ok ? 200 : 404, r)
+        }
+        if (d?.[2] === 'focus') {
+          if (refuseStale()) return json(409, { ok: false, error: t('mobile.readOnly') })
+          const r = await launches.focus(d[1])
+          return json(r.ok ? 200 : 409, r)
+        }
+        return json(404, { error: 'not found' })
+      }
       const m = /^\/api\/session\/([^/]+)(?:\/(\w+))?$/.exec(path)
       if (m) {
         const item = find(m[1])
@@ -406,6 +447,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
           // Actions that go through herdr wait for a board that can reach it; card edits and the rest do not.
           if (['focus', 'wake', 'sleep', 'message'].includes(m[2]) && refuseStale()) return json(409, { ok: false, error: t('mobile.readOnly') })
           const body = await readBody(req)
+          if (m[2] === 'rename' && body.claude && refuseStale()) return json(409, { ok: false, error: t('mobile.readOnly') })
           const r = await act(item, m[2], body)
           refresh()
           return json(r.ok ? 200 : 409, r)

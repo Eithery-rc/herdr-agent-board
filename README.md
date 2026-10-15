@@ -80,6 +80,67 @@ raised when it is already open.
   due one waits for the session to be free). The sheet lists its next three; "Schedule" on the
   toolbar shows every entry by day, then what was sent or missed lately. The trash can cancels
   an entry (two clicks). See [Schedule](#schedule).
+- "New session" (the toolbar, a lane's +, "New session here" in the sheet, the menus, Shift+N):
+  a window for a new Claude session in herdr. See [New sessions](#new-sessions).
+- Right click (or a long press on a touch screen, or the menu key / Shift+F10 on a focused card)
+  opens the board's own menu: on a card (open, go to herdr, message, wake or sleep, rename, move
+  to a category, status, "No reply needed", open its folder, Changes, History, a new session in
+  its folder, copy its name, folder, session or pane id, clear the card), on a lane (a new
+  session or workspace there, edit the category, show only it), on the board, on the sheet's
+  head, on a starting session and on file chips. It opens where you clicked, stays on screen,
+  takes arrows, Enter, Esc and the first letters of an item. Gray items say why (no fresh data
+  from herdr, the session works). Fields, selected text and links keep the browser's own menu;
+  Shift+right click always gives it.
+- Rename a session where its name is: "Rename" in its menu, F2 on the card, or a click on the
+  name in the sheet's head. Enter keeps it, Esc puts it back, an empty name gives the automatic
+  one back. The name is the board's (`name` on the card), shown on both boards and found by the
+  search. "Rename in Claude and herdr too" also types `/rename <name>` into the session and
+  gives its herdr agent the same name, so other sessions and herdr-wake see it: only when ticked,
+  and only while the session is idle (not working, not asleep).
+
+## New sessions
+
+The window asks for a name, a folder, the lane, where to open it (one of herdr's workspaces or a
+new one) and, if you like, a first message. It fills in what fits where it was opened from: the
+card's folder and workspace, the lane's folders and the workspace most of its sessions are in,
+else the folders of sessions on the board and of recent Claude sessions on this computer. The
+folder field completes folder names as you type (Tab or Enter takes one), lists those
+suggestions when it has the focus, and "Browse" opens columns to walk the disk, Finder style;
+the server says whether the folder exists. The lane follows the folder (by the lanes' folders)
+until you pick one. For a folder in a git checkout, "In a new git worktree" makes a branch in a
+sibling folder (`repo-branch`) and starts there. Ctrl+Enter starts.
+
+The new card shows in its lane at once, under "Working" while it starts, and becomes the
+session's own card once herdr sees it. If it fails, it moves under "Needs me" with the reason
+(the folder, a dialog Claude waits on, a timeout) and what to do: retry with the same values,
+go to its tab, or dismiss it.
+
+How it starts, by `launch` in config.json:
+
+- Nothing set (the default): through herdr. A tab in the chosen workspace (or a new workspace),
+  `herdr agent start <name> --kind claude --pane <tab's pane> -- --session-id <id>`, then
+  `/rename <name>` and the first message. The session id is the board's, so the card has its
+  lane before Claude starts. When Claude stops at a dialog (trusting the folder), the card says
+  so; answer it in herdr and the board goes on. `launch.agent` picks another herdr agent kind,
+  `launch.args` adds the agent's own arguments, `launch.timeoutSec` (120) how long to wait.
+- `launch.command`: your own launcher, run without a shell. The first element is the program,
+  each other element one argument, with `{name}`, `{label}`, `{cwd}`, `{workspace}` (herdr
+  workspace id), `{workspaceLabel}`, `{category}`, `{message}`, `{messageFile}` (the first message
+  in a UTF-8 file) or `{sessionId}` filled in; a nested list is left out when a value in it is
+  empty. Nothing from the request becomes a program or an option: values only fill those
+  places. It runs with `HERDR_WORKSPACE_ID` set to the chosen workspace (the board itself lives
+  in a workspace of its own) and should print `pane=<pane id>` when the session is up; it fails
+  with a non-zero exit, its last error line is the reason shown. A new workspace's first tab is
+  closed after a launcher opened its own tab in it. `launch.timeoutSec` (180).
+
+```json
+"launch": {
+  "command": ["pwsh", "-NoProfile", "-File", "C:\\tools\\spawn-agent.ps1",
+              "-Name", "{name}", "-Cwd", "{cwd}", "-Workspace", "{workspace}",
+              ["-BriefFile", "{messageFile}"]],
+  "timeoutSec": 180
+}
+```
 
 ## When a card is under "Needs me"
 
@@ -205,6 +266,13 @@ every POST. `GET /api/fs/raw` serves images, PDF, video and audio, with ranges, 
 board payload, new on every start, which only the board's own page can read. Text never comes
 raw, and raw responses carry a CSP that runs no script.
 
+New sessions (`src/launch.mjs`, `web/launch.js`): `GET /api/launch/options` (herdr's workspaces,
+recent folders, the launcher), `POST /api/fs/dirs` (the subfolders of a folder, or the drives),
+`POST /api/launch` (starts one in the background; its progress is `launches` in the board
+payload), `POST /api/launch/<id>/dismiss` and `/focus`. `POST /api/launch` also needs the page's
+own `Origin` when the browser sends one, and fresh herdr data like every action through herdr.
+Renaming: `POST /api/session/<key>/rename` with `{ name, claude }`.
+
 ## Board keys
 
 | Key | Action |
@@ -250,7 +318,8 @@ default: the board lives in a workspace of its own and stays open; `tab`; `overl
 `refreshSec`, `wakeUrl` (herdr-wake router), `scheduleWaitMin` (how long a due entry waits for a
 busy session, 240), `port` (web board, 12422), `web` (false turns the
 web board off), `browser` (path for the app window), `terminalTitle` (window title pattern to
-raise, default `<COMPUTERNAME>:*`), `raiseTerminal`.
+raise, default `<COMPUTERNAME>:*`), `raiseTerminal`, `launch` (how new sessions start, see
+[New sessions](#new-sessions)).
 
 Cards: `%LOCALAPPDATA%\herdr\plugins\agent-board\cards\<session id>.json`.
 

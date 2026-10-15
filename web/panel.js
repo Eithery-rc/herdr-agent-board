@@ -484,7 +484,8 @@ export class Panel {
     const edge = e.target.closest('.sheet-edge')
     if (edge) return this.resizeStart(e, edge)
     if (e.pointerType === 'touch' && !e.target.closest('.sheet-grip')) return
-    if (!e.target.closest('.sheet-head, .sheet-grip') || e.target.closest('button, input, textarea, a')) return
+    // The session's name renames it on a click: it does not move the panel.
+    if (!e.target.closest('.sheet-head, .sheet-grip') || e.target.closest('button, input, textarea, a, #sheet-name')) return
     this.halt()
     const at = this.at()
     this.g = { kind: 'head', id: e.pointerId, sx: e.clientX, sy: e.clientY, px: e.clientX, py: e.clientY, at, samples: [sample(e)], mode: null, before: { ...layout } }
