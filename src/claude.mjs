@@ -271,11 +271,21 @@ function turns(text) {
   const items = []
   const tools = new Map() // tool_use id -> item
   for (const line of text.split('\n')) {
-    if (!line || !(line.includes('"type":"user"') || line.includes('"type":"assistant"'))) continue
+    if (!line || !(line.includes('"type":"user"') || line.includes('"type":"assistant"') || line.includes('"type":"queued_command"'))) continue
     const o = parse(line)
     if (!o || o.isSidechain || o.isMeta || o.isCompactSummary) continue
     const content = o.message?.content
     const at = Date.parse(o.timestamp) || 0
+    // A prompt sent while the session worked goes into the running turn, and the transcript
+    // keeps it as a queued command, not a user line. Other sessions' messages and task
+    // notifications arrive the same way; only what a person typed is shown.
+    if (o.type === 'attachment') {
+      const a = o.attachment
+      const text = a?.type === 'queued_command' && a.commandMode === 'prompt' && a.origin?.kind !== 'peer' ? userText(a.prompt) : ''
+      const prev = items.at(-1)
+      if (text && !(prev?.role === 'user' && prev.text === clip(text, 3000))) items.push({ role: 'user', text: clip(text, 3000), at: Date.parse(a.timestamp) || at })
+      continue
+    }
     if (o.type === 'user') {
       if (Array.isArray(content)) {
         for (const b of content) if (b.type === 'tool_result' && tools.has(b.tool_use_id)) tools.get(b.tool_use_id).done = true
