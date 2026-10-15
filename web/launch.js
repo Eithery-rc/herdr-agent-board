@@ -225,6 +225,7 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
     if (!s.category) s.category = 'other'
     const cwd = r?.cwd ?? card?.cwd ?? ctx.cwd ?? ''
     f.cwd.value = cwd
+    showEnd()
     s.set.cwd = !!cwd
     f.name.value = r?.name ?? (cwd ? suggestName(cwd, items) : '')
     s.set.name = !!r
@@ -330,8 +331,13 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
     }
   }
 
+  // A long path shows its end, where the folder's own name is, unless it is being edited.
+  const showEnd = () => requestAnimationFrame(() => document.activeElement !== f.cwd && (f.cwd.scrollLeft = f.cwd.scrollWidth))
+  f.cwd.addEventListener('blur', showEnd)
+
   function applyFolder(path, byUser = true) {
     f.cwd.value = path
+    showEnd()
     if (byUser) s.set.cwd = true
     if (!s.set.name) f.name.value = path ? suggestName(path, d().items ?? []) : ''
     if (!s.set.branch) f.branch.value = ''
