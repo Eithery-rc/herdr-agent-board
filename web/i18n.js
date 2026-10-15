@@ -20,6 +20,11 @@ const PLURAL = {
 
 const STRINGS = {
   en: {
+    'attention.unseen': 'Not viewed',
+    'attention.next': 'Next',
+    'attention.nextHint': 'Open the next card that needs you (N). Opening it does not accept a result.',
+    'attention.waitAge': 'Waiting: {age}',
+    'attention.activityAge': 'Last activity: {age}',
     // columns and states
     'col.work': 'Working',
     'col.me': 'Needs me',
@@ -277,6 +282,11 @@ const STRINGS = {
   },
 
   ru: {
+    'attention.unseen': 'Не просмотрено',
+    'attention.next': 'Дальше',
+    'attention.nextHint': 'Открыть следующую карточку, которой нужно внимание (N). Открыть не значит принять результат.',
+    'attention.waitAge': 'Ожидает: {age}',
+    'attention.activityAge': 'Последняя активность: {age}',
     'col.work': 'Работает',
     'col.me': 'Ждёт меня',
     'col.ext': 'Ждёт внешнего',
