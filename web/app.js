@@ -3,11 +3,15 @@ import { boardConnection, dialogHistory } from './lifecycle.js'
 // spring from where the card is on screen (FLIP), drags stay glued to the pointer and land
 // with the pointer's velocity, and the session sheet can be flicked away.
 import { attentionTime, nextAttention, recordView, resultToken, unseenResult } from './attention.js'
+import { initBoardMenus } from './board-menus.js'
 import { draftBook } from './drafts.js'
 import { initFiles } from './files.js'
 import { LANGUAGES, translator } from './i18n.js'
+import { initLaunch } from './launch.js'
 import { updateLive } from './live.js'
 import { markdown } from './markdown.js'
+import { initMenu } from './menu.js'
+import { renameInPlace } from './rename.js'
 import { project, reducedMotion, rubberband, Spring, velocityOf } from './spring.js'
 
 const $ = sel => document.querySelector(sel)
@@ -26,6 +30,7 @@ const ICON = {
   chev: '<svg class="chev" viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"/></svg>',
   check: '<svg viewBox="0 0 20 20"><path d="m4.5 10.5 3.5 3.5 7.5-8"/></svg>',
   pin: '<svg viewBox="0 0 20 20"><circle cx="10" cy="7" r="3.5"/><path d="M10 10.5V17"/></svg>',
+  plus: '<svg viewBox="0 0 20 20"><path d="M10 4.5v11M4.5 10h11"/></svg>',
 }
 
 // ---------------------------------------------------------------- small helpers
@@ -87,6 +92,7 @@ const state = {
   movedCol: new Map(), // key -> { col, at }: column the user dropped it in, until the server agrees
 }
 const itemOf = key => state.data.items.find(i => i.key === key)
+let launchUI = null // new sessions (launch.js), set up with the sheet below
 const catOf = it => state.moved.get(it.key) ?? it.category
 const colOf = it => state.movedCol.get(it.key)?.col ?? it.column
 /** A turn is on: it works, or a dialog stopped it midway. */
@@ -99,9 +105,9 @@ function visibleItems() {
   return state.data.items.filter(it => {
     if (!state.sleepers && it.sleeping && it.column === 'idle') return false
     if (!q) return true
-    return [it.name, it.doing, it.wait, it.title, it.lastText, it.prompt, it.workspace, catInfo(catOf(it)).title]
+    return [it.name, it.autoName, it.doing, it.wait, it.title, it.lastText, it.prompt, it.workspace, catInfo(catOf(it)).title]
       .some(v => v && String(v).toLowerCase().includes(q))
-  })
+  }).concat(launchUI?.placeholders() ?? []) // sessions on their way show whatever the search
 }
 
 // ---------------------------------------------------------------- data
@@ -156,6 +162,12 @@ function syncAvailability() {
   }
   for (const element of document.querySelectorAll('#sheet-focus, #sheet-sleep, #sheet-wake, [data-act="focus"], [data-act="sleep"]')) element.disabled = blocked || (element.id === 'sheet-sleep' && inTurn(itemOf(state.open) ?? {}))
   for (const element of document.querySelectorAll('#attach, #lang, #cat-new, #sheet-card button, #sheet-card input, #cats-sheet button:not([data-close]), #cats-sheet input, [data-act="dismiss"]')) element.disabled = !canEdit()
+  // New sessions go through herdr: they wait for fresh data like going to a session does.
+  for (const element of document.querySelectorAll('#new-session, #sheet-new, .lane-new')) {
+    element.disabled = blocked
+    element.title = t(blocked ? 'mobile.readOnly' : element.dataset.hint ?? 'launch.inLane')
+  }
+  launchUI?.syncAvailability()
   files.refreshAvailability()
   syncComposer()
 }
@@ -248,6 +260,8 @@ function setLanguage(lang) {
   document.documentElement.lang = t.lang
   applyTexts()
   for (const lane of lanes.values()) for (const [id, col] of lane.cols) col.querySelector('.col-label').lastChild.textContent = colTitle(id)
+  for (const b of document.querySelectorAll('.lane-new')) b.title = b.ariaLabel = t('launch.inLane')
+  launchUI.relabel()
   for (const row of catRows.values()) row.remove()
   catRows.clear()
   if (catDraft) renderDraft()
@@ -353,7 +367,7 @@ function laneOf(cat) {
   const root = document.createElement('section')
   root.className = 'lane'
   root.dataset.cat = cat
-  root.innerHTML = '<header class="lane-head"><span class="lane-tag"></span><span class="lane-count"></span></header><div class="lane-grid"></div>'
+  root.innerHTML = `<div class="lane-bar"><header class="lane-head"><span class="lane-tag"></span><span class="lane-count"></span></header><button class="lane-new" title="${esc(t('launch.inLane'))}" aria-label="${esc(t('launch.inLane'))}">${ICON.plus}</button></div><div class="lane-grid"></div>`
   const grid = root.querySelector('.lane-grid')
   const cols = new Map()
   for (const c of state.data.columns) {
@@ -372,6 +386,7 @@ function laneOf(cat) {
 const dismissable = it => it.attention === 'ask' || it.attention === 'question' || it.attention === 'later'
 
 function cardHTML(it) {
+  if (it.launchOnly) return launchUI.cardHTML(it)
   const dismiss = dismissable(it) ? `<button data-act="dismiss" title="${esc(it.attention === 'later' ? t('card.seen', { col: q(colTitle('me')) }) : t('card.noReply'))}">${ICON.check}</button>` : ''
   const sleep = !it.sleeping && it.session && !inTurn(it) ? `<button data-act="sleep" title="${esc(t('card.sleep'))}">${ICON.moon}</button>` : ''
   const actions = `<div class="card-actions">${dismiss}${sleep}<button data-act="write" title="${esc(t('card.write'))}">${ICON.write}</button><button data-act="focus" title="${esc(t('card.focus'))}">${ICON.focus}</button></div>`
@@ -383,7 +398,7 @@ function cardHTML(it) {
   const pin = it.pin && it.pin === it.column ? `<span class="pinned" title="${esc(t('card.pinned'))}">${ICON.pin}</span>` : ''
   // A result you have not opened yet: a dot by the name.
   const unseen = unseenResult(it, viewed) ? `<span class="unseen-dot" title="${esc(t('attention.unseen'))}"></span>` : ''
-  const top = `<div class="card-top">${dot}<span class="name">${esc(it.name)}</span>${unseen}${pin}<span class="age"${ageTitle ? ` title="${esc(ageTitle)}"` : ''}>${esc(age)}</span></div>`
+  const top = `<div class="card-top">${dot}<span class="name"${it.name !== it.autoName && it.autoName ? ` title="${esc(t('rename.was', { name: it.autoName }))}"` : ''}>${esc(it.name)}</span>${unseen}${pin}<span class="age"${ageTitle ? ` title="${esc(ageTitle)}"` : ''}>${esc(age)}</span></div>`
   if (compact(it)) return top + actions
   // What it works on: its own words, else Claude's title of the session, else your last request.
   const own = plain(it.doing || (it.title && it.title !== it.name ? it.title : ''))
@@ -400,6 +415,8 @@ function cardHTML(it) {
       ? `<div class="now">${ICON.spin}<span class="tool">${esc(tool.label)}</span><span class="detail">${esc(tool.detail)}</span></div>`
       : `<div class="now idle">${ICON.spin}<span class="tool">${esc(t('card.thinking'))}</span><span class="detail">${tool ? esc(t('card.after', { tool: tool.label })) : ''}</span></div>`
   }
+  // Started from the board and not done starting: how it goes, or why it failed.
+  if (it.launch) body += launchUI.note(it.launch)
   return top + body + actions
 }
 
@@ -410,6 +427,7 @@ function updateCard(card, it) {
     card._html = html
   }
   card.dataset.col = it.column
+  card.classList.toggle('launch-card', !!it.launchOnly)
   card.classList.toggle('compact', compact(it))
   card.classList.toggle('unseen', unseenResult(it, viewed))
   card.classList.toggle('selected', state.open === it.key)
@@ -428,7 +446,7 @@ function cardOf(key) {
   card.addEventListener('pointerdown', onCardDown)
   card.addEventListener('click', onCardClick)
   card.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && e.target === card) openSheet(key)
+    if (e.key === 'Enter' && e.target === card && itemOf(card.dataset.key)) openSheet(card.dataset.key)
   })
   cards.set(key, card)
   appear(card)
@@ -443,6 +461,15 @@ function render() {
   const order = state.data.categories.map(c => c.id)
   const seen = new Set()
   let anyShown = false
+  // A session the board started takes over its starting card, so it moves on from where that was.
+  for (const l of state.data.launches ?? []) {
+    const el = cards.get(`launch:${l.id}`)
+    if (el && l.key && itemOf(l.key) && !cards.has(l.key)) {
+      cards.delete(`launch:${l.id}`)
+      cards.set(l.key, el)
+      el.dataset.key = l.key
+    }
+  }
   // Lanes move in the DOM only when their order changes: moving a node drops a pointer capture.
   const placed = [...board.children].filter(n => n.classList.contains('lane')).map(n => n.dataset.cat)
   const reorder = placed.join('|') !== order.join('|')
@@ -568,7 +595,7 @@ function appear(el) {
 let drag = null
 
 function onCardDown(e) {
-  if (!canEdit() || e.pointerType === 'touch' || e.button !== 0 || e.target.closest('[data-act]')) return
+  if (!canEdit() || e.pointerType === 'touch' || e.button !== 0 || e.target.closest('[data-act], [data-launch]') || !itemOf(e.currentTarget.dataset.key)) return
   const card = e.currentTarget
   const rect = card.getBoundingClientRect()
   drag = {
@@ -687,6 +714,7 @@ function onCardClick(e) {
   const card = e.currentTarget
   if (performance.now() - (card._draggedAt ?? -1e9) < 350) return
   const key = card.dataset.key
+  if (launchUI.onCardAction(e) || !itemOf(key)) return // a starting session's own buttons; its card opens nothing
   const btn = e.target.closest('[data-act]')
   if (btn?.dataset.act === 'focus') return focusSession(key)
   if (btn?.dataset.act === 'write') return openSheet(key, { compose: true })
@@ -747,7 +775,7 @@ class Panel {
     const el = this.el
     el.addEventListener('pointerdown', e => {
       if (e.pointerType === 'touch' && !e.target.closest('.sheet-grip')) return
-      if (e.button !== 0 || !e.target.closest('.sheet-head, .sheet-grip') || e.target.closest('button, input')) return
+      if (e.button !== 0 || !e.target.closest('.sheet-head, .sheet-grip') || e.target.closest('button, input, #sheet-name')) return
       this.x.stop()
       g = { id: e.pointerId, sx: e.clientX, base: this.x.value, samples: [{ x: e.clientX, y: 0, t: e.timeStamp }], moved: false }
       el.setPointerCapture(e.pointerId)
@@ -780,7 +808,7 @@ class Panel {
 // selection ending outside the panel) is not a click.
 {
   let down = null
-  const keeps = '.sheet, .ql, .card, .lane-head, button, input, textarea, select, label, a, [data-act]'
+  const keeps = '.sheet, .ql, .launch, .menu, .rename, .card, .lane-head, button, input, textarea, select, label, a, [data-act]'
   addEventListener('pointerdown', e => (down = e.button === 0 ? { x: e.clientX, y: e.clientY, target: e.target } : null), true)
   addEventListener('click', e => {
     const d = down
@@ -796,11 +824,29 @@ class Panel {
 const sheetBody = $('#sheet-body')
 // Paths in the thread become chips with a quick look; web links open in the default browser.
 const files = initFiles({ t: () => t, token: () => state.data.fsToken, toast, canMutate: canEdit, onDialogChange: () => { dialogBack.sync(); syncAvailability() } })
+// Layers above the board, topmost first: Back on a phone closes them one at a time.
+const menu = initMenu({ onChange: () => dialogBack.sync() })
 const dialogBack = dialogHistory({
   history,
   mobile: () => matchMedia('(max-width: 760px)').matches,
-  isOpen: () => files.isOpen() || panels.some(panel => panel.isOpen),
-  closeTop: () => files.isOpen() ? files.close() : panels.find(panel => panel.isOpen)?.close(),
+  isOpen: () => menu.isOpen() || launchUI.isOpen() || files.isOpen() || panels.some(panel => panel.isOpen),
+  closeTop: () => menu.isOpen() ? menu.close() : launchUI.isOpen() ? launchUI.close() : files.isOpen() ? files.close() : panels.find(panel => panel.isOpen)?.close(),
+})
+launchUI = initLaunch({
+  t: () => t,
+  toast,
+  canMutate,
+  data: () => ({ ...state.data, filter: state.filter }),
+  onDialogChange: () => dialogBack.sync(),
+  onStarted: l => {
+    // The new card must be in sight: its lane shown, then drawn at once.
+    if (state.filter !== 'all' && state.filter !== l.category) {
+      state.filter = l.category
+      store.set('board.filter', state.filter)
+    }
+    render()
+  },
+  focusLaunch,
 })
 addEventListener('popstate', () => dialogBack.pop())
 const sessionPanel = new Panel($('#sheet'), {
@@ -1607,6 +1653,7 @@ function openNextAttention() {
 $('#next-attention').addEventListener('click', openNextAttention)
 
 addEventListener('keydown', e => {
+  if (menu.isOpen() || launchUI.isOpen()) return // they take their keys first
   const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName)
   if (e.key === 'Escape') {
     if (typing) return document.activeElement.blur()
@@ -1616,6 +1663,16 @@ addEventListener('keydown', e => {
       $('#search').value = state.query = ''
       render()
     }
+  } else if (['n', 'т'].includes(e.key.toLowerCase()) && e.shiftKey && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !files.isOpen()) {
+    // Shift+N: a new session, in the lane on show.
+    e.preventDefault()
+    newSession(state.filter !== 'all' ? { category: state.filter } : {}, $('#new-session'))
+  } else if (e.key === 'F2' && !typing && !files.isOpen()) {
+    const card = document.activeElement?.closest?.('.card[data-key]')
+    const key = card && itemOf(card.dataset.key) ? card.dataset.key : state.open
+    if (!key) return
+    e.preventDefault()
+    startRename(key, card?.dataset.key === key ? card.querySelector('.name') : $('#sheet-name'))
   } else if (['n', 'т'].includes(e.key.toLowerCase()) && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !files.isOpen()) {
     e.preventDefault()
     openNextAttention()
@@ -1635,3 +1692,137 @@ resumeBoard()
 $('#sheet-changes').addEventListener('click', e => state.open && files.lookChanges(state.open, e.currentTarget))
 // Past sessions of the project, searched in the quick look (files.js).
 $('#sheet-history').addEventListener('click', e => state.open && files.lookHistory(state.open, itemOf(state.open)?.cwd ?? '', e.currentTarget))
+
+// ---------------------------------------------------------------- new sessions, renaming, menus
+// The "new session" window (launch.js) opens from the toolbar, a lane's +, the session sheet,
+// the menus and Shift+N, and grows out of whichever it was.
+{
+  const button = document.createElement('button')
+  button.className = 'pill-toggle new-session'
+  button.id = 'new-session'
+  button.dataset.hint = 'launch.toolbarHint'
+  button.innerHTML = `${ICON.plus}<span data-i18n="launch.toolbar"></span>`
+  $('.controls').prepend(button)
+  button.addEventListener('click', () => newSession(state.filter !== 'all' ? { category: state.filter } : {}, button))
+  const here = document.createElement('button')
+  here.className = 'button'
+  here.id = 'sheet-new'
+  here.dataset.hint = 'launch.hereHint'
+  here.innerHTML = `${ICON.plus}<span data-i18n="launch.here"></span>`
+  $('#sheet .composer-actions').append(here)
+  here.addEventListener('click', () => state.open && newSession({ item: itemOf(state.open) }, here))
+  applyTexts()
+}
+$('#board').addEventListener('click', e => {
+  const plus = e.target.closest('.lane-new')
+  if (plus) newSession({ category: plus.closest('.lane').dataset.cat }, plus)
+})
+
+function newSession(ctx, from) {
+  if (!canMutate()) return toast(t(canEdit() ? 'mobile.readOnly' : 'live.off'), true)
+  launchUI.open(ctx, from)
+}
+
+async function focusLaunch(id) {
+  if (!canMutate()) return toast(t('mobile.readOnly'), true)
+  try {
+    const res = await fetch(`/api/launch/${encodeURIComponent(id)}/focus`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-board': '1' }, body: '{}' })
+    const r = await res.json().catch(() => ({}))
+    if (!res.ok || r.ok === false) toast(r.error || t('err.status', { code: res.status }), true)
+  } catch (err) {
+    toast(t('err.offline', { why: err.message }), true)
+  }
+}
+
+/**
+ * Rename a session where its name is: on its card or in the sheet's head. The board keeps the
+ * name on the card; Claude and herdr get it too only when the user ticks that, and only while
+ * the session is idle, since /rename is typed into it.
+ */
+function startRename(key, el) {
+  const it = itemOf(key)
+  if (!it || !el) return
+  if (!canEdit()) return toast(t('live.off'), true)
+  const why = it.sleeping ? t('rename.why.asleep') : inTurn(it) ? t('rename.why.busy') : !canMutate() ? t('mobile.readOnly') : ''
+  renameInPlace(el, {
+    value: it.name,
+    auto: it.autoName || it.name,
+    claude: it.session && it.agent === 'claude' && it.pane ? { why } : null,
+    t,
+    onCommit: async (name, { claude }) => {
+      const r = await act(key, 'rename', { name, claude })
+      if (!r.ok) toast(r.error, true)
+      else toast(name ? t(claude ? 'rename.doneClaude' : 'rename.done', { name }) : t('rename.cleared', { name: it.autoName || it.name }))
+      return r
+    },
+  })
+}
+$('#sheet-name').addEventListener('click', e => state.open && startRename(state.open, e.currentTarget))
+$('#sheet-name').tabIndex = 0
+$('#sheet-name').addEventListener('keydown', e => (e.key === 'Enter' || e.key === 'F2') && state.open && (e.preventDefault(), startRename(state.open, e.currentTarget)))
+
+async function copyText(text, done) {
+  try {
+    await navigator.clipboard.writeText(String(text ?? ''))
+    toast(done)
+  } catch (err) {
+    toast(err.message, true)
+  }
+}
+
+async function openPath(path, how) {
+  if (!canEdit()) return toast(t('live.off'), true)
+  try {
+    const res = await fetch('/api/fs/open', { method: 'POST', headers: { 'content-type': 'application/json', 'x-board': '1' }, body: JSON.stringify({ path, how }) })
+    const r = await res.json().catch(() => ({}))
+    if (!res.ok) toast(r.error || t('err.status', { code: res.status }), true)
+  } catch (err) {
+    toast(t('err.offline', { why: err.message }), true)
+  }
+}
+
+initBoardMenus({
+  t: () => t,
+  menu,
+  canMutate,
+  canEdit,
+  item: itemOf,
+  column: colOf,
+  category: catOf,
+  state: () => state,
+  launch: launchUI,
+  do: {
+    open: key => openSheet(key),
+    focus: key => focusSession(key),
+    write: key => openSheet(key, { compose: true }),
+    wake: async key => {
+      setBusy(key, t('busy.waking'))
+      const r = await act(key, 'wake')
+      setBusy(key, null)
+      toast(r.ok ? t('toast.woke') : r.error, !r.ok)
+    },
+    sleep: key => sleepSession(key),
+    rename: (key, el) => (el?.isConnected ? startRename(key, el) : (openSheet(key), setTimeout(() => startRename(key, $('#sheet-name')), 380))),
+    move: (key, to) => moveCard(key, to),
+    dismiss: key => dismissAsk(key),
+    clear: async key => {
+      const r = await act(key, 'card', { clear: true })
+      toast(r.ok ? t('tui.cleared', { name: itemOf(key)?.name ?? '' }) : r.error, !r.ok)
+    },
+    changes: (key, el) => files.lookChanges(key, el),
+    history: (key, el) => files.lookHistory(key, itemOf(key)?.cwd ?? '', el),
+    newSession,
+    cats: id => openCats(id),
+    filter: id => {
+      state.filter = id
+      store.set('board.filter', id)
+      render()
+    },
+    sleepers: () => $('#sleepers').click(),
+    search: () => $('#search').focus(),
+    copy: copyText,
+    openPath,
+    look: (target, el) => files.look(target, el),
+    focusLaunch,
+  },
+})

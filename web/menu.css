@@ -1,0 +1,86 @@
+/* Context menus (menu.js), in the manner of macOS: a light translucent material, items that
+   light in the accent color, a check column only when some item has a check, hints and
+   submenu chevrons on the right, gray items with the reason under them. Bigger rows for
+   fingers. Grows from the point it opened at (the spring is in menu.js). */
+
+:root {
+  --menu-bg: rgba(246, 246, 248, 0.8);
+  --menu-edge: rgba(0, 0, 0, 0.12);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --menu-bg: rgba(44, 44, 46, 0.78);
+    --menu-edge: rgba(255, 255, 255, 0.14);
+  }
+}
+
+.menu {
+  position: fixed;
+  z-index: 90;
+  min-width: 210px;
+  max-width: min(340px, calc(100vw - 16px));
+  padding: 5px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: 10px;
+  background: var(--menu-bg);
+  -webkit-backdrop-filter: blur(30px) saturate(190%);
+  backdrop-filter: blur(30px) saturate(190%);
+  box-shadow: 0 0 0 0.5px var(--menu-edge), 0 12px 34px rgba(0, 0, 0, 0.2), 0 2px 8px rgba(0, 0, 0, 0.08), inset 0 0.5px 0 var(--edge);
+  color: var(--label);
+  font: 13px/1.3 var(--font);
+  letter-spacing: -0.003em;
+  user-select: none;
+  -webkit-user-select: none;
+  outline: none;
+  opacity: 0;
+  will-change: transform, opacity;
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 24px;
+  padding: 3px 10px 3px 3px;
+  border-radius: 5px;
+  cursor: default;
+}
+.menu.no-checks .menu-item { padding-left: 9px; }
+.mi-check { display: grid; flex: none; place-items: center; width: 16px; }
+.mi-check svg { width: 12px; height: 12px; stroke-width: 2.2; }
+.mi-dot { flex: none; width: 10px; height: 10px; border-radius: 3px; background: var(--dot); box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.15); }
+.mi-dot.round { border-radius: 50%; }
+.mi-text { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.mi-label { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mi-reason { margin-top: 1px; font-size: 11.5px; line-height: 1.3; color: var(--label-3); }
+.mi-hint { flex: none; margin-left: 18px; font-size: 12px; color: var(--label-3); font-variant-numeric: tabular-nums; }
+.mi-chev { display: grid; flex: none; margin-left: 14px; color: var(--label-2); }
+.mi-chev svg { width: 11px; height: 11px; stroke-width: 2; }
+.menu-item[aria-disabled="true"] .mi-label { color: var(--label-3); }
+.menu-item.danger .mi-label { color: var(--red); }
+.menu-item.active { background: var(--accent); color: #fff; }
+.menu-item.active .mi-label, .menu-item.active .mi-hint, .menu-item.active .mi-chev, .menu-item.active .mi-reason { color: inherit; }
+.menu-item.active .mi-hint, .menu-item.active .mi-reason { opacity: 0.8; }
+.menu-item.danger.active { background: var(--red); }
+.menu-item[aria-expanded="true"]:not(.active) { background: var(--fill); }
+.menu-sep { height: 1px; margin: 5px 9px; background: var(--separator); }
+.menu-note { max-width: 300px; margin: 5px 4px 1px; padding: 7px 6px 2px; border-top: 0.5px solid var(--separator); font-size: 11.5px; line-height: 1.35; color: var(--label-2); }
+
+/* Fingers: taller rows and bigger type, as iOS menus have. */
+.menu.touch { min-width: 240px; border-radius: 14px; }
+.menu.touch .menu-item { min-height: 42px; padding: 8px 14px 8px 6px; font-size: 15px; border-radius: 8px; }
+.menu.touch.no-checks .menu-item { padding-left: 12px; }
+.menu.touch .mi-hint { display: none; }
+
+/* A long press opens the card's menu, so it no longer starts a text selection on a card. */
+@media (pointer: coarse) {
+  .card { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .menu { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+@media (prefers-contrast: more) {
+  .menu { box-shadow: 0 0 0 1px var(--label-3), 0 12px 34px rgba(0, 0, 0, 0.25); }
+  .mi-reason, .mi-hint { color: var(--label-2); }
+}

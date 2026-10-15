@@ -154,6 +154,9 @@ export async function collect(cfg) {
     const attention = attentionOf(base.status, card, info)
     items.push({
       ...base,
+      // A name given on the board beats the one herdr and Claude know it by; autoName is theirs.
+      name: card.name || base.name,
+      autoName: base.name,
       category: card.category || guess || 'other',
       categorySet: !!card.category,
       doing: card.doing ?? '',
