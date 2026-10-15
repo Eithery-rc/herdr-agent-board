@@ -12,6 +12,7 @@ import { extname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { focus, send, sleepSession, wake } from './actions.mjs'
+import { checkoutChanges, isCheckout } from './changes.mjs'
 import { conversation } from './claude.mjs'
 import { describe, FILE_TOKEN, MEDIA_TYPES, openWith, preview, resolvePath } from './files.mjs'
 import { categoryInfo, colorHex, editCategories, editSettings, laneRank, liveConfig, PALETTE } from './config.mjs'
@@ -182,7 +183,8 @@ export function startServer({ cfg, log = () => {} } = {}) {
   const find = key => items.find(i => i.key === key)
 
   async function detail(item) {
-    const out = { item: { ...item, transcript: undefined }, conversation: conversation(item.transcript, 60), screen: '' }
+    // checkout: whether its folder is in git, for the sheet's Changes button.
+    const out = { item: { ...item, transcript: undefined }, conversation: conversation(item.transcript, 60), screen: '', checkout: await isCheckout(item.cwd) }
     if (item.status === 'blocked' && item.pane) {
       try {
         const text = await herdrText(['agent', 'read', item.pane, '--source', 'visible'], 5000)
@@ -363,6 +365,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
       if (m) {
         const item = find(m[1])
         if (!item) return json(404, { error: t('err.gone') })
+        if (req.method === 'GET' && m[2] === 'changes') return json(200, await checkoutChanges(item.cwd))
         if (req.method === 'GET' && !m[2]) return json(200, await detail(item))
         if (req.method === 'POST' && m[2]) {
           if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })

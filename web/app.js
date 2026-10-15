@@ -789,6 +789,7 @@ function openSheet(key, { compose = false } = {}) {
   message.value = currentDraft?.text ?? ''
   syncComposer()
   state.detail = null
+  $('#sheet-changes').hidden = true // until the detail says the folder is in git
   lastDetailStamp = ''
   if (!sessionPanel.open() && switching && !reducedMotion.matches) {
     sheetBody.animate([{ opacity: 0.3 }, { opacity: 1 }], { duration: 180, easing: 'ease-out' })
@@ -808,6 +809,7 @@ async function loadDetail(key) {
     if (seq !== detailSeq || state.open !== key) return
     if (!res.ok) return toast(d.error || t('err.unavailable'), true)
     state.detail = d
+    $('#sheet-changes').hidden = !d.checkout
     if (!state.data.stale && d.item.column === 'done' && resultToken(d.item) === resultToken(itemOf(key) ?? {})) {
       viewed = recordView(viewed, d.item)
       store.set('board.viewed', JSON.stringify(viewed))
@@ -1579,3 +1581,6 @@ fetch('/api/board')
   .then(d => d.items && onData(d))
   .catch(() => {})
 connect()
+
+// The checkout changes of the session's folder open in the quick look as a diff (files.js).
+$('#sheet-changes').addEventListener('click', e => state.open && files.lookChanges(state.open, e.currentTarget))
