@@ -1,0 +1,4 @@
+node_modules/
+# local copies made before edits, from before this repo existed
+backups/
+*.log

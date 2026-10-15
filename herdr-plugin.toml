@@ -1,0 +1,36 @@
+id = "agent-board"
+name = "Agent board"
+version = "0.1.0"
+min_herdr_version = "0.9.2"
+description = "Kanban of the Claude sessions in herdr: who works, who waits on you or on someone else, in lanes by category. Jump to a session or message it from the board."
+platforms = ["windows", "linux", "macos"]
+
+# After a herdr start: the board workspace comes up in the background, so the key is instant.
+[[startup]]
+command = ["node", "src/open.mjs", "--background"]
+
+# Toggle: opens the board, focuses it when it is open elsewhere, goes back when it is focused.
+[[actions]]
+id = "open"
+title = "Agent board"
+contexts = ["workspace", "pane"]
+command = ["node", "src/open.mjs"]
+
+[[actions]]
+id = "web"
+title = "Agent board (web)"
+contexts = ["workspace", "pane"]
+command = ["node", "src/web-open.mjs"]
+
+[[actions]]
+id = "install"
+title = "Agent board: install the board command and the Claude Code hooks"
+contexts = ["workspace"]
+command = ["node", "src/install.mjs"]
+
+[[panes]]
+id = "board"
+title = "Agent board"
+placement = "overlay"
+# run.mjs restarts the board when the plugin's code changes.
+command = ["node", "src/run.mjs"]

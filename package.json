@@ -1,0 +1,14 @@
+{
+  "name": "agent-board",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "herdr plugin: kanban of Claude sessions with categories set by the agents themselves",
+  "scripts": {
+    "board": "node src/tui.mjs",
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
