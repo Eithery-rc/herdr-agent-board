@@ -766,6 +766,8 @@ let detailSeq = 0
 let draftFor = null // the session the composer's attachments were added for; outlives a close
 
 function openSheet(key, { compose = false } = {}) {
+  ++usageSeq
+  state.usage = null
   const switching = sessionPanel.isOpen && state.open !== key
   // Attachments belong to the session they were added for, never to the next one. Closing the
   // panel and opening the same session again keeps them.
@@ -855,7 +857,8 @@ function renderSheetBody(reset) {
   if (!it) return
   renderSheetCard(it)
   const atBottom = sheetBody.scrollHeight - sheetBody.scrollTop - sheetBody.clientHeight < 40
-  let html = ''
+  const usage = state.usage?.key === it.key ? state.usage.data : null
+  let html = usage ? `<section class="usage-status"><h3>${esc(t('usage.title'))}</h3><p>${esc(t('usage.contextUnknown'))}</p><p>${esc(t('usage.scope'))}</p>${usage.limits.available ? `<p>${esc(t((usage.limits.stale || Date.now()-usage.limits.observedAt > 300000 || usage.limits.windows.some(w => w.resetsAt && w.resetsAt <= Date.now())) ? 'usage.stale' : 'usage.observed', { time: new Date(usage.limits.observedAt).toLocaleString(), age: ago(usage.limits.observedAt) }))}</p>${usage.limits.windows.map(w => `<p>${w.minutes === 300 ? '5h' : '7d'}: ${w.usedPercentage}% ${esc(t('usage.used'))}${w.resetsAt ? ` · ${esc(t('usage.reset', { time: new Date(w.resetsAt).toLocaleString() }))}` : ''}${(w.expired || (w.resetsAt && w.resetsAt <= Date.now())) ? ` · ${esc(t('usage.expired'))}` : ''}</p>`).join('')}` : `<p>${esc(t('usage.unavailable'))}</p>`}</section>` : ''
   if (it.column === 'me') {
     const later = it.attention === 'later'
     const why = t(it.attention ? `why.${it.attention}` : 'why.default')
@@ -1531,7 +1534,7 @@ addEventListener('keydown', e => {
 })
 addEventListener('scroll', () => $('.toolbar').classList.toggle('scrolled', scrollY > 2), { passive: true })
 addEventListener('resize', () => placeThumb(true))
-setInterval(render, 30_000) // ages
+setInterval(() => { render(); if (state.open && state.usage) renderSheetBody(false) }, 30_000) // ages
 
 applyTexts()
 fetch('/api/board')
@@ -1539,3 +1542,17 @@ fetch('/api/board')
   .then(d => d.items && onData(d))
   .catch(() => {})
 connect()
+
+let usageSeq = 0
+$('#sheet-usage').addEventListener('click', async () => {
+  const key = state.open, seq = ++usageSeq
+  if (!key) return
+  try {
+    const response = await fetch(`/api/session/${encodeURIComponent(key)}/usage`)
+    if (!response.ok) throw new Error(t('usage.unavailable'))
+    const data = await response.json()
+    if (seq !== usageSeq || state.open !== key) return
+    state.usage = { key, data }
+    renderSheetBody(false)
+  } catch (err) { if (state.open === key) toast(err.message, true) }
+})

@@ -11,6 +11,7 @@ import http from 'node:http'
 import { extname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { focus, send, sleepSession, wake } from './actions.mjs'
+import { localUsage } from './usage.mjs'
 import { conversation } from './claude.mjs'
 import { describe, FILE_TOKEN, MEDIA_TYPES, openWith, preview, resolvePath } from './files.mjs'
 import { categoryInfo, colorHex, editCategories, editSettings, laneRank, liveConfig, PALETTE } from './config.mjs'
@@ -351,6 +352,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
       if (m) {
         const item = find(m[1])
         if (!item) return json(404, { error: t('err.gone') })
+        if (req.method === 'GET' && m[2] === 'usage') return json(200, localUsage())
         if (req.method === 'GET' && !m[2]) return json(200, await detail(item))
         if (req.method === 'POST' && m[2]) {
           if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })
