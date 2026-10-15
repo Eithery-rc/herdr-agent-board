@@ -19,11 +19,19 @@ import {
   roomFor,
   serializeLayout,
   sizeLimits,
+  snap,
   soft,
 } from '../web/panel-layout.js'
 
 const vp = { w: 1600, h: 1000 }
 const fresh = { dock: 'right', side: null, bottom: null, float: null }
+
+test('the panel lands on whole device pixels, so its text stays sharp', () => {
+  assert.equal(snap(813.8), 814)
+  assert.equal(snap(813.3, 1.25), 813.6) // 1017 device pixels
+  assert.equal(snap(813.3, 1.5) * 1.5, 1220)
+  assert.equal(snap(-0.4), -0)
+})
 
 test('size limits leave the board its room and never invert in a small window', () => {
   assert.deepEqual(sizeLimits('right', vp), { min: 360, max: 1200 })

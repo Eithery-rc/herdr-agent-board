@@ -114,6 +114,10 @@ test('transcript tail: title, last prompt, last words, pending tool; sidechains 
       line({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } }),
       line({ type: 'assistant', message: { model: 'claude-x', usage: { input_tokens: 12, cache_creation_input_tokens: 3000, cache_read_input_tokens: 150000, output_tokens: 90 }, content: [{ type: 'text', text: 'The file is fine, asking.' }, { type: 'tool_use', id: 't2', name: 'AskUserQuestion', input: { questions: [{ question: 'Import 10/23?' }] } }] } }),
       line({ type: 'assistant', isSidechain: true, message: { content: [{ type: 'text', text: 'subagent noise' }] } }),
+      // Sent while it worked: absorbed into the turn, kept as a queued command.
+      line({ type: 'attachment', attachment: { type: 'queued_command', prompt: 'also the 10/24 file', commandMode: 'prompt', origin: { kind: 'human' }, timestamp: '2026-10-15T21:50:13.839Z' } }),
+      line({ type: 'attachment', attachment: { type: 'queued_command', prompt: '<cross-session-message from="x">hi</cross-session-message>', commandMode: 'prompt', origin: { kind: 'peer' } } }),
+      line({ type: 'attachment', attachment: { type: 'queued_command', prompt: '<task-notification>done</task-notification>', commandMode: 'task-notification' } }),
     ].join('\n'),
   )
   const info = transcriptInfo(file)
@@ -124,9 +128,11 @@ test('transcript tail: title, last prompt, last words, pending tool; sidechains 
   assert.deepEqual(info.tool, { name: 'AskUserQuestion', label: 'AskUserQuestion', detail: 'Import 10/23?', pending: true })
 
   const conv = conversation(file)
-  assert.deepEqual(conv.map(c => c.role), ['user', 'assistant', 'tool', 'assistant', 'tool'])
+  assert.deepEqual(conv.map(c => c.role), ['user', 'assistant', 'tool', 'assistant', 'tool', 'user'])
   assert.equal(conv[2].done, true)
   assert.equal(conv[4].done, false)
+  assert.equal(conv[5].text, 'also the 10/24 file')
+  assert.equal(conv[5].at, Date.parse('2026-10-15T21:50:13.839Z'))
   assert.ok(!conv.some(c => c.text === 'subagent noise'))
 })
 

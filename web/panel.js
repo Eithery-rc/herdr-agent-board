@@ -32,6 +32,7 @@ import {
   roomFor,
   serializeLayout,
   sizeLimits,
+  snap,
   soft,
 } from './panel-layout.js'
 import { reducedMotion, rubberband, Spring, velocityOf } from './spring.js'
@@ -340,8 +341,9 @@ export class Panel {
 
   paint() {
     const el = this.el
+    const dpr = devicePixelRatio || 1
     if (this.mode === 'mobile') {
-      el.style.transform = `translate3d(${this.x.value}px, 0, 0)`
+      el.style.transform = `translate3d(${snap(this.x.value, dpr)}px, 0, 0)`
       return
     }
     const g = this.g
@@ -352,9 +354,9 @@ export class Panel {
       this.y.value = this.y.target = g.py - g.gy + (g.oy?.value ?? 0)
     }
     const p = this.p.value
-    el.style.width = `${this.w.value}px`
-    el.style.height = `${this.h.value}px`
-    el.style.transform = `translate3d(${this.x.value}px, ${this.y.value}px, 0)${p < 1 ? ` scale(${0.94 + 0.06 * Math.max(0, p)})` : ''}`
+    el.style.width = `${snap(this.w.value, dpr)}px`
+    el.style.height = `${snap(this.h.value, dpr)}px`
+    el.style.transform = `translate3d(${snap(this.x.value, dpr)}px, ${snap(this.y.value, dpr)}px, 0)${p < 1 ? ` scale(${0.94 + 0.06 * Math.max(0, p)})` : ''}`
     el.style.opacity = p < 1 ? String(Math.max(0, Math.min(1, p * 1.6))) : ''
   }
 

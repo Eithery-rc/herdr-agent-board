@@ -90,6 +90,14 @@ export function soft(size, { min, max }, dimension = 400) {
   return size
 }
 
+/**
+ * A position or size on whole device pixels. The panel is its own compositor layer: placed
+ * between pixels (a drag leaves it at 813.8px), its text is resampled and looks blurred.
+ */
+export function snap(v, dpr = 1) {
+  return Math.round(v * dpr) / dpr
+}
+
 /** Let go `offset` px along its way out at `velocity` px/s: does the flick carry it past half its size? */
 export function flicksAway(offset, velocity, size) {
   return offset + project(velocity) > size / 2
