@@ -44,13 +44,27 @@ if (board && snap.panes.some(p => p.pane_id === board)) {
       ws = created.workspace
       initialTab = created.tab?.tab_id
     }
+    // A reused workspace keeps its tabs, except the ones an earlier board left behind: when the
+    // board pane ends, its tab keeps only the herdr-sidebar pane that plugin adds to every tab.
+    const leftovers = initialTab ? [] : orphanTabs(ws.workspace_id)
     const opened = await herdr([...open, '--placement', 'tab', '--workspace', ws.workspace_id])
-    // Never close tabs of a workspace we reused, even when its saved board pane is gone.
-    if (initialTab && opened?.plugin_pane?.pane?.pane_id) {
-      await herdr(['tab', 'close', initialTab]).catch(() => {})
+    if (opened?.plugin_pane?.pane?.pane_id) {
+      for (const tab of initialTab ? [initialTab] : leftovers) await herdr(['tab', 'close', tab]).catch(() => {})
     }
     await zoom(opened?.plugin_pane?.pane?.pane_id)
   }
+}
+
+/** Tabs of the workspace with panes, all of them herdr-sidebar panes: nothing of the user's in there. */
+function orphanTabs(workspace) {
+  const sidebar = p => !p.agent && Object.keys(p.tokens ?? {}).some(k => k.startsWith('herdr-sidebar'))
+  return snap.tabs
+    .filter(tab => tab.workspace_id === workspace)
+    .map(tab => tab.tab_id)
+    .filter(id => {
+      const panes = snap.panes.filter(p => p.tab_id === id)
+      return panes.length > 0 && panes.every(sidebar)
+    })
 }
 
 // Other plugins (herdr-sidebar) add their panes to every new tab; zoomed, the board keeps the

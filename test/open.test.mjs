@@ -14,8 +14,14 @@ for (const background of [false, true]) {
         writeFileSync(join(stateDir, 'board.json'), JSON.stringify({ pane: 'gone' }))
         box.state({
           'api snapshot': { result: { snapshot: {
-            panes: [], workspaces: existing ? [{ label: 'Board', workspace_id: 'w1' }] : [],
-            tabs: [{ tab_id: 'user-tab', workspace_id: 'w1' }, { tab_id: 'other-user-tab', workspace_id: 'w1' }],
+            // user-tab: a shell next to the sidebar; orphan-tab: only the sidebar an old board left.
+            panes: [
+              { pane_id: 'shell', tab_id: 'user-tab', workspace_id: 'w1' },
+              { pane_id: 'sb1', tab_id: 'user-tab', workspace_id: 'w1', tokens: { 'herdr-sidebar-git': '1' } },
+              { pane_id: 'sb2', tab_id: 'orphan-tab', workspace_id: 'w1', tokens: { 'herdr-sidebar-git': '1' } },
+            ],
+            workspaces: existing ? [{ label: 'Board', workspace_id: 'w1' }] : [],
+            tabs: [{ tab_id: 'user-tab', workspace_id: 'w1' }, { tab_id: 'other-user-tab', workspace_id: 'w1' }, { tab_id: 'orphan-tab', workspace_id: 'w1' }],
           } } },
           'workspace create': { result: { workspace: { workspace_id: 'w1' }, tab: { tab_id: 'initial-shell' } } },
           'plugin pane open': result === 'error' ? { error: 'open failed' } : { result: result === 'ok' ? { plugin_pane: { pane: { pane_id: 'new-board' } } } : {} },
@@ -24,7 +30,8 @@ for (const background of [false, true]) {
         const out = await box.open(background).exited
         assert.equal(out.code, result === 'error' ? 1 : 0, out.stderr)
         const closes = box.calls().filter(a => a[0] === 'tab' && a[1] === 'close')
-        assert.deepEqual(closes, !existing && result === 'ok' ? [['tab', 'close', 'initial-shell']] : [])
+        const expected = result !== 'ok' ? [] : existing ? [['tab', 'close', 'orphan-tab']] : [['tab', 'close', 'initial-shell']]
+        assert.deepEqual(closes, expected)
         if (closes.length) {
           const calls = box.calls()
           assert.ok(calls.findIndex(a => a[2] === 'open') < calls.findIndex(a => a[1] === 'close'))
