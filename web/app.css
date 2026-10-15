@@ -1022,3 +1022,8 @@ button.swatch:active { transform: scale(0.88); }
   .card, .group, .sheet { box-shadow: 0 0 0 1px var(--label-3); }
 }
 
+#connection-state, #sheet-connection-state { margin: 4px 16px; color: var(--orange); font-size: 12px; }
+@media (pointer: coarse) {
+  .card { touch-action: pan-y; user-select: text; -webkit-user-select: text; }
+  .sheet-body, .sheet-title, .ql-body { user-select: text; -webkit-user-select: text; }
+}

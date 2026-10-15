@@ -261,6 +261,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
       if (!new RegExp(`^(127\\.0\\.0\\.1|localhost):${port}$`).test(req.headers.host ?? '')) return json(403, { error: 'host' })
       const url = new URL(req.url, `http://127.0.0.1:${port}`)
       const path = decodeURIComponent(url.pathname)
+      const refuseStale = () => stale || !lastSuccessfulRefreshAt || Date.now()-lastSuccessfulRefreshAt > Math.max(10000,(cfg.refreshSec ?? 2)*3000)
 
       if (req.method === 'GET' && path === '/api/board') {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
@@ -290,6 +291,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
         if (path === '/api/fs/preview') return json(200, preview(target))
         if (path === '/api/fs/open') {
           if (!describe(target).exists) return json(404, { error: t('err.fs.missing', { path: target }) })
+          if (refuseStale()) return json(409, { ok:false, error:t('mobile.readOnly') })
           const r = await openWith(target, body.how === 'reveal' ? 'reveal' : 'open')
           return json(r.ok ? 200 : 500, r.ok ? r : { error: t('err.fs.open', { why: r.error }) })
         }
@@ -303,6 +305,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
           link = new URL(String(body.url ?? ''))
         } catch {}
         if (!link || !/^https?:$/.test(link.protocol)) return json(400, { error: t('err.fs.open', { why: String(body.url ?? '') }) })
+        if (refuseStale()) return json(409, { ok:false, error:t('mobile.readOnly') })
         const r = await openWith(link.href)
         return json(r.ok ? 200 : 500, r.ok ? r : { error: t('err.fs.open', { why: r.error }) })
       }
@@ -340,6 +343,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
         return createReadStream(target, { start, end }).on('error', () => res.destroy()).pipe(res)
       }
       if (req.method === 'POST' && path === '/api/upload') {
+        if (refuseStale()) return json(409, { ok:false, error:t('mobile.readOnly') })
         if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })
         const r = await receiveUpload(req, decodeURIComponent(req.headers['x-filename'] ?? 'file'))
         return json(r.ok ? 200 : 413, r)
@@ -361,12 +365,14 @@ export function startServer({ cfg, log = () => {} } = {}) {
         return res.end(body)
       }
       if (req.method === 'POST' && path === '/api/settings') {
+        if (refuseStale()) return json(409, { ok:false, error:t('mobile.readOnly') })
         if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })
         // Written to config.json; the config watcher switches the language and pushes the new board.
         const r = editSettings(await readBody(req))
         return json(r.ok ? 200 : 409, r)
       }
       if (req.method === 'POST' && path === '/api/categories') {
+        if (refuseStale()) return json(409, { ok:false, error:t('mobile.readOnly') })
         if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })
         // Written to config.json; the config watcher reloads it and pushes the new board.
         const r = editCategories(await readBody(req))
@@ -380,6 +386,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
         if (req.method === 'GET' && m[2] === 'history') return json(200, await searchHistory(item.cwd, url.searchParams.get('q'), undefined, item.session))
         if (req.method === 'GET' && !m[2]) return json(200, await detail(item))
         if (req.method === 'POST' && m[2]) {
+          if (refuseStale()) return json(409, { ok:false, error:t('mobile.readOnly') })
           if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })
           const body = await readBody(req)
           const r = await act(item, m[2], body)

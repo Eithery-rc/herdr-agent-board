@@ -1,3 +1,4 @@
+import { boardConnection, dialogHistory } from './lifecycle.js'
 // Agent board, web. Live data over Server-Sent Events; every change of place animates with a
 // spring from where the card is on screen (FLIP), drags stay glued to the pointer and land
 // with the pointer's velocity, and the session sheet can be flicked away.
@@ -116,7 +117,7 @@ function onData(data) {
   for (const [key, cat] of state.moved) if (itemOf(key)?.category === cat) state.moved.delete(key)
   for (const [key, m] of state.movedCol) if (itemOf(key)?.column === m.col || Date.now() - m.at > 8000) state.movedCol.delete(key)
   render()
-  syncComposer()
+  syncAvailability()
   if (state.open) {
     const it = itemOf(state.open)
     const stamp = it ? `${it.activity}|${it.status}|${it.column}|${it.wait}|${it.doing}|${it.category}` : ''
@@ -127,26 +128,39 @@ function onData(data) {
   }
 }
 
-function connect() {
-  const live = $('#live')
-  const source = new EventSource('/api/events')
-  source.onopen = () => updateLive(live, { stale: true, lastSuccessfulRefreshAt: null }, t)
-  source.onerror = () => {
-    state.connected = false
-    live.classList.remove('on', 'stale')
-    live.title = t('live.off')
+const connection = boardConnection({
+  source: () => new EventSource('/api/events'),
+  snapshot: signal => fetch('/api/board', { cache: 'no-store', signal }).then(response => {
+    if (!response.ok) throw new Error('Snapshot unavailable')
+    return response.json()
+  }),
+  data: onData,
+  connected(value) {
+    state.connected = value
+    updateLive($('#live'), value ? state.data : { stale: true, lastSuccessfulRefreshAt: null }, t)
+    if (!value) $('#live').title = t('live.off')
+    syncAvailability()
+  },
+})
+const canMutate = () => state.connected && state.data.stale === false && state.data.lastSuccessfulRefreshAt != null
+function syncAvailability() {
+  const blocked = !canMutate()
+  for (const banner of document.querySelectorAll('#connection-state, #sheet-connection-state')) {
+    banner.hidden = !blocked
+    banner.textContent = t('mobile.readOnly')
   }
-  source.onmessage = e => {
-    try {
-      const data = JSON.parse(e.data)
-      state.connected = true
-      onData(data) // first: it may switch the language
-      updateLive(live, data, t)
-    } catch {}
-  }
+  for (const element of document.querySelectorAll('#sheet-focus, #sheet-sleep, #sheet-wake, #attach, #lang, #cat-new, #sheet-card button, #sheet-card input, #cats-sheet button:not([data-close]), #cats-sheet input, [data-act="focus"], [data-act="sleep"], [data-act="dismiss"]')) element.disabled = blocked || (element.id === 'sheet-sleep' && inTurn(itemOf(state.open) ?? {}))
+  files.refreshAvailability()
+  syncComposer()
 }
+function resumeBoard() { if (!document.hidden && navigator.onLine !== false) connection.resume() }
+addEventListener('pageshow', resumeBoard)
+addEventListener('online', resumeBoard)
+addEventListener('offline', () => connection.suspend())
+document.addEventListener('visibilitychange', () => document.hidden ? connection.suspend() : resumeBoard())
 
 async function act(key, action, body = {}) {
+  if (!canMutate()) return { ok: false, error: t('mobile.readOnly') }
   try {
     const res = await fetch(`/api/session/${encodeURIComponent(key)}/${action}`, {
       method: 'POST',
@@ -473,6 +487,7 @@ function render() {
   flip(first)
   if (state.open) renderSheetHead()
   renderCats()
+  syncAvailability()
 }
 
 // ---------------------------------------------------------------- motion: FLIP with springs
@@ -547,7 +562,7 @@ function appear(el) {
 let drag = null
 
 function onCardDown(e) {
-  if (e.button !== 0 || e.target.closest('[data-act]')) return
+  if (!canMutate() || e.pointerType === 'touch' || e.button !== 0 || e.target.closest('[data-act]')) return
   const card = e.currentTarget
   const rect = card.getBoundingClientRect()
   drag = {
@@ -662,6 +677,7 @@ function onDragEnd(e) {
 }
 
 function onCardClick(e) {
+  if (getSelection()?.isCollapsed === false) return
   const card = e.currentTarget
   if (performance.now() - (card._draggedAt ?? -1e9) < 350) return
   const key = card.dataset.key
@@ -696,13 +712,14 @@ class Panel {
   /** Returns false when it was open already. */
   open() {
     if (this.isOpen) return false
-    for (const p of panels) if (p !== this) p.close()
     this.isOpen = true
+    for (const p of panels) if (p !== this) p.close()
     this.el.classList.add('open')
     this.el.setAttribute('aria-hidden', 'false')
     this.x.onRest = () => {}
     if (!this.x.moving && !this.x.value) this.x.set(this.off())
     this.x.to(0, { damping: 0.9, response: 0.4 })
+    dialogBack.sync()
     return true
   }
 
@@ -716,12 +733,14 @@ class Panel {
     }
     this.x.to(this.off(), { velocity, damping: 1, response: 0.3 })
     this.onClose()
+    dialogBack.sync()
   }
 
   flick() {
     let g = null
     const el = this.el
     el.addEventListener('pointerdown', e => {
+      if (e.pointerType === 'touch' && !e.target.closest('.sheet-grip')) return
       if (e.button !== 0 || !e.target.closest('.sheet-head, .sheet-grip') || e.target.closest('button, input')) return
       this.x.stop()
       g = { id: e.pointerId, sx: e.clientX, base: this.x.value, samples: [{ x: e.clientX, y: 0, t: e.timeStamp }], moved: false }
@@ -770,7 +789,14 @@ class Panel {
 // ---------------------------------------------------------------- the session sheet
 const sheetBody = $('#sheet-body')
 // Paths in the thread become chips with a quick look; web links open in the default browser.
-const files = initFiles({ t: () => t, token: () => state.data.fsToken, toast })
+const files = initFiles({ t: () => t, token: () => state.data.fsToken, toast, canMutate, onDialogChange: () => { dialogBack.sync(); syncAvailability() } })
+const dialogBack = dialogHistory({
+  history,
+  mobile: () => matchMedia('(max-width: 760px)').matches,
+  isOpen: () => files.isOpen() || panels.some(panel => panel.isOpen),
+  closeTop: () => files.isOpen() ? files.close() : panels.find(panel => panel.isOpen)?.close(),
+})
+addEventListener('popstate', () => dialogBack.pop())
 const sessionPanel = new Panel($('#sheet'), {
   onClose: () => {
     saveDraft()
@@ -908,6 +934,7 @@ function renderSheetBody(reset) {
     for (const d of sheetBody.querySelectorAll('details')) if (open.has(d.dataset.i)) d.open = true
   }
   files.upgrade(sheetBody, it.cwd)
+  syncAvailability()
   if (reset || atBottom) sheetBody.scrollTop = sheetBody.scrollHeight
 }
 
@@ -987,7 +1014,7 @@ const syncComposer = () => {
   message.style.height = `${Math.min(180, message.scrollHeight)}px`
   const uploading = attachments.some(a => a.status === 'uploading')
   const ready = attachments.some(a => a.status === 'done')
-  sendBtn.disabled = sending.has(state.open) || !state.connected || uploading || !(message.value.trim() || ready)
+  sendBtn.disabled = sending.has(state.open) || !canMutate() || uploading || !(message.value.trim() || ready)
   const discard = $('#draft-cancel')
   discard.hidden = !(message.value || attachments.length)
   discard.disabled = sending.has(state.open)
@@ -1030,6 +1057,7 @@ async function upload(a, file) {
 }
 
 function addFiles(files) {
+  if (!canMutate()) return toast(t('mobile.readOnly'), true)
   for (let file of files) {
     // A pasted screenshot arrives as "image.png": give it a name that says what it is.
     if (/^image\.(png|jpe?g)$/i.test(file.name)) {
@@ -1127,7 +1155,7 @@ $('#composer').addEventListener('submit', async e => {
   const key = state.open
   const text = message.value.trim()
   const files = attachments.filter(a => a.status === 'done').map(a => a.path)
-  if (!key || sending.has(key) || !state.connected || (!text && !files.length) || attachments.some(a => a.status === 'uploading')) return
+  if (!canMutate() || !key || sending.has(key) || (!text && !files.length) || attachments.some(a => a.status === 'uploading')) return
   const it = itemOf(key)
   if (!it) return
   saveDraft()
@@ -1204,6 +1232,7 @@ const GRIP = '<svg viewBox="0 0 20 20"><path d="M7.5 5h0M12.5 5h0M7.5 10h0M12.5 
 const TRASH = '<svg viewBox="0 0 20 20"><path d="M4.5 6h11M8 6V4.5h4V6m-6 0 .7 9.5h6.6L14 6"/></svg>'
 
 async function editCats(body) {
+  if (!canMutate()) return { ok: false, error: t('mobile.readOnly') }
   try {
     const res = await fetch('/api/categories', { method: 'POST', headers: { 'content-type': 'application/json', 'x-board': '1' }, body: JSON.stringify(body) })
     const r = await res.json().catch(() => ({}))
@@ -1538,6 +1567,7 @@ $('#lanes').addEventListener('click', e => {
   render()
 })
 $('#lang').addEventListener('click', async () => {
+  if (!canMutate()) return toast(t('mobile.readOnly'), true)
   const codes = Object.keys(state.data.languages ?? LANGUAGES)
   const next = codes[(codes.indexOf(t.lang) + 1) % codes.length]
   state.langAsked = { lang: next, at: Date.now() }
@@ -1592,11 +1622,7 @@ addEventListener('resize', () => placeThumb(true))
 setInterval(render, 30_000) // ages
 
 applyTexts()
-fetch('/api/board')
-  .then(r => r.json())
-  .then(d => d.items && onData(d))
-  .catch(() => {})
-connect()
+resumeBoard()
 
 // The checkout changes of the session's folder open in the quick look as a diff (files.js).
 $('#sheet-changes').addEventListener('click', e => state.open && files.lookChanges(state.open, e.currentTarget))

@@ -43,7 +43,7 @@ const iconOf = kind => ICONS[kind] ?? (kind === 'binary' ? ICONS.file : ICONS.te
  * The chat's files: `t` is a getter for the page's translator, `token` for the raw-bytes token,
  * `toast(text, error)` shows a message.
  */
-export function initFiles({ t, token, toast }) {
+export function initFiles({ t, token, toast, canMutate = () => true, onDialogChange = () => {} }) {
   const tr = (key, vars) => t()(key, vars)
 
   // ------------------------------------------------------------ server
@@ -51,7 +51,7 @@ export function initFiles({ t, token, toast }) {
     try {
       const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-board': '1' }, body: JSON.stringify(body) })
       const r = await res.json().catch(() => ({}))
-      return res.ok ? r : { ...r, error: r.error || tr('err.status', { code: res.status }) }
+      return res.ok ? r : { ...r, httpStatus: res.status, error: r.error || tr('err.status', { code: res.status }) }
     } catch (err) {
       return { error: tr('err.offline', { why: err.message }) }
     }
@@ -59,10 +59,15 @@ export function initFiles({ t, token, toast }) {
   const rawUrl = path => `/api/fs/raw?path=${encodeURIComponent(path)}&t=${encodeURIComponent(token() ?? '')}`
 
   async function openUrl(href) {
+    if (!canMutate()) return toast(tr('mobile.readOnly'), true)
     const r = await post('/api/open-url', { url: href })
-    if (r.error) window.open(href, '_blank', 'noopener')
+    if (r.error) {
+      if (r.httpStatus !== 409 && canMutate()) window.open(href, '_blank', 'noopener')
+      else toast(r.error, true)
+    }
   }
   async function system(path, how) {
+    if (!canMutate()) return toast(tr('mobile.readOnly'), true)
     const r = await post('/api/fs/open', { path, how })
     if (r.error) toast(r.error, true)
   }
@@ -233,6 +238,7 @@ export function initFiles({ t, token, toast }) {
     if (motion.value <= 0.001) paint(0)
     motion.to(1, { damping: 1, response: 0.34 })
     win.focus({ preventScroll: true })
+    onDialogChange()
   }
 
   function close() {
@@ -240,6 +246,7 @@ export function initFiles({ t, token, toast }) {
     from = measureFrom(ql.origin)
     motion.to(0, { damping: 1, response: 0.26 })
     if (reducedMotion.matches) motion.set(0)
+    onDialogChange()
   }
   function finishClose() {
     root.hidden = true
@@ -308,8 +315,15 @@ export function initFiles({ t, token, toast }) {
     const nav = $(root, '.ql-path')
     nav.innerHTML = crumbs.map(c => `<button data-go="${esc(c.path)}">${esc(c.name)}</button>`).join('<span>›</span>')
     nav.scrollLeft = nav.scrollWidth
+    syncActions()
+  }
+
+  function syncActions() {
+    const d = ql.data ?? {}
     const exists = (!d.error || d.error === 'denied') && !!d.path
-    for (const sel of ['.ql-open', '.ql-reveal', '.ql-copy']) $(root, sel).disabled = !exists
+    for (const sel of ['.ql-open', '.ql-reveal', '.ql-copy']) {
+      $(root, sel).disabled = !exists || (sel !== '.ql-copy' && !canMutate())
+    }
   }
 
   function render() {
@@ -570,5 +584,5 @@ export function initFiles({ t, token, toast }) {
     true,
   )
 
-  return { upgrade, look, lookChanges: (key, el) => look({ changes: key }, el), lookHistory: (key, cwd, el) => look({ history: key, cwd }, el), close, isOpen: () => !root.hidden && motion.target === 1, relabel: () => !root.hidden && (labels(), ql.data && render()) }
+  return { upgrade, look, refreshAvailability: syncActions, lookChanges: (key, el) => look({ changes: key }, el), lookHistory: (key, cwd, el) => look({ history: key, cwd }, el), close, isOpen: () => !root.hidden && motion.target === 1, relabel: () => !root.hidden && (labels(), ql.data && render()) }
 }
