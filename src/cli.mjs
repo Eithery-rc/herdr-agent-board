@@ -12,6 +12,8 @@
 //   board remind <when> <text>   the board types "[board reminder] <text>" into the session then,
 //                            waking it if it sleeps (when: in 30m, at 15:30, tomorrow 9:00, ...)
 //   board every <cron> <text>    the same on a cron schedule (5 fields, quoted)
+//   --idle (remind, every)   wait until the session is free; by default it arrives on time,
+//                            queued into a running turn
 //   board schedule [--all]   this session's entries (every session's)
 //   board unschedule <id|all>    removes an entry (all: every entry of this session)
 // --session <id|name|pane> targets another session's card (for coordinating sessions).
@@ -27,7 +29,7 @@ import { readCard, writeCard } from './store.mjs'
 import { nextRun, parseCron, parseWhen, shortestGap } from './when.mjs'
 import { shortWhen } from '../web/when.js'
 
-const USAGE = `board [cat <id> ["<Title>"] | doing <text> | wait <text> | ask <question> | done [text] | clear | list | cats | remind <when> "<text>" | every "<cron>" "<text>" | schedule [--all] | unschedule <id|all>] [--session <id|name|pane>]`
+const USAGE = `board [cat <id> ["<Title>"] | doing <text> | wait <text> | ask <question> | done [text] | clear | list | cats | remind <when> "<text>" [--idle] | every "<cron>" "<text>" [--idle] | schedule [--all] | unschedule <id|all>] [--session <id|name|pane>]`
 const MIN_REPEAT_MS = 5 * 60_000
 const WHEN_HELP = 'in 30m, in 2h, at 15:30, tomorrow 9:00, fri 17:00, 2026-10-20 14:00 (local time)'
 
@@ -38,6 +40,12 @@ if (si >= 0) {
   target = args[si + 1]
   args.splice(si, 2)
 }
+// remind, every: wait until the session is free instead of arriving on time, mid-turn if need be.
+const ii = args.indexOf('--idle')
+const idle = ii >= 0
+if (idle) args.splice(ii, 1)
+const mode = () => (idle ? { idle: true } : {})
+const modeText = () => (idle ? ', when the session is free' : '')
 const [cmd = 'show', ...rest] = args
 const text = rest.join(' ').replace(/\s+/g, ' ').trim()
 const cfg = loadConfig()
@@ -129,7 +137,7 @@ function fromNow(ms, now) {
 const clip = (s, n = 60) => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
 
 function entryLine(e, now, withSession) {
-  const parts = [e.id, `${stamp(e.next)} (${fromNow(e.next, now)})`, e.cron ? `every "${e.cron}"` : 'once']
+  const parts = [e.id, `${stamp(e.next)} (${fromNow(e.next, now)})`, e.cron ? `every "${e.cron}"` : 'once', e.idle ? 'when free' : 'on time']
   if (withSession) parts.push(e.name || e.key)
   if (e.pendingSince) parts.push(`due, waits for the session since ${stamp(e.pendingSince)}`)
   parts.push(clip(e.text, 80))
@@ -233,8 +241,8 @@ async function main() {
       if (at === null || !msg) throw new Error(`usage: board remind <when> "<text>"; when: ${WHEN_HELP}`)
       if (at <= now) throw new Error(`${stamp(at)} is in the past`)
       if (at > now + 5 * 366 * 86_400_000) throw new Error(`${stamp(at)} is more than five years ahead`)
-      const e = addEntry({ ...(await entryFor(s)), text: msg, at, next: at, by: 'agent' })
-      return console.log(`ok · reminder ${e.id} ${stamp(at)} (${fromNow(at, now)}): ${clip(msg)} · cancel: board unschedule ${e.id}${await schedulerNote()}`)
+      const e = addEntry({ ...(await entryFor(s)), ...mode(), text: msg, at, next: at, by: 'agent' })
+      return console.log(`ok · reminder ${e.id} ${stamp(at)} (${fromNow(at, now)}${modeText()}): ${clip(msg)} · cancel: board unschedule ${e.id}${await schedulerNote()}`)
     }
     case 'every': {
       // The cron in one quoted word, or its five fields as they are (PowerShell leaves * alone).
@@ -256,8 +264,8 @@ async function main() {
       if (next === null) throw new Error(`"${cron.expr}" never runs`)
       // Every run is a turn of the session, waking it if need be.
       if (shortestGap(cron, now) < MIN_REPEAT_MS) throw new Error(`"${cron.expr}" runs more often than every ${MIN_REPEAT_MS / 60_000} minutes; for a one-off wait use board remind`)
-      const e = addEntry({ ...(await entryFor(s)), text: msg, cron: cron.expr, next, by: 'agent' })
-      return console.log(`ok · every ${e.id} "${cron.expr}", next ${stamp(next)} (${fromNow(next, now)}): ${clip(msg)} · cancel: board unschedule ${e.id}${await schedulerNote()}`)
+      const e = addEntry({ ...(await entryFor(s)), ...mode(), text: msg, cron: cron.expr, next, by: 'agent' })
+      return console.log(`ok · every ${e.id} "${cron.expr}", next ${stamp(next)} (${fromNow(next, now)}${modeText()}): ${clip(msg)} · cancel: board unschedule ${e.id}${await schedulerNote()}`)
     }
     case 'schedule': {
       const list = listEntries().filter(e => e.key === s.key)

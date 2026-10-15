@@ -75,6 +75,11 @@ test('board remind / every / schedule / unschedule keep entries for the session'
   const entry = read(box, id)
   assert.equal(entry.text, 'check the CI run')
   assert.ok(Math.abs(entry.next - (Date.now() + 30 * 60e3)) < 10_000)
+  assert.equal(entry.idle, undefined) // on time unless asked otherwise
+  const free = await cli(box, ['remind', ...s, '--idle', 'in', '1h', 'when free'])
+  assert.match(free.out, /when the session is free/)
+  assert.equal(read(box, /reminder ([0-9a-f]{6})/.exec(free.out)[1]).idle, true)
+  assert.equal((await cli(box, ['unschedule', /reminder ([0-9a-f]{6})/.exec(free.out)[1]])).code, 0)
   const every = await cli(box, ['every', ...s, '0 9 * * 1-5', 'check the inbox'])
   assert.equal(every.code, 0, every.out)
   assert.equal(read(box, /every ([0-9a-f]{6})/.exec(every.out)[1]).cron, '0 9 * * 1-5')
@@ -134,10 +139,33 @@ test('after the board was off: a one-off says how late, a cron entry runs once f
   assert.equal(cron.claim, undefined)
 })
 
-test('a working session gets it once it is free; one that stays busy has it logged as missed', { timeout: 15_000 }, async t => {
+test('on time, a working session gets it queued into its turn; a dialog and a draft still hold it', { timeout: 15_000 }, async t => {
   const box = sandbox(t)
   herdrWith(box, 'working')
-  put(box, { id: 'ccccc1', text: 'when free', at: Date.now() - 1000, next: Date.now() - 1000 })
+  put(box, { id: 'cdcd01', text: 'mid-turn', at: Date.now() - 1000, next: Date.now() - 1000 })
+  await scheduler(box)
+  await until(() => prompts(box).length === 1)
+  assert.deepEqual(prompts(box), ['[board reminder] mid-turn'])
+
+  const dialog = sandbox(t)
+  herdrWith(dialog, 'blocked')
+  put(dialog, { id: 'cdcd02', text: 'not into a dialog', at: Date.now() - 1000, next: Date.now() - 1000 })
+  await scheduler(dialog)
+  await until(() => read(dialog, 'cdcd02')?.why === 'busy')
+
+  const draft = sandbox(t)
+  herdrWith(draft, 'working', { 'agent read': { text: screen('the user types') } })
+  put(draft, { id: 'cdcd03', text: 'not over a draft', at: Date.now() - 1000, next: Date.now() - 1000 })
+  await scheduler(draft)
+  await until(() => read(draft, 'cdcd03')?.why === 'draft')
+  await new Promise(resolve => setTimeout(resolve, 400))
+  assert.deepEqual([...prompts(dialog), ...prompts(draft)], [])
+})
+
+test('--idle: a working session gets it once it is free; one that stays busy has it logged as missed', { timeout: 15_000 }, async t => {
+  const box = sandbox(t)
+  herdrWith(box, 'working')
+  put(box, { id: 'ccccc1', idle: true, text: 'when free', at: Date.now() - 1000, next: Date.now() - 1000 })
   await scheduler(box, { scheduleWaitMin: 1 })
   await until(() => read(box, 'ccccc1')?.pendingSince)
   await new Promise(resolve => setTimeout(resolve, 600))
@@ -149,7 +177,7 @@ test('a working session gets it once it is free; one that stays busy has it logg
 
   const busy = sandbox(t)
   herdrWith(busy, 'blocked')
-  put(busy, { id: 'ccccc2', text: 'never free', at: Date.now() - 1000, next: Date.now() - 1000 })
+  put(busy, { id: 'ccccc2', idle: true, text: 'never free', at: Date.now() - 1000, next: Date.now() - 1000 })
   put(busy, { id: 'ccccc3', key: 's1', text: 'cron never free', cron: '* * * * *', next: Date.now() - 1000 })
   await scheduler(busy, { scheduleWaitMin: 0.01 })
   await until(() => runs(busy).length >= 2, 8000)
@@ -357,7 +385,15 @@ test('the web board lists the schedule without the bookkeeping and cancels an en
   assert.equal(board.schedules[0].text, 'later')
   assert.equal('claim' in board.schedules[0] || 'tried' in board.schedules[0], false)
   assert.deepEqual(board.scheduleLog, [])
-  const cancel = headers => fetch(`${url}/api/schedule`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify({ op: 'cancel', id: 'abcdef' }) })
+  const post = (body, headers = { 'x-board': '1' }) => fetch(`${url}/api/schedule`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) })
+  // The mode: when the session is free, then on time again.
+  assert.equal((await post({ op: 'mode', id: 'abcdef', idle: true }, {})).status, 403)
+  assert.equal((await post({ op: 'mode', id: 'abcdef', idle: true })).status, 200)
+  assert.equal(read(box, 'abcdef').idle, true)
+  assert.equal((await post({ op: 'mode', id: 'abcdef', idle: false })).status, 200)
+  assert.equal('idle' in read(box, 'abcdef'), false)
+  assert.equal((await post({ op: 'snooze', id: 'abcdef' })).status, 400)
+  const cancel = headers => post({ op: 'cancel', id: 'abcdef' }, headers)
   assert.equal((await cancel({})).status, 403)
   assert.equal((await cancel({ 'x-board': '1' })).status, 200)
   assert.equal(read(box, 'abcdef'), null)

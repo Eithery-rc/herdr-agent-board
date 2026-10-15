@@ -24,7 +24,7 @@ import { herdrText } from './herdr.mjs'
 import { messageGate } from './message-gate.mjs'
 import { busy, COLUMNS, collect, forgetSleepers, PINS } from './model.mjs'
 import { CARDS_DIR, ROOT, STATE_DIR } from './paths.mjs'
-import { listEntries, readLog, removeEntry, SCHEDULE_DIR } from './schedule.mjs'
+import { listEntries, readLog, removeEntry, SCHEDULE_DIR, updateEntry } from './schedule.mjs'
 import { startScheduler } from './scheduler.mjs'
 import { writeCard } from './store.mjs'
 
@@ -378,10 +378,15 @@ export function startServer({ cfg, log = () => {} } = {}) {
       if (req.method === 'POST' && path === '/api/schedule') {
         if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })
         const body = await readBody(req)
-        if (body.op !== 'cancel') return json(400, { error: `unknown op ${body.op}` })
-        const removed = removeEntry(String(body.id ?? ''))
+        const id = String(body.id ?? '')
+        // cancel: remove the entry; mode: on time (idle false) or when the session is free.
+        const done =
+          body.op === 'cancel' ? removeEntry(id)
+          : body.op === 'mode' ? updateEntry(id, e => ({ ...e, idle: body.idle ? true : undefined }))
+          : undefined
+        if (body.op !== 'cancel' && body.op !== 'mode') return json(400, { error: `unknown op ${body.op}` })
         refresh()
-        return json(removed ? 200 : 404, removed ? { ok: true } : { ok: false, error: t('sched.err.gone') })
+        return json(done ? 200 : 404, done ? { ok: true } : { ok: false, error: t('sched.err.gone') })
       }
       if (req.method === 'POST' && path === '/api/categories') {
         if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })

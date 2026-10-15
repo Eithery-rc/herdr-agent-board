@@ -410,10 +410,10 @@ function narrowOrder() {
   return lanes.flatMap(l => l.cols.flat().sort((a, b) => order.get(a.column) - order.get(b.column)))
 }
 
-/** "⏰15:30 " when the session has something scheduled. */
+/** "⏰15:30 " when the session has something scheduled; ⏳ when it waits until the session is free. */
 function alarm(it) {
   const e = alarms.get(it.key)
-  return e ? `⏰${shortWhen(e.next, t)} ` : ''
+  return e ? `${e.idle ? '⏳' : '⏰'}${shortWhen(e.next, t)} ` : ''
 }
 
 function cardLines(it, w, isSel) {

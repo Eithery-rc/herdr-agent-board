@@ -1,9 +1,10 @@
 // Runs the schedule (schedule.mjs) in the board's process: when an entry is due, its text goes
 // into the session's prompt as "[board reminder] <text>", waking the session first when
-// herdr-wake put it to sleep. A session that works, waits on a dialog or has the user's unsent
-// text in its input box is not interrupted: it gets the text once it is free, tried on every
-// tick, up to `scheduleWaitMin` minutes of trying; then the run is logged as missed. A one-off
-// entry goes after its run; a cron one moves to its next time.
+// herdr-wake put it to sleep. On time by default: a working session gets it queued into its turn.
+// A session that waits on a dialog or has the user's unsent text in its input box (and, for an
+// `idle` entry, one that works) gets it once it is free, tried on every tick, up to
+// `scheduleWaitMin` minutes of trying; then the run is logged as missed. A one-off entry goes
+// after its run; a cron one moves to its next time.
 //
 // Runs that came due while the board was off: a one-off is sent once, saying how late it is; the
 // missed runs of a cron entry go as one, saying how many. Time the board was off does not count
@@ -12,7 +13,7 @@
 import { mkdirSync, watch } from 'node:fs'
 import { send, wake } from './actions.mjs'
 import { t } from './lang.mjs'
-import { busy, collect, forgetSleepers } from './model.mjs'
+import { collect, forgetSleepers } from './model.mjs'
 import { getEntry, listEntries, logRun, removeEntry, SCHEDULE_DIR, updateEntry } from './schedule.mjs'
 import { countRuns, nextRun } from './when.mjs'
 import { longWhen, span } from '../web/when.js'
@@ -112,7 +113,11 @@ export function startScheduler({ cfg, log = () => {}, onChange = () => {} }) {
 
   async function run(entry, item) {
     const now = Date.now()
-    let why = !item ? 'gone' : !item.sleeping && busy(item.status) ? 'busy' : ''
+    // On time (the default) goes into a working session too, queued into its turn as the user's
+    // own mid-turn messages are; `idle` entries wait until it is free. A dialog always waits:
+    // typing would answer it.
+    const held = item && !item.sleeping && (item.status === 'blocked' || (entry.idle && item.status === 'working'))
+    let why = !item ? 'gone' : held ? 'busy' : ''
     if (!why) {
       if (!claim(entry.id, now)) return
       if (item.key !== entry.key) {
@@ -132,7 +137,7 @@ export function startScheduler({ cfg, log = () => {}, onChange = () => {} }) {
         // Cancelled while the session woke up: nothing to send.
         if (r.ok && !getEntry(entry.id)) return
       }
-      if (r.ok) r = await send(cfg, { ...item, sleeping: false }, promptOf(entry, Date.now()), { idle: true })
+      if (r.ok) r = await send(cfg, { ...item, sleeping: false }, promptOf(entry, Date.now()), { free: !!entry.idle, draft: true })
       if (r.ok) return sent(entry)
       why = r.draft ? 'draft' : r.busy ? 'busy' : r.error
     }
