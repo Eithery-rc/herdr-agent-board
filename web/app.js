@@ -2,6 +2,7 @@ import { resultToken, unseenResult, attentionTime, nextAttention, recordView } f
 // Agent board, web. Live data over Server-Sent Events; every change of place animates with a
 // spring from where the card is on screen (FLIP), drags stay glued to the pointer and land
 // with the pointer's velocity, and the session sheet can be flicked away.
+import { initFiles } from './files.js'
 import { LANGUAGES, translator } from './i18n.js'
 import { updateLive } from './live.js'
 import { markdown } from './markdown.js'
@@ -50,11 +51,13 @@ const plain = s =>
     .replace(/[*_`>]+/g, '')
     .replace(/\s+/g, ' ')
     .trim()
-/** Previews of images sent from the board: their paths in a message point into the uploads folder. */
-const UPLOAD_IMAGE = /agent-board[\\/]uploads[\\/](\d{4}-\d{2}-\d{2})[\\/]([^\s\\/]+\.(?:png|jpe?g|gif|webp))/gi
+/** Previews of images sent from the board: their paths in a message point into the uploads folder. A click opens the quick look. */
+const UPLOAD_IMAGE = /((?:[A-Za-z]:[\\/]|\/)[^\s"'<>]*?agent-board[\\/]uploads[\\/](\d{4}-\d{2}-\d{2})[\\/]([^\s\\/]+\.(?:png|jpe?g|gif|webp)))/gi
 const thumbs = text => {
-  const urls = [...String(text ?? '').matchAll(UPLOAD_IMAGE)].map(m => `/uploads/${m[1]}/${encodeURIComponent(m[2])}`)
-  return urls.length ? `<div class="thumbs">${urls.map(u => `<a href="${u}" target="_blank" rel="noopener"><img src="${u}" alt="" loading="lazy"></a>`).join('')}</div>` : ''
+  const shots = [...String(text ?? '').matchAll(UPLOAD_IMAGE)].map(m => ({ path: m[1], url: `/uploads/${m[2]}/${encodeURIComponent(m[3])}` }))
+  return shots.length
+    ? `<div class="thumbs">${shots.map(s => `<a class="fs-inline" data-path="${esc(s.path)}" href="${s.url}" target="_blank" rel="noopener"><img src="${s.url}" alt="" loading="lazy"></a>`).join('')}</div>`
+    : ''
 }
 function ago(ms) {
   if (!ms) return ''
@@ -230,6 +233,7 @@ function setLanguage(lang) {
   if (state.open) renderSheetBody(false)
   renderAttachments()
   syncComposer()
+  files.relabel()
 }
 
 function applyTexts() {
@@ -733,7 +737,7 @@ class Panel {
 // selection ending outside the panel) is not a click.
 {
   let down = null
-  const keeps = '.sheet, .card, .lane-head, button, input, textarea, select, label, a, [data-act]'
+  const keeps = '.sheet, .ql, .card, .lane-head, button, input, textarea, select, label, a, [data-act]'
   addEventListener('pointerdown', e => (down = e.button === 0 ? { x: e.clientX, y: e.clientY, target: e.target } : null), true)
   addEventListener('click', e => {
     const d = down
@@ -747,6 +751,8 @@ class Panel {
 
 // ---------------------------------------------------------------- the session sheet
 const sheetBody = $('#sheet-body')
+// Paths in the thread become chips with a quick look; web links open in the default browser.
+const files = initFiles({ t: () => t, token: () => state.data.fsToken, toast })
 const sessionPanel = new Panel($('#sheet'), {
   onClose: () => {
     state.open = null
@@ -867,6 +873,7 @@ function renderSheetBody(reset) {
     sheetBody._html = html
     for (const d of sheetBody.querySelectorAll('details')) if (open.has(d.dataset.i)) d.open = true
   }
+  files.upgrade(sheetBody, it.cwd)
   if (reset || atBottom) sheetBody.scrollTop = sheetBody.scrollHeight
 }
 
@@ -881,7 +888,7 @@ function thread(conv, it) {
     const live = !lastTool.done && it.column === 'work'
     const summary = live ? t('run.now', { tool: lastTool.label }) : `${t('run.actions', { n: run.length })} · ${lastTool.label}`
     html += `<details class="tools" data-i="${i++}"><summary>${live ? ICON.spin : ICON.chev}<span>${esc(summary)}</span></summary>${run
-      .map(x => `<div class="tool-line${x.done ? '' : ' pending'}"><span class="t">${esc(x.label)}</span><span class="d">${esc(x.detail)}</span></div>`)
+      .map(x => `<div class="tool-line${x.done ? '' : ' pending'}"><span class="t">${esc(x.label)}</span><span class="d${x.path ? ' fs-inline' : ''}"${x.path ? ` data-path="${esc(x.path)}"` : ''}>${esc(x.detail)}</span></div>`)
       .join('')}</details>`
     run = []
   }
