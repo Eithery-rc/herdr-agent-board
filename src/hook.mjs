@@ -1,9 +1,8 @@
 // Claude Code hooks (installed by the "install" action) that tell each session about the board.
 //   SessionStart (new, resume, clear, compact): the full brief, since the context is fresh.
-//   UserPromptSubmit: clears the card's `ask` (the user answered) and `pin`, unless the prompt is
-//   a board reminder (scheduler.mjs); the brief once for sessions
-//   that were running before the install; after that a one-line reminder only while the card
-//   says it waits for something.
+//   UserPromptSubmit: clears the card's `pin`, and its `ask` (the user answered) unless the prompt
+//   is a board reminder (scheduler.mjs); the brief once for sessions that were running before the
+//   install; after that a one-line reminder only while the card says it waits for something.
 // Only sessions in a herdr pane are briefed: `claude -p` runs and other terminals are not on the board.
 import { brief, BRIEF_VERSION, waitReminder } from './brief.mjs'
 import { loadConfig } from './config.mjs'
@@ -21,10 +20,13 @@ async function main() {
   const sid = input.session_id
   if (!sid || !process.env.HERDR_PANE_ID) return
   const card = readCard(sid)
-  // The user wrote to the session: whatever it asked them is answered, and a column the user
-  // dragged the card to has done its job. A reminder from the board's scheduler is not the user.
+  // The user wrote to the session: whatever it asked them is answered. A reminder from the board's
+  // scheduler is not the user, so its ask stays. A column the user dragged the card to has done
+  // its job either way: the session works again, which drops the pin anyway (model.mjs pinOf).
   const fromBoard = /^\s*\[board (reminder|schedule)\b/.test(input.prompt ?? '')
-  if (event === 'UserPromptSubmit' && !fromBoard && (card?.ask || card?.pin)) writeCard(sid, { ask: '', askSince: '', pin: '', pinAt: '', pinBusy: '' })
+  if (event === 'UserPromptSubmit' && (card?.pin || (card?.ask && !fromBoard))) {
+    writeCard(sid, { ...(!fromBoard && { ask: '', askSince: '' }), pin: '', pinAt: '', pinBusy: '' })
+  }
   let context = null
   const briefed = card?.briefV ?? (card?.briefedAt ? 1 : 0)
   if (event === 'SessionStart' || (event === 'UserPromptSubmit' && briefed < BRIEF_VERSION)) {

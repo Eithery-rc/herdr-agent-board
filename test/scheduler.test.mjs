@@ -42,7 +42,21 @@ async function scheduler(box, cfg = {}) {
   return proc
 }
 
+/** The sandbox's board config; port 9 answers nothing, so the CLI never reaches the live board. */
+function config(box, extra = {}) {
+  const dir = join(box.env.APPDATA, 'herdr/plugins/config/agent-board')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'config.json'), JSON.stringify({ language: 'en', port: 9, ...extra }))
+}
+
+/** The board command in an agent's session (its env), with herdr answered by the fake. */
+async function agentCli(box, args, env = {}) {
+  const out = await box.run('cli', { args, env }).exited
+  return { code: out.code, out: `${out.stdout}${out.stderr}`.trim() }
+}
+
 function cli(box, args) {
+  if (!existsSync(join(box.env.APPDATA, 'herdr/plugins/config/agent-board/config.json'))) config(box)
   return new Promise(resolve => {
     const proc = spawn(process.execPath, [join(root, 'src/cli.mjs'), ...args], { cwd: root, env: box.env })
     let out = ''
@@ -168,9 +182,90 @@ test('after /clear the reminder goes to the new session in the same pane and fol
   put(box, { id: 'ddddd4', key: 's8', pane: 'p1', cwd: join(box.dir, 'elsewhere'), text: 'another folder', at: Date.now() - 1000, next: Date.now() - 1000 })
   await scheduler(box)
   await until(() => prompts(box).length === 1 && runs(box).length === 1)
-  assert.deepEqual(prompts(box), ['[board reminder] still yours'])
+  // The receiver hears it was set before /clear, so it can judge whether it still applies.
+  assert.deepEqual(prompts(box), ['[board reminder; set by Test before /clear] still yours'])
   assert.equal(runs(box)[0].key, 's1')
   await until(() => read(box, 'ddddd4')?.why === 'gone')
+})
+
+test('a reminder set for another session says who set it', { timeout: 15_000 }, async t => {
+  const box = sandbox(t)
+  herdrWith(box, 'idle')
+  const past = Date.now() - 1000
+  put(box, { id: 'abab01', text: 'review my PR', at: past, next: past, from: { key: 's7', name: 'Centium-master' } })
+  await scheduler(box)
+  await until(() => prompts(box).length === 1)
+  assert.deepEqual(prompts(box), ['[board reminder from Centium-master] review my PR'])
+  // Set by s7 for s0, which /clear turned into s1: both are said.
+  put(box, { id: 'abab02', key: 's0', name: 'old', pane: 'p1', cwd: box.dir, text: 'cron', cron: '0 * * * *', next: past, from: { key: 's7', name: 'Centium-master' } })
+  await until(() => prompts(box).length === 2)
+  assert.equal(prompts(box)[1], '[board schedule abab02 from Centium-master: 0 * * * *; set for old before /clear] cron')
+  // Its own reminder has no "from", also after /clear.
+  put(box, { id: 'abab03', key: 's0', name: 'old', pane: 'p1', cwd: box.dir, text: 'mine', at: past, next: past, from: { key: 's0', name: 'old' } })
+  await until(() => prompts(box).length === 3)
+  assert.equal(prompts(box)[2], '[board reminder; set by old before /clear] mine')
+})
+
+test('board remind records who set it, the pane and the pane folder, and no control characters', { timeout: 15_000 }, async t => {
+  const box = sandbox(t)
+  config(box)
+  const project = join(box.dir, 'project')
+  const snapshot = {
+    panes: [
+      { pane_id: 'p1', agent: 'claude', agent_session: { value: 's1' }, agent_status: 'working', cwd: project, terminal_title_stripped: 'Setter' },
+      { pane_id: 'p2', agent: 'claude', agent_session: { value: 's2' }, agent_status: 'idle', cwd: box.dir, terminal_title_stripped: 'Target' },
+    ],
+    tabs: [],
+    workspaces: [],
+  }
+  box.state({ 'api snapshot': { result: { snapshot } } })
+  // Its own: the folder is the pane's, not the shell's (the runner's cwd is the repo).
+  const own = await agentCli(box, ['remind', 'in', '1h', 'own'], { CLAUDE_CODE_SESSION_ID: 's1', HERDR_PANE_ID: 'p1' })
+  assert.equal(own.code, 0, own.out)
+  const mine = read(box, /reminder ([0-9a-f]{6})/.exec(own.out)[1])
+  assert.equal(mine.pane, 'p1')
+  assert.equal(mine.cwd, project)
+  assert.equal(mine.from, undefined)
+  // For another session: who set it, and the text without control characters.
+  const other = await agentCli(box, ['remind', '--session', 'Target', 'in', '1h', 'look\x07 at\x1b[31m this\x7f'], { CLAUDE_CODE_SESSION_ID: 's1', HERDR_PANE_ID: 'p1' })
+  assert.equal(other.code, 0, other.out)
+  const theirs = read(box, /reminder ([0-9a-f]{6})/.exec(other.out)[1])
+  assert.equal(theirs.key, 's2')
+  assert.equal(theirs.cwd, box.dir)
+  assert.deepEqual(theirs.from, { key: 's1', name: 'Setter' })
+  assert.equal(theirs.text, 'look at[31m this')
+  // No board answers on the sandbox's port: the agent is told it goes out once one runs.
+  assert.match(own.out, /no board with the scheduler is running/)
+})
+
+test('board remind says nothing about the board when one with the scheduler answers', { timeout: 15_000 }, async t => {
+  const box = sandbox(t)
+  const board = http.createServer((req, res) => res.end(JSON.stringify({ items: [], schedules: [] })))
+  await new Promise(resolve => board.listen(0, '127.0.0.1', resolve))
+  t.after(() => new Promise(resolve => board.close(resolve)))
+  config(box, { port: board.address().port })
+  const out = await agentCli(box, ['remind', '--session', '11111111-2222-3333-4444-555555555555', 'in', '1h', 'x'])
+  assert.equal(out.code, 0, out.out)
+  assert.doesNotMatch(out.out, /no board/)
+})
+
+test('a cron entry whose session stays gone is dropped after three runs in a row', { timeout: 15_000 }, async t => {
+  const box = sandbox(t)
+  herdrWith(box, 'idle')
+  const past = Date.now() - 1000
+  put(box, { id: 'acac01', key: 's-gone', text: 'orphan', cron: '0 * * * *', next: past, gone: 2, missed: 2 })
+  put(box, { id: 'acac02', key: 's-gone2', text: 'first miss', cron: '0 * * * *', next: past })
+  await scheduler(box, { scheduleWaitMin: 0.01 })
+  await until(() => runs(box).length === 2, 8000)
+  assert.equal(read(box, 'acac01'), null)
+  const dropped = runs(box).find(r => r.id === 'acac01')
+  assert.equal(dropped.result, 'dropped')
+  assert.equal(dropped.n, 3)
+  const kept = read(box, 'acac02')
+  assert.equal(kept.gone, 1)
+  assert.equal(kept.missed, 1)
+  assert.equal(runs(box).find(r => r.id === 'acac02').result, 'missed')
+  assert.deepEqual(prompts(box), [])
 })
 
 test('a sleeping session is woken through herdr-wake before it gets the text', { timeout: 15_000 }, async t => {
@@ -231,15 +326,17 @@ test('a board reminder does not count as the user answering the session', { time
   const box = sandbox(t)
   mkdirSync(cardsOf(box), { recursive: true })
   const card = () => JSON.parse(readFileSync(join(cardsOf(box), 's1.json'), 'utf8'))
-  writeFileSync(join(cardsOf(box), 's1.json'), JSON.stringify({ key: 's1', ask: 'Send it?', askSince: 1, briefV: 99 }))
+  writeFileSync(join(cardsOf(box), 's1.json'), JSON.stringify({ key: 's1', ask: 'Send it?', askSince: 1, pin: 'me', pinAt: 1, briefV: 99 }))
   const hook = prompt =>
     new Promise(resolve => {
       const proc = spawn(process.execPath, [join(root, 'src/hook.mjs')], { cwd: root, env: { ...box.env, HERDR_PANE_ID: 'p1' } })
       proc.on('close', resolve)
       proc.stdin.end(JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 's1', cwd: box.dir, prompt }))
     })
-  await hook('[board reminder] check the CI run')
+  await hook('[board reminder from Centium-master] check the CI run')
   assert.equal(card().ask, 'Send it?')
+  // The session works again: a column dragged to by hand goes, as with any work.
+  assert.equal(card().pin, undefined)
   await hook('yes, send it')
   assert.equal(card().ask, undefined)
 })

@@ -443,10 +443,12 @@ export function startServer({ cfg, log = () => {} } = {}) {
   let scheduleTimer = null
   try {
     mkdirSync(SCHEDULE_DIR, { recursive: true })
-    watch(SCHEDULE_DIR, () => {
+    const watcher = watch(SCHEDULE_DIR, () => {
       clearTimeout(scheduleTimer)
       scheduleTimer = setTimeout(refresh, 150)
     })
+    // A deleted folder errors on Windows (EPERM), which unhandled ends the board; the poll goes on.
+    watcher.on('error', () => watcher.close())
   } catch {}
   let webTimer = null
   try {

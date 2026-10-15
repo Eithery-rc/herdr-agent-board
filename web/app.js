@@ -1640,7 +1640,9 @@ function entryHTML(e, when) {
   const pending = pendingText(e)
   // A session that left the board keeps its entries until they run out of patience or are cancelled.
   const note = pending || (it ? '' : t('sched.gone'))
-  const stats = e.cron ? [`<code>${esc(e.cron)}</code>`, e.runs && esc(t('sched.runs', { n: e.runs })), e.missed && esc(t('sched.missedN', { n: e.missed }))].filter(Boolean).join(' · ') : ''
+  // Set by another session than the one it is for (`board remind --session`).
+  const by = e.from && e.from.key !== (e.movedFrom?.key ?? e.key) ? t('sched.by', { name: itemOf(e.from.key)?.name || e.from.name || e.from.key.slice(0, 8) }) : ''
+  const stats = [e.cron && `<code>${esc(e.cron)}</code>`, e.runs && esc(t('sched.runs', { n: e.runs })), e.missed && esc(t('sched.missedN', { n: e.missed })), by && esc(by)].filter(Boolean).join(' · ')
   return `<div class="sched-entry${pending ? ' waiting' : ''}" data-id="${esc(e.id)}" data-key="${esc(e.key)}">
     <div class="sched-time"><b>${esc(when(e))}</b><span>${e.cron ? `${ICON.repeat}${esc(t('sched.repeat'))}` : esc(t('sched.once'))}</span></div>
     <div class="sched-main">
@@ -1655,8 +1657,12 @@ function entryHTML(e, when) {
 function logHTML(r) {
   const it = itemOf(r.key)
   const late = r.at - r.due
-  const note = r.result === 'missed' ? (['busy', 'gone', 'draft'].includes(r.why) ? t(`sched.why.${r.why}`) : r.why) : late > 120_000 ? t('sched.lateBy', { late: span(late, t) }) : ''
-  return `<div class="log-row ${r.result}"><span class="log-icon" title="${esc(t(r.result === 'sent' ? 'sched.sent' : 'sched.missed'))}">${r.result === 'sent' ? ICON.check : '!'}</span><span class="log-when">${esc(capital(longWhen(r.at, t), t))}</span><span class="log-what"><b>${esc(it?.name || r.name || t('session'))}</b> ${esc(r.text)}</span>${note ? `<span class="log-note">${esc(note)}</span>` : ''}</div>`
+  const note =
+    r.result === 'dropped' ? t('sched.why.dropped', { n: r.n ?? 3 })
+    : r.result === 'missed' ? (['busy', 'gone', 'draft'].includes(r.why) ? t(`sched.why.${r.why}`) : r.why)
+    : late > 120_000 ? t('sched.lateBy', { late: span(late, t) }) : ''
+  const icon = { sent: ICON.check, missed: '!', dropped: '×' }[r.result] ?? '!'
+  return `<div class="log-row ${esc(r.result)}"><span class="log-icon" title="${esc(t(`sched.${r.result === 'sent' || r.result === 'dropped' ? r.result : 'missed'}`))}">${icon}</span><span class="log-when">${esc(capital(longWhen(r.at, t), t))}</span><span class="log-what"><b>${esc(it?.name || r.name || t('session'))}</b> ${esc(r.text)}</span>${note ? `<span class="log-note">${esc(note)}</span>` : ''}</div>`
 }
 
 function renderSchedule() {

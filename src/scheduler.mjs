@@ -23,6 +23,9 @@ const CLAIM_MS = 5 * 60_000
 const LATE_MS = 2 * 60_000
 // Sessions woken at once, so a board back after a night does not start every sleeper together.
 const MAX_WAKING = 2
+// A cron entry whose session is gone for this many runs in a row is dropped: it would wait and
+// miss forever.
+const GONE_RUNS = 3
 
 /** What the session gets: "[board reminder] text", with a note when it is late or stands for several runs. */
 export function promptOf(entry, now) {
@@ -33,8 +36,13 @@ export function promptOf(entry, now) {
   } else if (now - entry.next > LATE_MS) {
     notes.push(t('sched.prompt.late', { late: span(now - entry.next, t), due: longWhen(entry.next, t, now) }))
   }
+  // Set by another session, or for the one this pane held before /clear: the receiver judges it.
+  const before = entry.movedFrom
+  const setter = entry.from && entry.from.key !== (before?.key ?? entry.key) ? entry.from.name || entry.from.key.slice(0, 8) : ''
+  if (before) notes.push(t(setter ? 'sched.prompt.clearedFor' : 'sched.prompt.cleared', { name: before.name || before.key.slice(0, 8) }))
   // The tag stays in English: the hook knows a board prompt by it (hook.mjs).
-  const tag = entry.cron ? `board schedule ${entry.id}: ${entry.cron}` : 'board reminder'
+  const from = setter ? ` from ${setter}` : ''
+  const tag = entry.cron ? `board schedule ${entry.id}${from}: ${entry.cron}` : `board reminder${from}`
   return `[${tag}${notes.length ? `; ${notes.join('; ')}` : ''}] ${entry.text}`
 }
 
@@ -57,7 +65,8 @@ const positive = (v, fallback) => (Number(v) > 0 ? Number(v) : fallback)
  * (240). Returns { tick, stop }.
  */
 export function startScheduler({ cfg, log = () => {}, onChange = () => {} }) {
-  const tickMs = () => Math.max(0.1, positive(cfg.scheduleTickSec, 15)) * 1000
+  // Five minutes at most: setTimeout takes no more than 24 days, and a larger value runs at once.
+  const tickMs = () => Math.min(300, Math.max(0.1, positive(cfg.scheduleTickSec, 15))) * 1000
   const patience = () => positive(cfg.scheduleWaitMin, 240) * 60_000
   const flying = new Set() // sessions with a run on its way: one at a time per session
   // Runs that went out but whose entry could not be updated (its lock was taken): the next
@@ -107,9 +116,11 @@ export function startScheduler({ cfg, log = () => {}, onChange = () => {} }) {
     if (!why) {
       if (!claim(entry.id, now)) return
       if (item.key !== entry.key) {
-        // Followed into the session that took its pane: the card and the log say the new one.
-        entry = { ...entry, key: item.key, name: item.name }
-        updateEntry(entry.id, e => ({ ...e, key: item.key, name: item.name }))
+        // Followed into the session that took its pane: the card and the log say the new one, the
+        // prompt the one it was set for.
+        const movedFrom = entry.movedFrom ?? { key: entry.key, name: entry.name }
+        entry = { ...entry, key: item.key, name: item.name, movedFrom }
+        updateEntry(entry.id, e => ({ ...e, key: item.key, name: item.name, movedFrom: e.movedFrom ?? movedFrom }))
       }
       let r = { ok: true }
       if (item.sleeping) {
@@ -128,7 +139,11 @@ export function startScheduler({ cfg, log = () => {}, onChange = () => {} }) {
     wait(entry, now, why)
   }
 
-  /** Taken for this process, unless another board holds a fresh claim or it was handled already. */
+  /**
+   * Taken for this process, unless another board holds a fresh claim or it was handled already.
+   * Delivery is at least once: a board that dies between typing the text and finish() leaves
+   * its claim, and the run goes out again once that claim expires (CLAIM_MS).
+   */
   function claim(id, now) {
     return !!updateEntry(id, e => {
       if (e.next > now) return undefined
@@ -166,14 +181,16 @@ export function startScheduler({ cfg, log = () => {}, onChange = () => {} }) {
       updateEntry(entry.id, e => ({ ...e, pendingSince: e.pendingSince ?? now, tried: now, waited, why, claim: undefined }))
       return
     }
-    if (entry.cron) updateEntry(entry.id, e => settle(e, now, { missed: (e.missed ?? 0) + 1 }))
-    else removeEntry(entry.id)
-    logRun(record(entry, now, 'missed', why))
+    const gone = why === 'gone' ? (entry.gone ?? 0) + 1 : 0
+    const drop = !entry.cron || gone >= GONE_RUNS
+    if (drop) removeEntry(entry.id)
+    else updateEntry(entry.id, e => settle(e, now, { missed: (e.missed ?? 0) + 1, ...(gone && { gone }) }))
+    logRun({ ...record(entry, now, entry.cron && drop ? 'dropped' : 'missed', why), ...(entry.cron && drop && { n: gone }) })
   }
 
   /** A cron entry after a run: its next time, the waiting fields cleared. */
   function settle(e, now, counts) {
-    const { pendingSince, tried, waited, why, claim, ...rest } = e
+    const { pendingSince, tried, waited, why, claim, gone, ...rest } = e
     const next = nextRun(e.cron, now)
     return next === null ? null : { ...rest, ...counts, next }
   }
@@ -197,6 +214,12 @@ export function startScheduler({ cfg, log = () => {}, onChange = () => {} }) {
     watcher = watch(SCHEDULE_DIR, () => {
       clearTimeout(watchTimer)
       watchTimer = setTimeout(() => plan(0), 300)
+    })
+    // On Windows a watched folder that is deleted errors (EPERM); unhandled, that ends the
+    // board. The ticks go on without it.
+    watcher.on('error', () => {
+      watcher.close()
+      watcher = null
     })
   } catch {}
   plan(1000)

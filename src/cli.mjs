@@ -15,19 +15,19 @@
 //   board schedule [--all]   this session's entries (every session's)
 //   board unschedule <id|all>    removes an entry (all: every entry of this session)
 // --session <id|name|pane> targets another session's card (for coordinating sessions).
+import { readFileSync } from 'node:fs'
 import { categoryFor, categoryInfo, CONFIG_FILE, editCategories, laneRank, loadConfig } from './config.mjs'
 import { liveSessions } from './claude.mjs'
 import { snapshot } from './herdr.mjs'
 import { t } from './lang.mjs'
 import { COLUMNS, collect, noteOf, statusText } from './model.mjs'
+import { BOARD_FILE } from './paths.mjs'
 import { addEntry, listEntries, removeEntry } from './schedule.mjs'
 import { readCard, writeCard } from './store.mjs'
 import { nextRun, parseCron, parseWhen, shortestGap } from './when.mjs'
 import { shortWhen } from '../web/when.js'
 
 const USAGE = `board [cat <id> ["<Title>"] | doing <text> | wait <text> | ask <question> | done [text] | clear | list | cats | remind <when> "<text>" | every "<cron>" "<text>" | schedule [--all] | unschedule <id|all>] [--session <id|name|pane>]`
-// The session an entry is for; its pane and folder find it again after /clear gives it a new id.
-const where = s => ({ key: s.key, name: s.name ?? '', ...(s.pane && { pane: s.pane }), ...(s.cwd && { cwd: s.cwd }) })
 const MIN_REPEAT_MS = 5 * 60_000
 const WHEN_HELP = 'in 30m, in 2h, at 15:30, tomorrow 9:00, fri 17:00, 2026-10-20 14:00 (local time)'
 
@@ -61,6 +61,54 @@ async function resolveSession() {
     if (p?.agent) return { key: p.agent_session?.value ?? `pane-${pane}`, cwd: p.cwd ?? '', pane }
   }
   throw new Error('cannot tell which session this is: run it from a Claude session, or pass --session')
+}
+
+/** The session running this command, { key, name }, or null outside one. */
+async function ownSession() {
+  const own = process.env.CLAUDE_CODE_SESSION_ID
+  const pane = process.env.HERDR_PANE_ID
+  let p = null
+  try {
+    if (pane) p = (await snapshot()).panes.find(x => x.pane_id === pane)
+  } catch {}
+  const key = own || (p?.agent ? (p.agent_session?.value ?? `pane-${pane}`) : null)
+  return key ? { key, name: (own && liveSessions().get(own)?.name) || p?.terminal_title_stripped || key.slice(0, 8) } : null
+}
+
+/**
+ * Where an entry is for: the session, and its pane and folder, which find it again after /clear
+ * gives it a new id. The folder is the pane's as herdr sees it (what the scheduler compares
+ * with), not this shell's, which a `cd` may have moved; `from` is who set it, when that is
+ * another session.
+ */
+async function entryFor(s) {
+  let cwd = ''
+  try {
+    if (s.pane) cwd = (await snapshot()).panes.find(x => x.pane_id === s.pane)?.cwd ?? ''
+  } catch {}
+  cwd ||= liveSessions().get(s.key)?.cwd || s.cwd || ''
+  const setter = target ? await ownSession() : null
+  return {
+    key: s.key,
+    name: s.name ?? '',
+    ...(s.pane && { pane: s.pane }),
+    ...(cwd && { cwd }),
+    ...(setter && setter.key !== s.key && { from: setter }),
+  }
+}
+
+/** A note for the agent when no board with the scheduler runs to send it. */
+async function schedulerNote() {
+  try {
+    if (cfg.web === false) {
+      // The terminal board runs the schedule itself then (tui.mjs).
+      process.kill(JSON.parse(readFileSync(BOARD_FILE, 'utf8')).pid, 0)
+      return ''
+    }
+    const res = await fetch(`http://127.0.0.1:${cfg.port ?? 12422}/api/board`, { signal: AbortSignal.timeout(1500) })
+    if ('schedules' in (await res.json())) return ''
+  } catch {}
+  return ' · note: no board with the scheduler is running now; this goes out once one runs (late, with a note)'
 }
 
 // Times for agents: unambiguous, in local time.
@@ -185,8 +233,8 @@ async function main() {
       if (at === null || !msg) throw new Error(`usage: board remind <when> "<text>"; when: ${WHEN_HELP}`)
       if (at <= now) throw new Error(`${stamp(at)} is in the past`)
       if (at > now + 5 * 366 * 86_400_000) throw new Error(`${stamp(at)} is more than five years ahead`)
-      const e = addEntry({ ...where(s), text: msg, at, next: at, by: 'agent' })
-      return console.log(`ok · reminder ${e.id} ${stamp(at)} (${fromNow(at, now)}): ${clip(msg)} · cancel: board unschedule ${e.id}`)
+      const e = addEntry({ ...(await entryFor(s)), text: msg, at, next: at, by: 'agent' })
+      return console.log(`ok · reminder ${e.id} ${stamp(at)} (${fromNow(at, now)}): ${clip(msg)} · cancel: board unschedule ${e.id}${await schedulerNote()}`)
     }
     case 'every': {
       // The cron in one quoted word, or its five fields as they are (PowerShell leaves * alone).
@@ -208,8 +256,8 @@ async function main() {
       if (next === null) throw new Error(`"${cron.expr}" never runs`)
       // Every run is a turn of the session, waking it if need be.
       if (shortestGap(cron, now) < MIN_REPEAT_MS) throw new Error(`"${cron.expr}" runs more often than every ${MIN_REPEAT_MS / 60_000} minutes; for a one-off wait use board remind`)
-      const e = addEntry({ ...where(s), text: msg, cron: cron.expr, next, by: 'agent' })
-      return console.log(`ok · every ${e.id} "${cron.expr}", next ${stamp(next)} (${fromNow(next, now)}): ${clip(msg)} · cancel: board unschedule ${e.id}`)
+      const e = addEntry({ ...(await entryFor(s)), text: msg, cron: cron.expr, next, by: 'agent' })
+      return console.log(`ok · every ${e.id} "${cron.expr}", next ${stamp(next)} (${fromNow(next, now)}): ${clip(msg)} · cancel: board unschedule ${e.id}${await schedulerNote()}`)
     }
     case 'schedule': {
       const list = listEntries().filter(e => e.key === s.key)

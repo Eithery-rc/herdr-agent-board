@@ -868,6 +868,7 @@ button.swatch:active { transform: scale(0.88); }
 .log-what b { color: var(--label); font-weight: 600; }
 .log-note { color: var(--label-3); white-space: nowrap; }
 .log-row.missed .log-note { color: var(--orange); }
+.log-row.dropped .log-icon { background: var(--fill); color: var(--label-2); font-size: 13px; }
 
 /* ---------------------------------------------------------------- toasts */
 .toasts { position: fixed; left: 50%; bottom: 28px; z-index: 80; display: flex; flex-direction: column; align-items: center; gap: 8px; transform: translateX(-50%); pointer-events: none; }

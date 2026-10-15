@@ -118,14 +118,23 @@ are files, and the board keeps running.
   interrupted: the scheduler tries again every tick (15 s) and sends once it is free. After
   `scheduleWaitMin` (240) minutes of trying, the run is logged as missed: a one-off entry goes,
   a cron one moves to its next time.
-- An entry belongs to the session that set it. After `/clear`, which gives the session a new
-  id, it goes to the Claude session now in the same pane and folder.
+- An entry belongs to the session it is for. After `/clear`, which gives the session a new id,
+  it goes to the Claude session now in the same pane and folder (the folder herdr gives the
+  pane, not the shell's after a `cd`), and the prompt says it was set before `/clear`.
+- `--session` sets one for another session; the tag then names who set it,
+  `[board reminder from <name>] <text>`, since the receiver takes it as a prompt. Control
+  characters are taken out of the text.
+- A cron entry whose session stays gone for 3 runs in a row is dropped (logged as removed).
+- Delivery is at least once: a board that dies between typing the text and recording the run
+  sends it again once its claim expires (5 minutes).
+- With no board running the scheduler, `board remind` says so; the entry goes out once one runs.
 - At most two sleeping sessions are woken at once. An entry cancelled while its session wakes
   up is not sent.
 - Runs that came due while the board was off: a one-off is sent once, saying how late it is; a
   cron entry sends one prompt for all the runs it missed, saying how many. Time the board was
   off does not count against the wait.
-- A reminder prompt is not the user writing: the hook leaves the card's `ask` in place.
+- A reminder prompt is not the user writing: the hook leaves the card's `ask` in place. A column
+  you dragged the card to goes, as with any work of the session.
 - One file per entry in `%LOCALAPPDATA%\herdr\plugins\agent-board\schedule\<id>.json`, written
   under the same per-file lock as the cards, so an agent cancelling an entry while the
   scheduler marks its run never brings it back. Before sending, the scheduler claims the entry

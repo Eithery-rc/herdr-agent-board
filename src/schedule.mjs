@@ -4,9 +4,11 @@
 // cancelling the entry at the same moment cannot bring a cancelled entry back. log.jsonl keeps
 // what was sent and what was missed, for the web board.
 //
-// An entry: { id, key (the session's card key), name, text, at (one-off) | cron, next (when it is
-// due), created, by } plus the scheduler's own fields: runs, missed, lastRun, and while it waits
-// for a busy session pendingSince, waited, tried, why; claim while a run is on its way.
+// An entry: { id, key (the session's card key), name, pane, cwd, text, at (one-off) | cron, next
+// (when it is due), created, by, from (the session that set it: { key, name }) } plus the
+// scheduler's own fields: runs, missed, lastRun, gone (runs missed in a row with the session gone),
+// movedFrom (the session it was for before /clear), and while it waits for a busy session
+// pendingSince, waited, tried, why; claim while a run is on its way.
 import { randomBytes } from 'node:crypto'
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -42,15 +44,27 @@ export function getEntry(id) {
   return ID.test(String(id)) ? readJson(fileOf(id)) : null
 }
 
+// The text is typed into a terminal: no control characters (an escape could drive the pane).
+const CONTROL = /[\x00-\x08\x0b-\x1f\x7f]/g
+export const cleanText = s => String(s ?? '').replace(CONTROL, '').slice(0, MAX_TEXT)
+// A name goes into the prompt's tag: no brackets either.
+export const cleanName = s => String(s ?? '').replace(CONTROL, '').replace(/[[\]]/g, '').trim().slice(0, 60)
+
 /** Save a new entry under a fresh id and return it. */
 export function addEntry(fields) {
   mkdirSync(SCHEDULE_DIR, { recursive: true })
   if (listEntries().filter(e => e.key === fields.key).length >= MAX_PER_SESSION) {
     throw new Error(`this session has ${MAX_PER_SESSION} entries already; remove some first (board unschedule <id>)`)
   }
+  const clean = {
+    ...fields,
+    text: cleanText(fields.text),
+    name: cleanName(fields.name),
+    ...(fields.from && { from: { key: String(fields.from.key), name: cleanName(fields.from.name) } }),
+  }
   for (;;) {
     const id = randomBytes(3).toString('hex')
-    const entry = updateJson(fileOf(id), taken => (taken ? undefined : { id, ...fields, text: String(fields.text).slice(0, MAX_TEXT), created: Date.now() }))
+    const entry = updateJson(fileOf(id), taken => (taken ? undefined : { id, ...clean, created: Date.now() }))
     if (entry) return entry
   }
 }

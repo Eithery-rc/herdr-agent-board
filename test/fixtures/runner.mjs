@@ -20,6 +20,12 @@ if (mode === 'open') {
       process.send({ refreshed: true })
     }
   })
+} else if (mode === 'cli') {
+  // The board command as an agent runs it: its session's env, herdr answered by the fake.
+  const { args, env } = JSON.parse(process.env.TEST_INPUT)
+  Object.assign(process.env, env)
+  process.argv = [process.argv[0], new URL('../../src/cli.mjs', import.meta.url).pathname, ...args]
+  await import('../../src/cli.mjs')
 } else if (mode === 'scheduler') {
   const { useLanguage } = await import('../../src/lang.mjs')
   const { startScheduler } = await import('../../src/scheduler.mjs')
