@@ -169,6 +169,7 @@ h1 {
 .pill-toggle:active, .button:active, .icon-button:active, .card-actions button:active { transform: scale(0.96); }
 
 .live { width: 8px; height: 8px; border-radius: 50%; background: var(--gray); opacity: 0.5; transition: background 300ms ease, opacity 300ms ease; }
+.live.stale { background: var(--orange); opacity: 1; }
 .live.on { background: var(--green); opacity: 1; box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 22%, transparent); }
 
 .columns-head {

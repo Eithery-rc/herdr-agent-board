@@ -1,6 +1,7 @@
 // Agent board, web. Live data over Server-Sent Events; every change of place animates with a
 // spring from where the card is on screen (FLIP), drags stay glued to the pointer and land
 // with the pointer's velocity, and the session sheet can be flicked away.
+import { updateLive } from './live.js'
 import { markdown } from './markdown.js'
 import { project, reducedMotion, rubberband, Spring, velocityOf } from './spring.js'
 
@@ -66,7 +67,7 @@ const clock = ms => (ms ? new Date(ms).toLocaleTimeString('ru-RU', { hour: '2-di
 
 // ---------------------------------------------------------------- state
 const state = {
-  data: { items: [], categories: [], columns: [] },
+  data: { items: [], categories: [], columns: [], stale: true, lastSuccessfulRefreshAt: null },
   filter: store.get('board.filter', 'all'),
   query: '',
   sleepers: store.get('board.sleepers', '1') === '1',
@@ -117,17 +118,16 @@ function onData(data) {
 function connect() {
   const live = $('#live')
   const source = new EventSource('/api/events')
-  source.onopen = () => {
-    live.classList.add('on')
-    live.title = 'Живые данные'
-  }
+  source.onopen = () => updateLive(live, { stale: true, lastSuccessfulRefreshAt: null })
   source.onerror = () => {
-    live.classList.remove('on')
+    live.classList.remove('on', 'stale')
     live.title = 'Нет связи с доской, переподключаюсь…'
   }
   source.onmessage = e => {
     try {
-      onData(JSON.parse(e.data))
+      const data = JSON.parse(e.data)
+      updateLive(live, data)
+      onData(data)
     } catch {}
   }
 }

@@ -93,6 +93,11 @@ the board would pick, or with the "Само" chip, the pin goes. "Работае
 
 Code: `src/server.mjs`, `web/` (no build step, no dependencies; springs in `web/spring.js`).
 
+The web API (`GET /api/board` and SSE `/api/events`) includes `stale` and
+`lastSuccessfulRefreshAt` (Unix milliseconds, or `null` before the first successful refresh).
+A failed refresh keeps the last snapshot and marks it stale; the indicator turns orange until
+Herdr data can be collected again. Opening the SSE connection alone does not mark data live.
+
 ## Board keys
 
 | Key | Action |
@@ -134,3 +139,9 @@ own and stays open; `tab`; `overlay`), `refreshSec`, `wakeUrl` (herdr-wake route
 `terminalTitle` (window title pattern to raise, default `<COMPUTERNAME>:*`), `raiseTerminal`.
 
 Cards: `%LOCALAPPDATA%\herdr\plugins\agent-board\cards\<session id>.json`.
+
+Writes to the same card use a per-card directory lock (`<session id>.json.lock`) around the
+read/merge/rename. Contention waits at most two seconds, then reports an error without replacing
+the card. Locks are released on ordinary errors. An abruptly terminated writer may leave its
+lock behind; after confirming no writer is running, remove that card's lock directory manually.
+Do not remove a lock merely because it is old.

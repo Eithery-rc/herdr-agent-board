@@ -117,7 +117,9 @@ export function startServer({ cfg, log = () => {} } = {}) {
   const port = cfg.port ?? 12422
   pruneUploads(cfg.keepUploadsDays ?? 14)
   let items = []
-  let payload = '{"items":[]}'
+  let stale = true
+  let lastSuccessfulRefreshAt = null
+  let payload
   let version = assetsVersion()
   const clients = new Set()
 
@@ -131,7 +133,17 @@ export function startServer({ cfg, log = () => {} } = {}) {
         return { id, title: c.title, color: colorHex(c.color), colorName: c.color, paths: c.paths ?? [], configured, fallback: id === 'other' }
       })
     const list = items.map(({ transcript, ...rest }) => rest)
-    return JSON.stringify({ version, items: list, categories, swatches: SWATCHES, columns: COLUMNS.map(({ id, title }) => ({ id, title })) })
+    return JSON.stringify({ version, stale, lastSuccessfulRefreshAt, items: list, categories, swatches: SWATCHES, columns: COLUMNS.map(({ id, title }) => ({ id, title })) })
+  }
+
+  payload = board()
+
+  function publish() {
+    const next = board()
+    if (next !== payload) {
+      payload = next
+      for (const res of clients) res.write(`data: ${payload}\n\n`)
+    }
   }
 
   let refreshing = false
@@ -141,12 +153,12 @@ export function startServer({ cfg, log = () => {} } = {}) {
     refreshing = true
     try {
       items = await collect(cfg)
-      const next = board()
-      if (next !== payload) {
-        payload = next
-        for (const res of clients) res.write(`data: ${payload}\n\n`)
-      }
+      stale = false
+      lastSuccessfulRefreshAt = Date.now()
+      publish()
     } catch (err) {
+      stale = true
+      publish()
       log(`refresh: ${err.message}`)
     } finally {
       refreshing = false

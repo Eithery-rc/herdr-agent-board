@@ -38,14 +38,17 @@ if (board && snap.panes.some(p => p.pane_id === board)) {
     // Its own workspace; a new one comes with a shell tab, closed once the board tab is in.
     const label = cfg.workspace || 'Board'
     let ws = snap.workspaces.find(w => w.label === label)
-    const stale = ws ? snap.tabs.filter(t => t.workspace_id === ws.workspace_id).map(t => t.tab_id) : []
+    let initialTab = null
     if (!ws) {
       const created = await herdr(['workspace', 'create', '--label', label, '--cwd', ROOT, '--no-focus'])
       ws = created.workspace
-      stale.push(created.tab.tab_id)
+      initialTab = created.tab?.tab_id
     }
     const opened = await herdr([...open, '--placement', 'tab', '--workspace', ws.workspace_id])
-    for (const tab of stale) await herdr(['tab', 'close', tab]).catch(() => {})
+    // Never close tabs of a workspace we reused, even when its saved board pane is gone.
+    if (initialTab && opened?.plugin_pane?.pane?.pane_id) {
+      await herdr(['tab', 'close', initialTab]).catch(() => {})
+    }
     await zoom(opened?.plugin_pane?.pane?.pane_id)
   }
 }
