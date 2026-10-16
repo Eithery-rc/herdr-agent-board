@@ -22,6 +22,17 @@ const PLURAL = {
 
 const STRINGS = {
   en: {
+    'attention.noneShort': 'None in this view',
+    'attention.none': 'No unanswered questions or unviewed results in this view.',
+    'attention.nextCount': 'Next card needing attention, {n} in this view',
+    'limits.title': 'Claude usage',
+    'limits.open': 'Show usage, source and reading time',
+    'limits.used': 'Used:',
+    'limits.unknown': 'Usage —',
+    'limits.unknownTime': 'reading time unknown',
+    'limits.unknownSource': 'Source unknown; {time}.',
+    'limits.localReport': 'Last available local report. These percentages show consumption, not remaining allowance.',
+    'limits.unavailable': 'No local usage report is available. Percentages, account and reading time are unknown.',
     'history.open': 'History',
     'history.hint': 'Search the past Claude sessions of this project',
     'history.title': 'Project history',
@@ -390,6 +401,17 @@ const STRINGS = {
   },
 
   ru: {
+    'attention.noneShort': 'Нет в этом виде',
+    'attention.none': 'В этом виде нет ожидающих ответа или непросмотренных результатов.',
+    'attention.nextCount': 'Следующая карточка для внимания, в этом виде: {n}',
+    'limits.title': 'Расход Claude',
+    'limits.open': 'Показать расход, источник и время чтения',
+    'limits.used': 'Израсходовано:',
+    'limits.unknown': 'Лимиты —',
+    'limits.unknownTime': 'время чтения неизвестно',
+    'limits.unknownSource': 'Источник неизвестен; {time}.',
+    'limits.localReport': 'Последний доступный локальный отчёт. Проценты показывают расход, а не оставшийся лимит.',
+    'limits.unavailable': 'Локального отчёта о расходе нет. Проценты, аккаунт и время чтения неизвестны.',
     'history.open': 'История',
     'history.hint': 'Поиск по прошлым сессиям Claude этого проекта',
     'history.title': 'История проекта',

@@ -45,7 +45,7 @@
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11.5m-4.5-4.5 4.5 4.5-4.5 4.5"/></svg>
           <span data-i18n="attention.next">Next</span>
         </button>
-        <span class="limits" id="limits" hidden></span>
+        <button class="limits" id="limits" aria-haspopup="dialog" aria-expanded="false" aria-controls="limits-pop" hidden></button>
         <span class="live" id="live" title="No connection to the board"></span>
       </div>
     </div>
@@ -163,6 +163,10 @@
     </div>
   </aside>
 
+  <div class="limits-pop" id="limits-pop" role="dialog" aria-labelledby="limits-title" tabindex="-1" hidden>
+    <header><h3 id="limits-title" data-i18n="limits.title">Claude usage</h3><button class="icon-button" id="limits-close" aria-label="Close" data-i18n-label="sheet.closeLabel">×</button></header>
+    <div id="limits-content"></div>
+  </div>
   <div class="toasts" id="toasts" aria-live="polite"></div>
   <script type="module" src="app.js"></script>
 </body>

@@ -1228,6 +1228,12 @@ button.swatch:active { transform: scale(0.88); }
 .limits .warm b { color: var(--orange); }
 .limits .hot b { color: var(--red); }
 .limits.stale { opacity: 0.55; }
+.limits { border: 0; min-height: 28px; font-family: inherit; }
+.limits-pop { position: fixed; z-index: 65; width: min(340px, calc(100vw - 16px)); max-height: calc(100dvh - 16px); overflow: auto; padding: 14px; border-radius: 14px; background: var(--material-thick); backdrop-filter: blur(30px); box-shadow: var(--shadow-lift); font-size: 13px; outline: none; }
+.limits-pop header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.limits-pop h3 { margin: 0; font-size: 15px; }
+.limits-pop p { margin: 12px 0 0; line-height: 1.5; }
+.limits-warning { color: var(--orange); }
 
 /* A wide, low panel (at the bottom, or a window made so) reads side by side: the card's fields
    on the left, the conversation and the composer on the right. */

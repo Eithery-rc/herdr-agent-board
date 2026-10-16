@@ -9,6 +9,7 @@ import { initFiles } from './files.js'
 import { LANGUAGES, translator } from './i18n.js'
 import { initLaunch } from './launch.js'
 import { updateLive } from './live.js'
+import { limitInfo } from './limits-model.js'
 import { markdown } from './markdown.js'
 import { initMenu } from './menu.js'
 import { keepInSight, menuOpen, Panel, panels, roomBelow } from './panel.js'
@@ -150,6 +151,7 @@ const connection = boardConnection({
   data: onData,
   connected(value) {
     state.connected = value
+    renderLimits()
     updateLive($('#live'), value ? state.data : { stale: true, lastSuccessfulRefreshAt: null }, t)
     if (!value) $('#live').title = t('live.off')
     syncAvailability()
@@ -304,6 +306,12 @@ function renderToolbar(visible) {
   if (count('ext')) parts.push(`<b>${count('ext')}</b> ${t('sum.waitOthers', { n: count('ext') })}`)
   if (asleep) parts.push(`${asleep} ${t('sum.asleep', { n: asleep })}`)
   $('#summary').innerHTML = parts.join(' · ')
+  const attentionCount = visible.filter(it => !it.launchOnly && laneShown(catOf(it)) && (it.column === 'me' || unseenResult(it, viewed))).length
+  const next = $('#next-attention')
+  next.disabled = !attentionCount
+  next.querySelector('span').textContent = attentionCount ? `${t('attention.next')} · ${attentionCount}` : t('attention.noneShort')
+  next.title = t(attentionCount ? 'attention.nextHint' : 'attention.none')
+  next.setAttribute('aria-label', attentionCount ? t('attention.nextCount', { n: attentionCount }) : t('attention.none'))
   document.title = count('me') ? `(${count('me')}) Agent board` : 'Agent board'
   renderLimits()
 
@@ -338,15 +346,49 @@ function renderToolbar(visible) {
 
 /** Claude's usage windows from the usagebar cache, when there is one: a small pill by the live dot. */
 function renderLimits() {
-  const lim = state.data.limits
+  const lim = limitInfo(state.data.limits, { connected: !!state.connected })
   const pill = $('#limits')
-  pill.hidden = !lim
-  if (!lim) return
+  pill.hidden = false
+  pill.setAttribute('aria-label', t('limits.title'))
   const heat = p => (p >= 90 ? ' class="hot"' : p >= 70 ? ' class="warm"' : '')
-  pill.innerHTML = lim.windows.map(w => `<span${heat(w.usedPercentage)}>${esc(t(w.minutes === 300 ? 'limits.5h' : 'limits.7d'))} <b>${Math.round(w.usedPercentage)}%</b></span>`).join('')
-  pill.classList.toggle('stale', lim.stale)
-  pill.title = t(lim.stale ? 'limits.stale' : lim.source === 'usagebar' ? 'limits.hintUsagebar' : 'limits.hint', { time: new Date(lim.observedAt).toLocaleString(t.lang, { dateStyle: 'medium', timeStyle: 'short' }) })
+  pill.innerHTML = lim.windows.length ? lim.windows.map(w => `<span${heat(w.usedPercentage)}>${esc(t(w.minutes === 300 ? 'limits.5h' : 'limits.7d'))} <b>${Math.round(w.usedPercentage)}%</b></span>`).join('') : esc(t('limits.unknown'))
+  pill.classList.toggle('stale', !!lim.windows.length && lim.stale)
+  pill.title = t('limits.open')
+  const time = lim.observedAt ? new Date(lim.observedAt).toLocaleString(t.lang, { dateStyle: 'medium', timeStyle: 'short' }) : t('limits.unknownTime')
+  const source = t(lim.source === 'usagebar' ? 'limits.hintUsagebar' : lim.source === 'statusline' ? 'limits.hint' : 'limits.unknownSource', { time })
+  $('#limits-content').innerHTML = lim.windows.length
+    ? `<p><b>${esc(t('limits.used'))}</b> ${lim.windows.map(w => `${esc(t(w.minutes === 300 ? 'limits.5h' : 'limits.7d'))}: ${Math.round(w.usedPercentage)}%`).join(' · ')}</p><p>${esc(source)}</p><p class="${lim.stale ? 'limits-warning' : ''}">${esc(t(lim.stale ? 'limits.stale' : 'limits.localReport', { time }))}</p>`
+    : `<p>${esc(t('limits.unavailable'))}</p>`
+  if (limitsOpen()) positionLimits()
 }
+
+const limitsOpen = () => !$('#limits-pop').hidden
+function positionLimits() {
+  const pop = $('#limits-pop'), rect = $('#limits').getBoundingClientRect(), size = pop.getBoundingClientRect()
+  pop.style.left = `${Math.max(8, Math.min(rect.left, innerWidth - size.width - 8))}px`
+  pop.style.top = `${rect.bottom + size.height + 8 <= innerHeight ? rect.bottom + 8 : Math.max(8, rect.top - size.height - 8)}px`
+}
+function closeLimits(refocus = false) {
+  if (!limitsOpen()) return
+  $('#limits-pop').hidden = true
+  $('#limits').setAttribute('aria-expanded', 'false')
+  dialogBack.sync()
+  if (refocus) $('#limits').focus({ preventScroll: true })
+}
+$('#limits').addEventListener('click', () => {
+  if (limitsOpen()) return closeLimits()
+  renderLimits()
+  const pop = $('#limits-pop')
+  pop.hidden = false
+  positionLimits()
+  $('#limits').setAttribute('aria-expanded', 'true')
+  pop.focus({ preventScroll: true })
+  dialogBack.sync()
+})
+$('#limits-close').addEventListener('click', () => closeLimits(true))
+addEventListener('pointerdown', e => { if (limitsOpen() && !e.target.closest('#limits-pop, #limits')) closeLimits() }, true)
+addEventListener('keydown', e => { if (e.key === 'Escape' && limitsOpen()) { e.preventDefault(); e.stopImmediatePropagation(); closeLimits(true) } }, true)
+addEventListener('resize', () => closeLimits())
 
 function placeThumb(jump) {
   const seg = $('#lanes')
@@ -760,7 +802,7 @@ function onCardClick(e) {
 // place menu away.
 {
   let down = null
-  const keeps = '.sheet, .ql, .launch, .menu, .rename, .card, .lane-head, .layout-menu, button, input, textarea, select, label, a, [data-act]'
+  const keeps = '.sheet, .ql, .launch, .limits-pop, .menu, .rename, .card, .lane-head, .layout-menu, button, input, textarea, select, label, a, [data-act]'
   addEventListener('pointerdown', e => (down = e.button === 0 ? { x: e.clientX, y: e.clientY, target: e.target, menu: menuOpen() } : null), true)
   addEventListener('click', e => {
     const d = down
@@ -782,8 +824,8 @@ const dialogBack = dialogHistory({
   history,
   mobile: () => matchMedia('(max-width: 760px)').matches,
   // Asked at once when a reload finds the Back sentinel: launchUI is set up just below.
-  isOpen: () => menu.isOpen() || !!launchUI?.isOpen() || files.isOpen() || panels.some(panel => panel.isOpen),
-  closeTop: () => menu.isOpen() ? menu.close() : launchUI?.isOpen() ? launchUI.close() : files.isOpen() ? files.close() : panels.find(panel => panel.isOpen)?.close(),
+  isOpen: () => menu.isOpen() || !!launchUI?.isOpen() || files.isOpen() || limitsOpen() || panels.some(panel => panel.isOpen),
+  closeTop: () => menu.isOpen() ? menu.close() : launchUI?.isOpen() ? launchUI.close() : files.isOpen() ? files.close() : limitsOpen() ? closeLimits(true) : panels.find(panel => panel.isOpen)?.close(),
 })
 launchUI = initLaunch({
   t: () => t,
@@ -1827,6 +1869,7 @@ $('#sleepers').setAttribute('aria-pressed', String(state.sleepers))
 function openNextAttention() {
   const key = nextAttention(visibleItems().filter(it => !it.launchOnly && laneShown(catOf(it))), state.open, viewed)
   if (key) openSheet(key)
+  else toast(t('attention.none'))
 }
 $('#next-attention').addEventListener('click', openNextAttention)
 
