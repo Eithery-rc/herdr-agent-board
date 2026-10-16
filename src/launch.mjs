@@ -1,12 +1,14 @@
 // New sessions from the web board, and renaming one in Claude and herdr.
 //
 // A launch runs in the background and is reported in the board payload (`launches`), so the
-// page shows a starting card at once and a clear reason when it fails. Two ways to start one:
-//   herdr (default)  a tab through herdr (a workspace first when asked), the agent started by
-//                    `herdr agent start`, then /rename and the first message typed into it.
+// page shows a starting card at once and a clear reason when it fails. Three ways to start one:
+//   spawn-agent (default)  the board's own launcher, src/spawn.mjs, run as `launch.command`
+//                    would be: a tab, `launch.claude` typed into it, the names, the first message.
 //   command          `launch.command` in config.json: an executable and its arguments, with
 //                    {placeholders} filled in per argument. No shell, nothing from the request
 //                    becomes a command; it should print `pane=<id>` when the session is up.
+//   herdr            `launch.agent` set: a tab through herdr, the agent started by `herdr agent
+//                    start --kind <agent>`, then /rename and the first message typed into it.
 // The card gets the chosen category as soon as the session has an id; a Claude started by the
 // board gets its id up front (--session-id), so even its first brief knows the lane.
 import { execFile, spawn } from 'node:child_process'
@@ -21,11 +23,13 @@ import { raiseTerminal } from './actions.mjs'
 import { herdr, herdrText } from './herdr.mjs'
 import { inputDraft } from './screen.mjs'
 import { t } from './lang.mjs'
-import { CARDS_DIR, CLAUDE_DIR, STATE_DIR } from './paths.mjs'
+import { CARDS_DIR, CLAUDE_DIR, ROOT, STATE_DIR } from './paths.mjs'
+import { choosesSession, claudeCommand, stillTyped } from './spawn.mjs'
 import { readCard, writeCard } from './store.mjs'
 import { keyTowardYes, sameFolder, trustDialog } from './trust.mjs'
 
 const LAUNCH_DIR = join(STATE_DIR, 'launch') // first messages for {messageFile}, while a launcher runs
+const SPAWN = join(ROOT, 'src', 'spawn.mjs')
 export const PLACEHOLDERS = ['name', 'label', 'cwd', 'workspace', 'workspaceLabel', 'category', 'message', 'messageFile', 'sessionId']
 const MESSAGE_MAX = 20_000
 
@@ -87,7 +91,7 @@ export function launcherError(stdout, stderr) {
   const at = raw.findIndex(l => /^At \S/.test(l))
   const legacy = at > 0 && raw.some(l => /^\s*\+ CategoryInfo/.test(l)) ? raw.slice(0, at).reduce((s, l, i, all) => s + (i && all[i - 1].length < 110 ? ' ' : '') + l, '').trim() : ''
   const plain = err.filter(l => !/^(At |Line \||\+ |\| |CategoryInfo|FullyQualifiedErrorId|~)/.test(l)).at(-1)
-  const message = (barred || legacy || plain || lines.filter(Boolean).at(-1) || '').replace(/^\S+\.ps1\s*:\s*/i, '').replace(/^(Exception|Error|Write-Error):\s*/i, '').trim()
+  const message = (barred || legacy || plain || lines.filter(Boolean).at(-1) || '').replace(/^\S+\.ps1\s*:\s*/i, '').replace(/^(Exception|Error|Write-Error|spawn-agent):\s*/i, '').trim()
   const pane = /\b(w[A-Za-z0-9]+:p[A-Za-z0-9]+)\b/.exec(lines.join('\n'))?.[1] ?? null
   return { message, pane }
 }
@@ -96,6 +100,8 @@ export function launcherError(stdout, stderr) {
 export function failureKind(message, code) {
   const m = String(message ?? '')
   if (code === 'ENOENT' || code === 'EINVAL') return 'launcher'
+  // The session runs and only its first message is missing: a retry would start a second one.
+  if (/brief did not reach/i.test(m)) return 'message'
   if (/trust|dialog|agent_not_ready|blocked/i.test(m)) return 'dialog'
   if (/did not get ready|timed? ?out|ETIMEDOUT|timeout/i.test(m)) return 'timeout'
   if (/no such folder|not a folder|cannot find path/i.test(m)) return 'folder'
@@ -307,7 +313,7 @@ async function typeLine(pane, text, tries = 3) {
       if (!stalled(err)) throw err
       const screen = await herdrText(['pane', 'read', pane, '--source', 'visible'], 5000).catch(() => '')
       // Its first line (the screen breaks the rest) still in the prompt: it only needs its Enter.
-      if (screen.includes(text.split('\n')[0].slice(0, 30)) || /Pasted text/.test(screen)) {
+      if (stillTyped(screen, text)) {
         await herdr(['pane', 'send-keys', pane, 'enter']).catch(() => {})
         return true
       }
@@ -485,7 +491,8 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
       l.rootTab = r.tab?.tab_id ?? null
     }
     if (spec().command) await viaCommand(l)
-    else await viaHerdr(l)
+    else if (spec().agent) await viaHerdr(l)
+    else await viaCommand(l, { builtin: true })
   }
 
   /** A Claude the board starts gets its session id now, so its card (and lane) exist before it does. */
@@ -559,16 +566,33 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
     throw new LaunchError(t(l.dismissed ? 'launch.err.dismissed' : 'launch.err.dialogTimeout'), 'dialog')
   }
 
-  async function viaCommand(l) {
+  /** How long the board's own spawn-agent waits for Claude to be ready. */
+  const readySec = () => Math.max(10, Number(spec().timeoutSec) || 120)
+
+  /**
+   * The board's own spawn-agent as the launcher. A new workspace's first pane is used as it is
+   * (--pane), as herdr's path does, rather than a second tab beside it.
+   */
+  function builtinArgs(l, vars) {
+    const args = [SPAWN, '--name', l.name, '--cwd', l.cwd, '--label', l.label, '--timeout-sec', String(readySec())]
+    args.push(...(l.rootPane ? ['--pane', l.rootPane] : ['--workspace', l.workspaceId]))
+    if (vars.messageFile) args.push('--brief-file', vars.messageFile)
+    if (vars.sessionId) args.push('--session-id', vars.sessionId)
+    return { file: process.execPath, args }
+  }
+
+  async function viaCommand(l, { builtin = false } = {}) {
     const template = spec().command
     const vars = { name: l.name, label: l.label, cwd: l.cwd, workspace: l.workspaceId, workspaceLabel: l.workspaceLabel, category: l.category, message: l.message, messageFile: '', sessionId: '' }
-    if (usesPlaceholder(template, 'sessionId')) {
+    // A launch.claude that picks its own session (--resume) gets no id from the board.
+    if (builtin ? !choosesSession(claudeCommand(spec().claude, spec().args)) : usesPlaceholder(template, 'sessionId')) {
       ownSessionId(l)
       vars.sessionId = l.sessionId
     }
     let file = null
     let held = false
-    if (l.message && usesPlaceholder(template, 'messageFile')) {
+    let blocked = false
+    if (l.message && (builtin || usesPlaceholder(template, 'messageFile'))) {
       // Only this user may read it; a new file every time, never one someone put there.
       mkdirSync(LAUNCH_DIR, { recursive: true, mode: 0o700 })
       file = join(LAUNCH_DIR, `${l.id}.txt`)
@@ -576,13 +600,13 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
       vars.messageFile = file
     }
     try {
-      const { file: exe, args } = commandArgs(template, vars)
-      step(l, 'command')
+      const { file: exe, args } = builtin ? builtinArgs(l, vars) : commandArgs(template, vars)
+      step(l, builtin ? 'agent' : 'command')
       // The board runs in a pane of its own workspace: the launcher must not take that for "here".
       const env = { ...process.env, HERDR_WORKSPACE_ID: l.workspaceId }
       delete env.HERDR_PANE_ID
       delete env.HERDR_TAB_ID
-      const timeout = Math.max(1, Number(spec().timeoutSec) || 180) * 1000
+      const timeout = (builtin ? readySec() + 60 : Math.max(1, Number(spec().timeoutSec) || 180)) * 1000
       const r = await runTree(exe, args, { timeout, env, cwd: l.cwd })
       const out = parseLauncherOutput(r.stdout)
       if (out.pane) l.pane = out.pane
@@ -594,6 +618,9 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
         const kind = failureKind(e.message, r.error?.code)
         // A launcher gives up where Claude asks to trust the folder; the session is there, waiting.
         if (kind === 'dialog' && (await trustShown(l, 3))) held = true
+        // Another dialog (a project's MCP servers, say): the board's own launcher stopped before
+        // the names and the message, so the board waits for it to be answered in herdr and goes on.
+        else if (builtin && kind === 'dialog' && l.pane) blocked = true
         else throw new LaunchError(e.message || r.error?.message || t('err.status', { code: r.code }), kind)
       }
     } finally {
@@ -602,6 +629,12 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
     if (held) {
       await holdForTrust(l)
       // What the launcher did not get to: the names and the first message.
+      await finishStart(l, { kind: 'claude', nameAgent: true })
+    } else if (blocked) {
+      l.state = 'waiting'
+      step(l, 'dialog')
+      await untilReady(l, 15 * 60_000)
+      l.state = 'starting'
       await finishStart(l, { kind: 'claude', nameAgent: true })
     }
     // A new workspace starts with a tab of shells; the launcher opened its own tab beside it.

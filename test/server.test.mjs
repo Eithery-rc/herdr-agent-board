@@ -120,3 +120,22 @@ test('live indicator distinguishes waiting, fresh and stale data and recovers wi
   assert.equal(classes.has('on'), true)
   assert.equal(classes.has('stale'), false)
 })
+
+test('the setup check: a summary with the board, the whole list on request', { timeout: 20_000 }, async t => {
+  const box = sandbox(t)
+  box.state({ 'api snapshot': { result: { snapshot: { panes: [], tabs: [], workspaces: [] } } } })
+  const port = await unusedPort()
+  const proc = box.run('server', { port, language: 'en', categories: [{ id: 'other', title: 'Other', color: 'gray' }], wakeUrl: null, refreshSec: 3600 })
+  await until(() => proc.messages.some(m => m.ready))
+  const url = `http://127.0.0.1:${port}`
+  // A fresh home: no board command, no hooks, so the board says something is missing.
+  const r = await (await fetch(`${url}/api/setup`)).json()
+  assert.ok(r.checks.some(c => c.id === 'hooks' && c.level === 'error'))
+  assert.ok(r.todo >= 2)
+  assert.match(r.sig, /hooks:error:/)
+  assert.equal(r.checks.find(c => c.id === 'wake').level, 'off') // optional: not counted
+  const board = await (await fetch(`${url}/api/board`)).json()
+  assert.deepEqual(board.setup, { todo: r.todo, sig: r.sig })
+  // Nothing of the computer's own files reaches the page beyond the checks.
+  assert.equal('settings' in r || 'facts' in r, false)
+})

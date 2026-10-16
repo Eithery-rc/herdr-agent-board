@@ -20,6 +20,7 @@ import { noticeLine } from './notice-model.js'
 import { initQuestions } from './questions.js'
 import { keepInSight, menuOpen, Panel, panels, roomBelow } from './panel.js'
 import { renameInPlace } from './rename.js'
+import { initSetupNote } from './setup.js'
 import { reducedMotion, rubberband, Spring, velocityOf } from './spring.js'
 import { initTerminal } from './terminal.js'
 import { capital, dayLabel, longWhen, shortWhen, span, timeOf } from './when.js'
@@ -419,8 +420,11 @@ function renderLimits() {
     ? `<p><b>${esc(t('limits.used'))}</b> ${lim.windows.map(w => `${esc(t(w.minutes === 300 ? 'limits.5h' : 'limits.7d'))}: ${Math.round(w.usedPercentage)}%`).join(' · ')}</p><p>${esc(source)}</p><p class="${lim.stale ? 'limits-warning' : ''}">${esc(t(lim.stale ? 'limits.stale' : 'limits.localReport', { time }))}</p>`
     : `<p>${esc(t('limits.unavailable'))}</p>`
   if (limitsOpen()) positionLimits()
+  setupNote?.render(state.data.setup)
 }
 
+// The quiet note that part of the board is not set up on this computer (setup.js).
+let setupNote = null
 const limitsOpen = () => !$('#limits-pop').hidden
 function positionLimits() {
   const pop = $('#limits-pop'), rect = $('#limits').getBoundingClientRect(), size = pop.getBoundingClientRect()
@@ -912,7 +916,7 @@ function goToSession(key) {
 // place menu away.
 {
   let down = null
-  const keeps = '.sheet, .ql, .launch, .limits-pop, .menu, .rename, .card, .lane-head, .layout-menu, button, input, textarea, select, label, a, [data-act]'
+  const keeps = '.sheet, .ql, .launch, .limits-pop, .setup-pop, .menu, .rename, .card, .lane-head, .layout-menu, button, input, textarea, select, label, a, [data-act]'
   addEventListener('pointerdown', e => (down = panelPress(e, keeps, menuOpen())), true)
   addEventListener('click', e => {
     const d = down
@@ -942,9 +946,11 @@ const dialogBack = dialogHistory({
   history,
   mobile: () => matchMedia('(max-width: 760px)').matches,
   // Asked at once when a reload finds the Back sentinel: launchUI is set up just below.
-  isOpen: () => menu.isOpen() || !!launchUI?.isOpen() || files.isOpen() || !!termUI?.isOpen() || !!helpersUI?.isOpen() || limitsOpen() || panels.some(panel => panel.isOpen),
-  closeTop: () => menu.isOpen() ? menu.close() : launchUI?.isOpen() ? launchUI.close() : files.isOpen() ? files.back() : termUI?.isOpen() ? termUI.close() : helpersUI?.isOpen() ? helpersUI.back() : limitsOpen() ? closeLimits(true) : panels.find(panel => panel.isOpen)?.close(),
+  isOpen: () => menu.isOpen() || !!launchUI?.isOpen() || files.isOpen() || !!termUI?.isOpen() || !!helpersUI?.isOpen() || limitsOpen() || !!setupNote?.isOpen() || panels.some(panel => panel.isOpen),
+  closeTop: () => menu.isOpen() ? menu.close() : launchUI?.isOpen() ? launchUI.close() : files.isOpen() ? files.back() : termUI?.isOpen() ? termUI.close() : helpersUI?.isOpen() ? helpersUI.back() : limitsOpen() ? closeLimits(true) : setupNote?.isOpen() ? setupNote.close(true) : panels.find(panel => panel.isOpen)?.close(),
 })
+setupNote = initSetupNote({ t: () => t, esc, store, onDialogChange: () => dialogBack.sync() })
+setupNote.render(state.data.setup)
 launchUI = initLaunch({
   t: () => t,
   toast,

@@ -334,14 +334,14 @@ function peerOf(origin, text) {
 }
 
 /**
- * A Bash or PowerShell call that starts a session with spawn-agent: { name } as it gave -Name
- * ('' when that is a variable). Null for anything else, a spawn-agent without -Name included.
+ * A Bash or PowerShell call that starts a session with spawn-agent: { name } as it gave -Name or
+ * --name ('' when that is a variable). Null for anything else, a spawn-agent without a name included.
  */
 export function spawnOf(tool, input) {
   if (tool !== 'Bash' && tool !== 'PowerShell') return null
   const cmd = String(input?.command ?? '')
-  if (!/(?:^|[\s;&|(=])spawn-agent(?:\.ps1)?\s/.test(cmd)) return null
-  const m = /\s-Name\s+(?:"([^"]+)"|'([^']+)'|([^\s"';|&)]+))/.exec(cmd)
+  if (!/(?:^|[\s;&|(=])spawn-agent(?:\.ps1|\.cmd)?\s/i.test(cmd)) return null
+  const m = /\s--?name(?:\s+|[=:])(?:"([^"]+)"|'([^']+)'|([^\s"';|&)]+))/i.exec(cmd)
   if (!m) return null
   const name = (m[1] ?? m[2] ?? m[3]).trim()
   return { name: name.startsWith('$') ? '' : name.slice(0, 120) }
