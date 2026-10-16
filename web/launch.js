@@ -243,7 +243,7 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
     f.wt.checked = !!r?.worktree
     f.branch.value = r?.worktree?.branch ?? ''
     s.set.branch = !!r?.worktree
-    s.workspace = r ? (r.newWorkspace ? { create: r.workspace } : { label: r.workspace }) : ctx.newWorkspace ? { create: '' } : card?.workspace ? { label: card.workspace } : null
+    s.workspace = r ? (r.workspaceId ? { id: r.workspaceId } : r.newWorkspace ? { create: r.workspace } : { label: r.workspace }) : ctx.newWorkspace ? { create: '' } : card?.workspace ? { label: card.workspace } : null
     s.set.workspace = !!s.workspace
     for (const el of root.querySelectorAll('.field-note, .launch-error')) el.hidden = true
     renderCats()
@@ -425,6 +425,7 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
   f.cwd.addEventListener('focus', () => showPop(false))
   f.cwd.addEventListener('blur', () => setTimeout(() => document.activeElement !== f.cwd && closePop(), 120))
   f.cwd.addEventListener('keydown', e => {
+    if (e.isComposing || e.keyCode === 229) return
     if (e.key === 'Enter' && !(pop.open && pop.active >= 0)) {
       e.preventDefault()
       closePop()
@@ -682,6 +683,8 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
     'keydown',
     e => {
       if (root.hidden || motion.target === 0 || !focus.isTop()) return
+      // Enter and Esc while an input method composes belong to it (they pick or drop a word).
+      if (e.isComposing || e.keyCode === 229) return
       if (e.key === 'Escape') {
         e.preventDefault()
         e.stopImmediatePropagation()
@@ -735,7 +738,9 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
     if (!l) return ''
     const go = l.pane ? `<button class="button" data-launch="focus" data-id="${esc(l.id)}">${esc(tr('card.focus'))}</button>` : ''
     if (l.state === 'failed') {
-      return `<div class="launch-note failed"><div class="ln-why">${ICON.warn}<span>${esc(l.error || tr('launch.failed'))}</span></div><div class="ln-hint">${esc(tr(`launch.hint.${l.kind === 'dialog' ? 'dialogFailed' : l.kind || 'other'}`))}</div><div class="ln-actions"><button class="button" data-launch="retry" data-id="${esc(l.id)}">${esc(tr('launch.retry'))}</button>${go}<button class="button plain" data-launch="dismiss" data-id="${esc(l.id)}">${esc(tr('launch.dismiss'))}</button></div></div>`
+      // Failed only at its first message, the session runs: a retry would start a second one.
+      const retry = l.kind === 'message' ? '' : `<button class="button" data-launch="retry" data-id="${esc(l.id)}">${esc(tr('launch.retry'))}</button>`
+      return `<div class="launch-note failed"><div class="ln-why">${ICON.warn}<span>${esc(l.error || tr('launch.failed'))}</span></div><div class="ln-hint">${esc(tr(`launch.hint.${l.kind === 'dialog' ? 'dialogFailed' : l.kind || 'other'}`))}</div><div class="ln-actions">${retry}${go}<button class="button plain" data-launch="dismiss" data-id="${esc(l.id)}">${esc(tr('launch.dismiss'))}</button></div></div>`
     }
     if (l.state === 'waiting') {
       return `<div class="launch-note waiting"><div class="ln-why">${ICON.warn}<span>${esc(tr('launch.step.dialog'))}</span></div><div class="ln-hint">${esc(tr('launch.hint.dialog'))}</div><div class="ln-actions">${go}</div></div>`

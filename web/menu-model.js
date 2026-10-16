@@ -206,7 +206,8 @@ export function launchMenu(l, ctx) {
   const { t } = ctx
   return tidy([
     l.pane && { id: 'focus', label: t('menu.focus'), ...(ctx.canMutate ? {} : { disabled: true, reason: t('mobile.readOnly') }) },
-    l.state === 'failed' && { id: 'retry', label: t('launch.retry') },
+    // A launch that failed only at its first message has a running session: a retry would start a second one.
+    l.state === 'failed' && l.kind !== 'message' && { id: 'retry', label: t('launch.retry') },
     l.state === 'failed' && { id: 'copyError', label: t('launch.copyError') },
     SEP,
     { id: 'copy:cwd', label: t('menu.copyPath') },

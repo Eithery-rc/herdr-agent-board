@@ -113,7 +113,10 @@ sibling folder (`repo-branch`) and starts there. Ctrl+Enter starts.
 The new card shows in its lane at once, under "Working" while it starts, and becomes the
 session's own card once herdr sees it. If it fails, it moves under "Needs me" with the reason
 (the folder, a dialog Claude waits on, a timeout) and what to do: retry with the same values,
-go to its tab, or dismiss it.
+go to its tab, or dismiss it. A retry starts in the worktree or the workspace the failed launch
+made already. One that failed only at its first message has no retry: the session runs; send
+the message from its card. Dismissing a launch that still runs only takes it off the board: it
+goes on, and its session still gets its lane.
 
 How it starts, by `launch` in config.json:
 
@@ -131,7 +134,16 @@ How it starts, by `launch` in config.json:
   places. It runs with `HERDR_WORKSPACE_ID` set to the chosen workspace (the board itself lives
   in a workspace of its own) and should print `pane=<pane id>` when the session is up; it fails
   with a non-zero exit, its last error line is the reason shown. A new workspace's first tab is
-  closed after a launcher opened its own tab in it. `launch.timeoutSec` (180).
+  closed after a launcher opened its own tab in it. `launch.timeoutSec` (180): then the
+  launcher and everything it started are ended (`taskkill /T` on Windows, its process group
+  elsewhere), so nothing opens a tab after the card said it timed out.
+  - Prefer `{messageFile}` to `{message}`. A first message is free text: as a plain argument it
+    can start with `-` and be read as an option by a launcher that parses its own arguments.
+    The file is written for this user only, new for each launch, and removed when the launcher
+    exits, so the launcher must read it before it does.
+  - `cmd`, `.bat` and `.cmd` files are refused as the program: cmd.exe reads its own command
+    line, so the values would meet a shell after all. Run a script with its interpreter
+    (`pwsh -File`, `node`, `python`).
 
 ```json
 "launch": {
@@ -141,6 +153,12 @@ How it starts, by `launch` in config.json:
   "timeoutSec": 180
 }
 ```
+
+Launches live in the board's memory. A board that restarts in the middle of one forgets it: its
+card goes, a launcher it ran is left running (and finishes or fails on its own), and a session
+that comes up lands in the lane its folder gives, or in the chosen one when the board had given
+it its session id (the herdr path, or `{sessionId}`). A first message file left behind is
+removed when the board starts again.
 
 ## When a card is under "Needs me"
 
