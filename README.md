@@ -291,8 +291,9 @@ browser.
 
 What it shows: herdr has no output stream, so the board reads the pane (`pane read --source
 recent-unwrapped --ansi`, its last 400 lines) right after every key, every 120 ms while
-something changes, then every 0.4 to 1 s, and sends the page only the lines that changed. Typed
-text shows in about a quarter of a second. Colors as the programs draw them (16, 256 and true
+something changes, then every 0.4 to 1 s, and sends the page only the lines that changed (a line
+longer than 4000 characters is cut there). A board page out of sight reads nothing until it is
+back. Typed text shows in about a quarter of a second. Colors as the programs draw them (16, 256 and true
 colors; bold, dim, italic, underline, inverse) on a screen that stays dark in both themes, which
 is what the programs draw for. The text is sized for the pane's columns to fit, and lines wrap at
 the window's edge. herdr does not say where the cursor is: the caret goes after a shell's prompt
@@ -310,8 +311,14 @@ It runs commands on this computer, so:
   a message. A shell moved elsewhere in herdr is no longer the board's: it is neither typed into
   nor closed. The server takes only keys from its list, text without control characters, at most
   16 KB a request; a request with anything else types nothing.
-- Nothing typed or shown is logged or kept; typed text reaches herdr as an argument of `pane
-  send-text`.
+- The board logs nothing typed or shown and keeps none of it. But typed text reaches herdr as a
+  command-line argument of `herdr pane send-text` (its CLI takes text no other way), so for the
+  moment that call runs it is visible to other processes of the same user and to process
+  auditing that records command lines (Windows event 4688, when it is on). A password is better
+  typed in herdr itself.
+- Keys never land late: a request herdr is slow with shows "Waiting for herdr", the page gives
+  it up after 8 s and drops what was typed meanwhile (and says so), and the server starts no
+  herdr call for a request older than 4 s. The first call that fails stops the rest of it.
 - `"terminal": false` in config.json turns it off: no button, and every terminal route answers
   404 (for a board opened from a phone through a tunnel, say).
 

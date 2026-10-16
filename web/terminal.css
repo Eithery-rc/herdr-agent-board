@@ -138,6 +138,7 @@
 }
 .term-paste[hidden] { display: none; }
 .term-paste span { flex: 1; min-width: 200px; }
+.term-paste pre { flex-basis: 100%; order: 1; max-height: calc(4 * 1.35em + 12px); margin: 0; padding: 6px 8px; overflow: hidden; border-radius: 8px; background: rgba(0, 0, 0, 0.28); color: rgba(235, 235, 245, 0.82); font: 12px/1.35 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .term-paste .button:not(.primary) { background: rgba(255, 255, 255, 0.12); color: #f5f5f7; }
 
 /* The field the keys arrive in: out of sight, big enough text that a phone does not zoom. */

@@ -18,13 +18,28 @@ import { applyDiff, diffLines } from '../web/term-model.js'
 import { herdrCalls } from '../web/term-keys.js'
 
 export const TERMINALS_FILE = join(STATE_DIR, 'terminals.json')
-// How much of a pane goes to the page: the visible screen and the scrollback above it.
+// How much of a pane goes to the page: the visible screen and the scrollback above it, each
+// line at most so long (a minified file cat'ed is megabytes on one line).
 export const READ_LINES = 400
+export const MAX_LINE = 4000
 // Panes that show up in the shell's tab this soon after the board made it came with the tab (a
 // plugin's sidebar, say), not from the user: closing the shell closes them with the tab.
 const FURNITURE_MS = 10_000
+// Keys are typed only while the page still waits for them: a herdr call gets so long, and a
+// request older than LATE_MS starts no call more. Together they stay under the page's own limit
+// (8 s, web/terminal.js): once it gave up on a request, nothing of it is typed any more.
+const CALL_MS = 3000
+const LATE_MS = 4000
 
-const notFound = err => /pane_not_found|not.?found|no such/i.test(`${err?.code} ${err?.message}`)
+// Only herdr's own word that the pane is not there: an error that says "not found" in another
+// sense (a file, a timeout) must not make the board take a shell that still runs for closed.
+const paneGone = err => err?.code === 'pane_not_found'
+
+/** A line cut to MAX_LINE characters, without an escape left half there. */
+export function clipLine(line) {
+  if (line.length <= MAX_LINE) return line
+  return `${line.slice(0, MAX_LINE).replace(/\x1b[^m]*$/, '')}\x1b[0m…`
+}
 
 /** The pace of reading a pane: fast after a key or a change, slower while it stays the same. */
 export function nextDelay({ now, pokedAt = 0, changedAt = 0 }) {
@@ -56,13 +71,21 @@ export function createTerminals({ herdr = realHerdr, herdrText = realHerdrText, 
   const queues = new Map() // pane -> the promise of the input typed last
   const opening = new Map() // session key -> the shell being opened
 
+  /** The shells a board before this one opened: only entries that look like the board's own. */
   function load() {
+    let raw
     try {
-      const raw = JSON.parse(readFileSync(file, 'utf8'))
-      return raw && typeof raw === 'object' ? raw : {}
+      raw = JSON.parse(readFileSync(file, 'utf8'))
     } catch {
       return {}
     }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+    const out = {}
+    for (const [key, rec] of Object.entries(raw)) {
+      if (!rec || typeof rec !== 'object' || ![rec.pane, rec.tab, rec.workspace].every(v => typeof v === 'string' && v)) continue
+      out[key] = { ...rec, others: Array.isArray(rec.others) ? rec.others.filter(o => o && typeof o.pane === 'string') : [] }
+    }
+    return out
   }
   function save() {
     try {
@@ -79,32 +102,42 @@ export function createTerminals({ herdr = realHerdr, herdrText = realHerdrText, 
     return list.filter(p => p.tab_id === tab)
   }
 
-  /** The panes in the shell's tab that came with it (looked at while it is still new). */
+  /**
+   * The panes in the shell's tab that came with it (looked at while it is still new), each with
+   * its terminal: a pane id alone could be someone else's after herdr started over.
+   */
   async function noteFurniture(rec) {
     if (now() - rec.at > FURNITURE_MS) return
     try {
-      const others = (await tabPanes(rec.workspace, rec.tab)).map(p => p.pane_id).filter(id => id !== rec.pane)
-      const next = [...new Set([...(rec.others ?? []), ...others])]
-      if (next.length !== (rec.others ?? []).length) {
-        rec.others = next
+      const seen = (await tabPanes(rec.workspace, rec.tab)).filter(p => p.pane_id !== rec.pane)
+      const known = rec.others ?? []
+      const added = seen.filter(p => !known.some(o => o.pane === p.pane_id)).map(p => ({ pane: p.pane_id, terminal: p.terminal_id ?? null }))
+      if (added.length) {
+        rec.others = [...known, ...added]
         save()
       }
     } catch {}
   }
 
-  /**
-   * The shell's tab goes when nothing but what came with it is left there; a pane the user added
-   * (a split, an agent) keeps it. Its pane is closed first when it still runs.
-   */
-  async function closeRec(rec) {
+  /** Close the shell's own pane (one already gone is fine). Only for a shell found the same. */
+  async function closePane(rec) {
     try {
       await herdr(['pane', 'close', rec.pane], 8000)
     } catch (err) {
-      if (!notFound(err)) throw err
+      if (!paneGone(err)) throw err
     }
+  }
+
+  /**
+   * The shell's tab goes when nothing but what came with it is left there: the same panes with
+   * the same terminals. A pane the user added (a split, an agent) keeps it, and so does a tab
+   * where a pane of another terminal holds one of those ids (herdr started over).
+   */
+  async function tidyTab(rec) {
     try {
+      const furniture = p => (rec.others ?? []).some(o => o.pane === p.pane_id && (!o.terminal || o.terminal === p.terminal_id))
       const rest = await tabPanes(rec.workspace, rec.tab)
-      if (rest.every(p => p.pane_id !== rec.pane && (rec.others ?? []).includes(p.pane_id) && !p.agent)) await herdr(['tab', 'close', rec.tab], 8000)
+      if (rest.every(p => p.pane_id !== rec.pane && furniture(p) && !p.agent)) await herdr(['tab', 'close', rec.tab], 8000)
     } catch {}
   }
 
@@ -125,7 +158,7 @@ export function createTerminals({ herdr = realHerdr, herdrText = realHerdrText, 
     try {
       pane = (await herdr(['pane', 'get', rec.pane], 5000))?.pane
     } catch (err) {
-      if (notFound(err)) return 'gone'
+      if (paneGone(err)) return 'gone'
       throw err
     }
     if (!pane) return 'gone'
@@ -149,8 +182,9 @@ export function createTerminals({ herdr = realHerdr, herdrText = realHerdrText, 
     if (had) {
       const state = await identity(had)
       if (state === 'same') return { ok: true, pane: had.pane, cwd: had.cwd, created: false }
-      // Its tab is tidied away when the shell is gone; a pane moved elsewhere is the user's now.
-      if (state === 'gone') await closeRec(had).catch(() => {})
+      // A pane moved elsewhere is the user's now; the tab the board made goes if nothing but what
+      // came with it is left there.
+      await tidyTab(had)
       forget(item.key)
     }
     const cwd = String(item.cwd ?? '')
@@ -168,12 +202,18 @@ export function createTerminals({ herdr = realHerdr, herdrText = realHerdrText, 
     return { ok: true, pane: rec.pane, cwd, created: true }
   }
 
-  /** Close the board's shell for a session (its pane, and its tab when that is all that is left). */
+  /**
+   * Close the board's shell for a session: its pane while it is still the one the board opened,
+   * and its tab when nothing else is left there. A pane moved elsewhere, or one of that id with
+   * another terminal, is not the board's: it is left alone (only the board's own tab may go).
+   */
   async function closeShell(key) {
     const rec = shells[key]
     if (!rec) return { ok: true }
+    const state = await identity(rec)
     stopReader(rec.pane, { t: 'gone' })
-    await closeRec(rec)
+    if (state === 'same') await closePane(rec)
+    await tidyTab(rec)
     forget(key)
     return { ok: true }
   }
@@ -194,6 +234,7 @@ export function createTerminals({ herdr = realHerdr, herdrText = realHerdrText, 
         const state = await identity(rec)
         if (state !== 'same') {
           forget(item.key)
+          tidyTab(rec)
           onChange()
           return { error: state === 'gone' ? 'term.err.gone' : 'term.err.noShell' }
         }
@@ -217,18 +258,21 @@ export function createTerminals({ herdr = realHerdr, herdrText = realHerdrText, 
   function input(pane, steps) {
     const { calls, error } = herdrCalls(steps)
     if (error) return Promise.resolve({ ok: false, error: 'term.err.input', why: error })
+    const received = now()
+    // The first call that fails or comes too late stops the rest: an Enter never lands later on
+    // its own, after the page gave up on the keys before it.
     const run = async () => {
       for (const c of calls) {
-        // `pane send-text` types its text as it is, a leading dash included (herdr 0.9).
-        if (c.keys) await herdr(['pane', 'send-keys', pane, ...c.keys], 10_000)
-        else await herdr(['pane', 'send-text', pane, c.text], 10_000)
+        if (now() - received > LATE_MS) throw Object.assign(new Error('late'), { code: 'late' })
+        if (c.keys) await herdr(['pane', 'send-keys', pane, ...c.keys], CALL_MS)
+        else await herdr(['pane', 'send-text', pane, c.text], CALL_MS)
       }
     }
     const next = (queues.get(pane) ?? Promise.resolve()).then(run, run)
     const done = next.then(
       () => ({ ok: true }),
       // herdr's error code only: a failed call's message can carry the text it was typing.
-      err => ({ ok: false, error: notFound(err) ? 'term.err.gone' : 'term.err.herdr', why: notFound(err) ? '' : String(err?.code || 'no answer') }),
+      err => ({ ok: false, error: paneGone(err) ? 'term.err.gone' : err?.code === 'late' ? 'term.err.late' : 'term.err.herdr', why: paneGone(err) ? '' : String(err?.code || 'no answer') }),
     )
     queues.set(pane, done)
     done.then(() => {
@@ -242,8 +286,8 @@ export function createTerminals({ herdr = realHerdr, herdrText = realHerdrText, 
 
   /**
    * Watch a pane for a page: `send(message)` gets the whole screen first, then line diffs as it
-   * changes ({ t: 'frame', drop, keep, lines, cols }), { t: 'gone' } when the
-   * pane closed, { t: 'error', why } while herdr does not answer. Returns the stop function.
+   * changes ({ t: 'frame', drop, keep, lines, cols }), { t: 'gone' } when the pane closed,
+   * { t: 'error', why } while herdr does not answer. Returns the stop function.
    */
   function watch(pane, { shell = false, key = null } = {}, send) {
     let r = readers.get(pane)
@@ -271,7 +315,7 @@ export function createTerminals({ herdr = realHerdr, herdrText = realHerdrText, 
     let reading = false
     let again = false
     let ended = false
-    let failing = false
+    let failing = '' // why the reads fail, while they do
     let heartbeat = null
     let furnished = false
 
@@ -301,8 +345,8 @@ export function createTerminals({ herdr = realHerdr, herdrText = realHerdrText, 
         if (wantCols) cols = paneCols(layout?.layout, pane) ?? cols
         // After a failed read the page is told it works again, even when nothing changed.
         const recovered = failing
-        const next = text.replace(/\r/g, '').replace(/\n$/, '').split('\n')
-        failing = false
+        const next = text.replace(/\r/g, '').replace(/\n$/, '').split('\n').map(clipLine)
+        failing = ''
         if (!lines) {
           lines = next
           changedAt = now()
@@ -322,20 +366,20 @@ export function createTerminals({ herdr = realHerdr, herdrText = realHerdrText, 
           noteFurnitureOf(key)
         }
       } catch (err) {
-        if (notFound(err)) {
+        if (paneGone(err)) {
           reading = false
           if (shell && key && shells[key]?.pane === pane) {
             const rec = shells[key]
             forget(key)
-            // The shell exited (`exit`) or its pane was closed in herdr: its tab goes too when
-            // only what came with it is left.
-            closeRec(rec).catch(() => {})
+            // The shell exited (`exit`) or its pane was closed in herdr: there is no pane to
+            // close, only its tab to tidy away when nothing else is left there.
+            tidyTab(rec)
             onChange()
           }
           return end({ t: 'gone' })
         }
         if (!failing) broadcast({ t: 'error', why: String(err?.message ?? err) })
-        failing = true
+        failing = String(err?.message ?? err)
       }
       reading = false
       schedule(again ? 0 : undefined)
@@ -362,6 +406,8 @@ export function createTerminals({ herdr = realHerdr, herdrText = realHerdrText, 
       add(send) {
         subs.add(send)
         if (lines) send(frame())
+        // A page that comes while the reads fail hears so at once, not only at the next change.
+        if (failing) send({ t: 'error', why: failing })
         if (!heartbeat) {
           heartbeat = setInterval(() => broadcast({ t: 'ping' }), 15_000)
           heartbeat.unref?.()
@@ -400,7 +446,7 @@ export function createTerminals({ herdr = realHerdr, herdrText = realHerdrText, 
         const state = await identity(rec)
         if (state === 'same') continue
         forget(key)
-        if (state === 'gone') closeRec(rec).catch(() => {})
+        tidyTab(rec)
       } catch {}
     }
     onChange()

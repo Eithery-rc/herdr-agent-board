@@ -53,6 +53,10 @@ test('web links in the output, without the sentence around them', () => {
   assert.deepEqual(findLinks('(https://example.com/x)').map(l => l.url), ['https://example.com/x'])
   assert.deepEqual(findLinks('"https://a.example/q?x=1&y=2", and http://b.example/').map(l => l.url), ['https://a.example/q?x=1&y=2', 'http://b.example/'])
   assert.deepEqual(findLinks('ftp://example.com file:///c:/x javascript:alert(1)'), [])
+  // A long tail of closing brackets is one pass, not one pass per bracket.
+  const t0 = performance.now()
+  assert.deepEqual(findLinks(`https://example.com/a${')'.repeat(50_000)}`).map(l => l.url), ['https://example.com/a'])
+  assert.ok(performance.now() - t0 < 500)
   // A link split over styled runs keeps the runs' styles and gets its whole address on each part.
   const runs = withLinks(parseLine(`go to ${ESC}[4mhttps://claude.ai/${ESC}[0moauth?code=1 now`))
   const linked = runs.filter(r => r.href)

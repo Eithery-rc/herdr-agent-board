@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { createTerminals, nextDelay, paneCols, tabLabel } from '../src/terminal.mjs'
+import { clipLine, createTerminals, MAX_LINE, nextDelay, paneCols, tabLabel } from '../src/terminal.mjs'
 
 class FakeError extends Error {
   constructor(code, message) {
@@ -23,10 +23,18 @@ function fakeHerdr({ dir }) {
   const screens = { 'w1:p1': 'agent screen\n' }
   const tabs = new Set(['w1:t1'])
   let failReads = 0
+  let failReadsWith = 'herdr did not answer'
+  let failSend = false
+  let hold = null
   const gone = pane => new FakeError('pane_not_found', `pane ${pane} not found`)
   async function herdr(args) {
     calls.push(args)
     const [a, b, c] = args
+    if (hold && a === 'pane' && /^send-/.test(b)) await hold
+    if (failSend && a === 'pane' && /^send-/.test(b)) {
+      failSend = false
+      throw new FakeError('timeout', 'Command failed: herdr pane send-text w1:p11 secret')
+    }
     if (a === 'pane' && b === 'get') {
       const p = panes.get(c)
       if (!p) throw gone(c)
@@ -37,7 +45,7 @@ function fakeHerdr({ dir }) {
       const pane = `w1:p${n + 10}`
       tabs.add(tab)
       panes.set(pane, { pane_id: pane, tab_id: tab, workspace_id: args[3], terminal_id: `term-${n}` })
-      panes.set(`${pane}s`, { pane_id: `${pane}s`, tab_id: tab, workspace_id: args[3], label: 'Sidebar' })
+      panes.set(`${pane}s`, { pane_id: `${pane}s`, tab_id: tab, workspace_id: args[3], label: 'Sidebar', terminal_id: `term-${n}s` })
       screens[pane] = 'PS> \n'
       return { root_pane: { pane_id: pane, tab_id: tab, terminal_id: `term-${n}` }, tab: { tab_id: tab } }
     }
@@ -68,12 +76,21 @@ function fakeHerdr({ dir }) {
     const pane = args[2]
     if (failReads) {
       failReads--
-      throw new FakeError(undefined, 'herdr did not answer')
+      throw new FakeError(undefined, failReadsWith)
     }
     if (!panes.has(pane)) throw gone(pane)
     return screens[pane]
   }
-  return { herdr, herdrText, calls, panes, tabs, screens, dir, failNextReads: n => (failReads = n) }
+  return {
+    herdr, herdrText, calls, panes, tabs, screens, dir,
+    failNextReads: (n, message = 'herdr did not answer') => ((failReads = n), (failReadsWith = message)),
+    failNextSend: () => (failSend = true),
+    holdSends: () => {
+      let release
+      hold = new Promise(r => (release = r))
+      return () => ((hold = null), release())
+    },
+  }
 }
 
 function setup(t) {
@@ -98,7 +115,8 @@ test('a shell opens once per session, in a tab of its own in the session’s wor
   assert.deepEqual(h.calls.find(c => c[1] === 'create'), ['tab', 'create', '--workspace', 'w1', '--cwd', dir, '--label', 'probe · shell', '--no-focus'])
   const saved = JSON.parse(readFileSync(file, 'utf8')).s1
   assert.equal(saved.pane, a.pane)
-  assert.deepEqual(saved.others, [`${a.pane}s`]) // the sidebar that came with the tab
+  assert.deepEqual(saved.others, [{ pane: `${a.pane}s`, terminal: 'term-1s' }]) // the sidebar that came with the tab
+  assert.equal(saved.terminal, 'term-1')
   assert.deepEqual(terms.keys(), ['s1'])
   // Asked again, it is the same shell; a board that restarts finds it in the file.
   assert.equal((await make().openShell(item, 'x')).created, false)
@@ -269,4 +287,107 @@ test('a board that starts again forgets shells that went, and tidies their tabs'
   for (let i = 0; i < 100 && h.tabs.has(tab); i++) await new Promise(r => setTimeout(r, 10))
   assert.ok(!h.tabs.has(tab))
   assert.ok(changes.length >= 1)
+})
+
+test('closing: a shell moved elsewhere, or a pane of its id with another terminal, is left alone', async t => {
+  const { h, make, item } = setup(t)
+  const terms = make()
+  const moved = await terms.openShell(item, 'x')
+  const boardTab = h.panes.get(moved.pane).tab_id
+  h.panes.get(moved.pane).tab_id = 'w1:t1' // dragged into the user's own tab
+  assert.deepEqual(await terms.closeShell('s1'), { ok: true })
+  assert.ok(h.panes.has(moved.pane) && h.tabs.has('w1:t1'))
+  // The tab the board made held only its sidebar by then: that one goes.
+  assert.ok(!h.tabs.has(boardTab))
+  assert.deepEqual(terms.keys(), [])
+  const reused = await terms.openShell(item, 'x')
+  h.panes.get(reused.pane).terminal_id = 'term-someone-else' // herdr started over
+  await terms.closeShell('s1')
+  assert.ok(h.panes.has(reused.pane))
+  assert.ok(!h.calls.some(c => c[0] === 'pane' && c[1] === 'close'))
+})
+
+test('only herdr’s pane_not_found means the shell is gone: other errors close nothing', async t => {
+  const { h, make, item } = setup(t)
+  const terms = make()
+  const { pane } = await terms.openShell(item, 'x')
+  h.failNextReads(1, 'open C:/x: No such file or directory (not found)')
+  const got = []
+  t.after(terms.watch(pane, { shell: true, key: 's1' }, m => got.push(m)))
+  for (let i = 0; i < 300 && !got.some(m => m.t === 'frame'); i++) await new Promise(r => setTimeout(r, 10))
+  assert.deepEqual(got.map(m => m.t), ['error', 'frame'])
+  assert.deepEqual(terms.keys(), ['s1'])
+  assert.ok(h.panes.has(pane))
+  assert.ok(!h.calls.some(c => c[1] === 'close'))
+  // An identity check herdr does not answer leaves the shell be, and says so.
+  const get = h.herdr
+  const failing = async args => { if (args[1] === 'get') throw new FakeError(undefined, 'pane w1:p11 not found in cache'); return get(args) }
+  const terms2 = createTerminals({ herdr: failing, herdrText: h.herdrText, file: join(h.dir, 'terminals.json'), sleep: async () => {} })
+  await assert.rejects(terms2.closeShell('s1'))
+  assert.ok(h.panes.has(pane))
+})
+
+test('a page that comes while reads fail hears it at once', async t => {
+  const { h, make, item } = setup(t)
+  const terms = make()
+  const { pane } = await terms.openShell(item, 'x')
+  h.failNextReads(1000)
+  const first = []
+  t.after(terms.watch(pane, { shell: true, key: 's1' }, m => first.push(m)))
+  for (let i = 0; i < 200 && !first.length; i++) await new Promise(r => setTimeout(r, 10))
+  const second = []
+  t.after(terms.watch(pane, { shell: true, key: 's1' }, m => second.push(m)))
+  assert.deepEqual(second.map(m => m.t), ['error'])
+  h.failNextReads(0)
+})
+
+test('a failed key stops the rest of its request; keys that waited too long are not typed', async t => {
+  const { h, make, item, clock } = setup(t)
+  const terms = make()
+  const { pane } = await terms.openShell(item, 'x')
+  let before = h.calls.length
+  h.failNextSend()
+  const r = await terms.input(pane, [{ text: 'secret' }, { key: 'enter' }])
+  assert.deepEqual(r, { ok: false, error: 'term.err.herdr', why: 'timeout' })
+  assert.ok(!JSON.stringify(r).includes('secret'))
+  assert.deepEqual(h.calls.slice(before).map(c => c[1]), ['send-text'])
+  // herdr hangs on one request; the next waits behind it, and once it is free it is too late.
+  const release = h.holdSends()
+  const first = terms.input(pane, [{ key: 'up' }])
+  const second = terms.input(pane, [{ text: 'rm' }, { key: 'enter' }])
+  for (let i = 0; i < 100 && !h.calls.some(c => c[3] === 'up'); i++) await new Promise(r => setTimeout(r, 5))
+  clock.t += 5000
+  release()
+  assert.deepEqual(await first, { ok: true })
+  assert.deepEqual(await second, { ok: false, error: 'term.err.late', why: 'late' })
+  before = h.calls.findLastIndex(c => c[3] === 'up')
+  assert.ok(!h.calls.slice(before + 1).some(c => /^send-/.test(c[1])))
+})
+
+test('the shells file: an array or entries that are not the board’s are left out', async t => {
+  const { file, make } = setup(t)
+  const { writeFileSync } = await import('node:fs')
+  writeFileSync(file, JSON.stringify([{ pane: 'w1:p1' }]))
+  assert.deepEqual(make().keys(), [])
+  writeFileSync(file, JSON.stringify({ a: { pane: 'w1:p9', tab: 'w1:t9', workspace: 'w1' }, b: { pane: 5 }, c: null, d: 'x' }))
+  assert.deepEqual(make().keys(), ['a'])
+})
+
+test('a tab is tidied away only when what is left is what came with it, terminals included', async t => {
+  const { h, make, item } = setup(t)
+  const terms = make()
+  const { pane } = await terms.openShell(item, 'x')
+  const tab = h.panes.get(pane).tab_id
+  h.panes.get(`${pane}s`).terminal_id = 'term-users-own' // the sidebar id now holds another terminal
+  await terms.closeShell('s1')
+  assert.ok(!h.panes.has(pane) && h.tabs.has(tab))
+})
+
+test('long lines are cut, without half an escape', () => {
+  assert.equal(clipLine('abc'), 'abc')
+  const cut = clipLine('x'.repeat(3995) + '[38;2;10;20' + 'y'.repeat(10))
+  assert.ok(cut.startsWith('x'.repeat(3995)))
+  assert.ok(!cut.includes('[38'))
+  assert.ok(cut.endsWith('[0m…'))
+  assert.equal(clipLine('z'.repeat(MAX_LINE + 50)).length, MAX_LINE + 5)
 })

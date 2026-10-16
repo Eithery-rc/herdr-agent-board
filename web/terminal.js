@@ -24,6 +24,10 @@ const ICONS = {
 }
 // What one request may carry (the server checks the same).
 const MAX_PASTE = MAX_TEXT
+// Keys waiting to go, at most; and how long a request may take before the page gives up on it
+// (longer than the server types for one: src/terminal.mjs).
+const MAX_PENDING = 400
+const INPUT_TIMEOUT = 8000
 // The row of keys a phone's keyboard does not have.
 const KEY_ROW = [
   { key: 'esc', label: 'Esc' },
@@ -100,6 +104,9 @@ export function initTerminal({ t, toast, canMutate, item, token, shells, wake, f
     seq: 0,
     paste: null,
     closeArmed: 0,
+    waitingSend: false, // a request herdr takes long over
+    slowNote: false, // keys were dropped: herdr was too slow
+    paused: false, // the page is hidden: no reading meanwhile
   }
 
   // ------------------------------------------------------------ the window's motion
@@ -194,6 +201,9 @@ export function initTerminal({ t, toast, canMutate, item, token, shells, wake, f
     s.es = null
     s.seq++
     s.pending = []
+    s.waitingSend = false
+    s.slowNote = false
+    s.paused = false
     s.paste = null
     pasteEl.hidden = true
     if (s.typing) input.blur()
@@ -442,9 +452,9 @@ export function initTerminal({ t, toast, canMutate, item, token, shells, wake, f
     $('.term-keys').hidden = !(coarse.matches || matchMedia('(max-width: 760px)').matches) || !live
     for (const b of root.querySelectorAll('.term-keys button')) b.disabled = !canInput()
     const status = $('.term-status')
-    const text = !live ? '' : s.error ? s.error : !canMutate() ? tr('mobile.readOnly') : s.typing ? [shell ? tr('term.typing') : tr('term.typingAgent', { agent: agentName(x) }), !coarse.matches && tr('term.leaveKey')].filter(Boolean).join(' · ') : tr(coarse.matches ? 'term.tapToType' : 'term.clickToType')
+    const text = !live ? '' : s.error ? s.error : s.waitingSend ? tr('term.waiting') : s.slowNote ? tr('term.slow') : !canMutate() ? tr('mobile.readOnly') : s.typing ? [shell ? tr('term.typing') : tr('term.typingAgent', { agent: agentName(x) }), !coarse.matches && tr('term.leaveKey')].filter(Boolean).join(' · ') : tr(coarse.matches ? 'term.tapToType' : 'term.clickToType')
     status.innerHTML = `${live && !s.error ? `<span class="term-dot${s.typing ? ' on' : ''}"></span>` : ''}<span>${esc(text)}</span>`
-    status.classList.toggle('warn', !!s.error || (live && !canMutate()))
+    status.classList.toggle('warn', !!s.error || (live && (!canMutate() || s.waitingSend || s.slowNote)))
   }
 
   // ------------------------------------------------------------ typing
@@ -476,8 +486,15 @@ export function initTerminal({ t, toast, canMutate, item, token, shells, wake, f
   function queue(steps) {
     if (!steps.length) return
     if (!canInput()) return sync()
+    // herdr this slow: what is typed meanwhile is dropped, said so, rather than land much later.
+    if (s.pending.length + steps.length > MAX_PENDING) return slow()
     s.pending.push(...steps)
     flush()
+  }
+  function slow() {
+    s.pending = []
+    s.slowNote = true
+    sync()
   }
 
   async function flush() {
@@ -492,15 +509,22 @@ export function initTerminal({ t, toast, canMutate, item, token, shells, wake, f
       if (size > MAX_TEXT && n) break
     }
     const batch = mergeSteps(s.pending.splice(0, n))
-    const r = await post(`/api/term/${encodeURIComponent(key)}/${s.target}/input`, { session: item(key)?.session ?? null, steps: batch })
+    // A request herdr takes long over says so; one it does not answer in time is given up, and
+    // the server types nothing of it that late either (src/terminal.mjs).
+    const waiting = setTimeout(() => ((s.waitingSend = true), sync()), 1500)
+    const r = await post(`/api/term/${encodeURIComponent(key)}/${s.target}/input`, { session: item(key)?.session ?? null, steps: batch }, INPUT_TIMEOUT)
+    clearTimeout(waiting)
     s.sending = false
+    s.waitingSend = false
     // Switched meanwhile: what was queued for the other terminal went; what came since goes now.
     if (seq !== s.seq) return flush()
     if (!r.ok) {
       // What was queued behind it would land somewhere unknown: it goes.
       s.pending = []
-      toast(tr('term.lost', { why: r.error }), true)
-    }
+      if (r.timeout) s.slowNote = true
+      else toast(tr('term.lost', { why: r.error }), true)
+    } else s.slowNote = false
+    sync()
     flush()
   }
 
@@ -573,7 +597,10 @@ export function initTerminal({ t, toast, canMutate, item, token, shells, wake, f
     const n = text.split('\n').length
     if (n === 1) return queue(textSteps(text))
     s.paste = text
-    pasteEl.innerHTML = `<span>${esc(tr('term.paste', { n }))}</span><button class="button primary" data-paste="yes">${esc(tr('term.pasteYes'))}</button><button class="button" data-paste="no">${esc(tr('term.pasteNo'))}</button>`
+    // What would run: the first lines, each as far as it fits.
+    const lines = text.split('\n')
+    const shown = lines.slice(0, 3).map(l => (l.length > 120 ? `${l.slice(0, 120)}…` : l)).join('\n') + (n > 3 ? '\n…' : '')
+    pasteEl.innerHTML = `<span>${esc(tr('term.paste', { n }))}</span><pre>${esc(shown)}</pre><button class="button primary" data-paste="yes">${esc(tr('term.pasteYes'))}</button><button class="button" data-paste="no">${esc(tr('term.pasteNo'))}</button>`
     pasteEl.hidden = false
   }
   function settlePaste(yes) {
@@ -670,12 +697,13 @@ export function initTerminal({ t, toast, canMutate, item, token, shells, wake, f
     setStatus('gone')
   }
 
-  async function post(url, body) {
+  async function post(url, body, timeout = 0) {
     try {
-      const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-board': '1' }, body: JSON.stringify(body) })
+      const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-board': '1' }, body: JSON.stringify(body), ...(timeout ? { signal: AbortSignal.timeout(timeout) } : {}) })
       const r = await res.json().catch(() => ({}))
       return res.ok && r.ok !== false ? { ...r, ok: true } : { ...r, ok: false, error: r.error || tr('err.status', { code: res.status }) }
     } catch (err) {
+      if (err.name === 'TimeoutError') return { ok: false, timeout: true, error: tr('term.slow') }
       return { ok: false, error: tr('err.offline', { why: err.message }) }
     }
   }
@@ -699,6 +727,15 @@ export function initTerminal({ t, toast, canMutate, item, token, shells, wake, f
     },
     true,
   )
+
+  // A page out of sight reads nothing: the stream goes while it is hidden and comes back with it.
+  document.addEventListener('visibilitychange', () => {
+    if (root.hidden || motion.target === 0) return
+    if (document.hidden && s.es) {
+      disconnect()
+      s.paused = true
+    } else if (!document.hidden && s.paused) connect()
+  })
 
   // A phone's keyboard takes the bottom of the screen: the window keeps above it.
   const vv = globalThis.visualViewport

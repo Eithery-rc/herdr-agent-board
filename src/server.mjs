@@ -141,7 +141,8 @@ export function startServer({ cfg, log = () => {} } = {}) {
   const launches = createLaunches({ cfg, log, onChange: () => publish() })
   // The terminal (terminal.mjs): shells the board opened in sessions' folders, and live panes.
   const terminals = createTerminals({ onChange: () => publish() })
-  const terminalOn = () => cfg.terminal !== false
+  // On unless config.json says otherwise: only a missing setting or true turns it on.
+  const terminalOn = () => cfg.terminal === undefined || cfg.terminal === true
 
   /** The board as clients see it, without the time of the last successful refresh. */
   function board() {
@@ -326,11 +327,17 @@ export function startServer({ cfg, log = () => {} } = {}) {
     if (!pane) return json(404, { error: t(target === 'shell' ? 'term.err.noShell' : 'err.noPane') })
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive', 'x-content-type-options': 'nosniff' })
     res.write('retry: 3000\n\n')
-    const stop = terminals.watch(pane, { shell: target === 'shell', key: item.key }, msg => {
+    let stop = () => {}
+    stop = terminals.watch(pane, { shell: target === 'shell', key: item.key }, msg => {
+      // A page that stopped reading (asleep, half gone) does not pile the screen up here.
+      if (res.writableLength > 2 << 20) {
+        stop()
+        return res.destroy()
+      }
       res.write(msg.t === 'ping' ? ': ping\n\n' : `data: ${JSON.stringify(msg)}\n\n`)
       if (msg.t === 'gone') res.end()
     })
-    req.on('close', stop)
+    req.on('close', () => stop())
   }
 
   /** What the terminal's buttons and keys do. Errors come back as text keys (lang.mjs). */
@@ -584,7 +591,8 @@ export function startServer({ cfg, log = () => {} } = {}) {
       }
       json(405, { error: 'method' })
     } catch (err) {
-      log(`${req.method} ${req.url}: ${err.message}`)
+      // The path only: a query can carry the page's token.
+      log(`${req.method} ${req.url.split('?')[0]}: ${err.message}`)
       if (!res.headersSent) json(500, { error: err.message })
     }
   })
@@ -641,14 +649,19 @@ export function startServer({ cfg, log = () => {} } = {}) {
   })
 }
 
+// The bytes are put together before they are read as text: a character split between two chunks
+// would come apart otherwise (and the terminal types what it gets).
 function readBody(req) {
   return new Promise((resolve, reject) => {
-    let data = ''
+    const chunks = []
+    let size = 0
     req.on('data', chunk => {
-      data += chunk
-      if (data.length > 65_536) reject(new Error('body too large'))
+      size += chunk.length
+      if (size > 192 << 10) return reject(new Error('body too large'))
+      chunks.push(chunk)
     })
     req.on('end', () => {
+      const data = Buffer.concat(chunks).toString('utf8')
       try {
         resolve(data ? JSON.parse(data) : {})
       } catch {

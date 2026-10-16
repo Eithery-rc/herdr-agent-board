@@ -53,6 +53,21 @@ async function board(t, cfg = {}) {
   return { box, proc, cwd, url, post, payload, typed }
 }
 
+/** A POST whose body goes in two writes, the first ending in the middle of a character. */
+function postSplit(url, body) {
+  const bytes = Buffer.from(JSON.stringify(body))
+  const cut = bytes.indexOf(Buffer.from('я')) + 1
+  return new Promise((resolve, reject) => {
+    const req = http.request(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-board': '1', 'content-length': bytes.length } }, res => {
+      res.resume()
+      res.on('end', () => resolve(res.statusCode))
+    })
+    req.on('error', reject)
+    req.write(bytes.subarray(0, cut))
+    setTimeout(() => req.end(bytes.subarray(cut)), 50)
+  })
+}
+
 /** The first event of a terminal stream. */
 async function firstEvent(url) {
   const controller = new AbortController()
@@ -111,6 +126,11 @@ test('the terminal: only the page’s own requests, its own shell, the same sess
   assert.equal((await post('/api/term/s1/shell/stream')).status, 409) // a POST is not the stream, nor anything else
   assert.equal(typed().length, 2)
 
+  // Text in other scripts arrives whole, even when the request's bytes come split in a character.
+  const wide = 'я'.repeat(9000) + '漢'.repeat(4000)
+  assert.equal(await postSplit(`${url}/api/term/s1/shell/input`, { session: 's1', steps: [{ text: wide }] }), 200)
+  assert.deepEqual(typed().at(-1), ['send-text', 'w1:p9', wide])
+
   // The session's own pane: only while the same session runs there.
   const other = await post('/api/term/s1/agent/input', { session: 's2', steps: [{ key: 'esc' }] })
   assert.equal(other.status, 409)
@@ -118,11 +138,11 @@ test('the terminal: only the page’s own requests, its own shell, the same sess
   box.state({ ...herdrState(cwd, { session: 's9' }) })
   const swapped = await post('/api/term/s1/agent/input', { session: 's1', steps: [{ key: 'esc' }] })
   assert.equal(swapped.status, 409)
-  assert.equal(typed().length, 2)
+  assert.equal(typed().length, 3)
   box.state(herdrState(cwd))
   const agent = await post('/api/term/s1/agent/input', { session: 's1', steps: [{ text: '/login' }, { key: 'enter' }] })
   assert.equal(agent.status, 200, JSON.stringify(agent.body))
-  assert.deepEqual(typed().slice(2), [['send-text', 'w1:p1', '/login'], ['send-keys', 'w1:p1', 'enter']])
+  assert.deepEqual(typed().slice(3), [['send-text', 'w1:p1', '/login'], ['send-keys', 'w1:p1', 'enter']])
 
   // "Open in herdr": the shell's own tab.
   assert.equal((await post('/api/term/s1/shell/focus')).status, 200)
@@ -145,7 +165,7 @@ test('the terminal: only the page’s own requests, its own shell, the same sess
   const stale = await post('/api/term/s1/agent/input', { session: 's1', steps: [{ key: 'enter' }] })
   assert.equal(stale.status, 409)
   assert.match(stale.body.error, /No fresh data/)
-  assert.equal(typed().length, 4)
+  assert.equal(typed().length, 5)
 
   // Nothing typed or read went to the log.
   assert.ok(!JSON.stringify(proc.messages).includes('secret-typed'))
@@ -161,4 +181,14 @@ test('terminal: false in config.json turns the terminal off', { timeout: 30_000 
   assert.equal((await post('/api/term/s1/agent/input', { session: 's1', steps: [{ key: 'enter' }] })).status, 404)
   assert.equal((await fetch(`${url}/api/term/s1/agent/stream?t=${data.fsToken}`)).status, 404)
   assert.ok(!box.calls().some(a => a[0] !== 'api'))
+})
+
+test('terminal is on only when the setting is missing or true', { timeout: 60_000 }, async t => {
+  for (const value of ['false', 0, null, 'no']) {
+    const { url, post, payload } = await board(t, { terminal: value })
+    const data = await payload()
+    assert.equal(data.terminal, false, String(value))
+    assert.equal((await post('/api/term/s1/shell/open')).status, 404)
+    assert.equal((await fetch(`${url}/api/term/s1/agent/stream?t=${data.fsToken}`)).status, 404)
+  }
 })

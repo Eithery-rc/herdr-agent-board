@@ -127,14 +127,20 @@ const URL_RE = /\bhttps?:\/\/[^\s"'<>`]+/g
 export function findLinks(text) {
   const out = []
   for (const m of String(text).matchAll(URL_RE)) {
-    let url = m[0]
-    for (;;) {
-      const last = url.at(-1)
-      if (/[.,;:!?]/.test(last)) url = url.slice(0, -1)
-      else if (last === ')' && (url.match(/\(/g)?.length ?? 0) < (url.match(/\)/g)?.length ?? 0)) url = url.slice(0, -1)
-      else if (last === ']' && (url.match(/\[/g)?.length ?? 0) < (url.match(/\]/g)?.length ?? 0)) url = url.slice(0, -1)
-      else break
+    const whole = m[0]
+    // The brackets counted once, then the end walked back: one pass however long the tail.
+    const count = { '(': 0, ')': 0, '[': 0, ']': 0 }
+    for (const ch of whole) if (ch in count) count[ch]++
+    let end = whole.length
+    while (end > 0) {
+      const last = whole[end - 1]
+      if (/[.,;:!?]/.test(last)) end--
+      else if ((last === ')' && count['('] < count[')']) || (last === ']' && count['['] < count[']'])) {
+        count[last]--
+        end--
+      } else break
     }
+    const url = whole.slice(0, end)
     if (url.length > 10) out.push({ start: m.index, end: m.index + url.length, url })
   }
   return out

@@ -2019,7 +2019,8 @@ function openNextAttention() {
 $('#next-attention').addEventListener('click', openNextAttention)
 
 addEventListener('keydown', e => {
-  if (menu.isOpen() || launchUI.isOpen()) return // they take their keys first
+  // They take their keys first; the terminal window too, even while its screen has not the keys.
+  if (menu.isOpen() || launchUI.isOpen() || termUI.isOpen()) return
   const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName)
   if (e.key === 'Escape') {
     if (typing) return document.activeElement.blur()
