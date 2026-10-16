@@ -774,10 +774,19 @@ function onCardClick(e) {
 
 // ---------------------------------------------------------------- the session sheet
 const sheetBody = $('#sheet-body')
+const sheetQuestion = $('#sheet-question')
+const narrowSheet = matchMedia('(max-width: 760px)')
+let propertiesOpen = false
+function syncSheetProperties() {
+  $('#sheet-card').hidden = narrowSheet.matches && !propertiesOpen
+  $('#sheet-properties-toggle').setAttribute('aria-expanded', String(propertiesOpen))
+}
+$('#sheet-properties-toggle').addEventListener('click', () => { propertiesOpen = !propertiesOpen; syncSheetProperties() })
+narrowSheet.addEventListener('change', syncSheetProperties)
 // Paths in the thread become chips with a quick look; web links open in the default browser.
 const files = initFiles({ t: () => t, token: () => state.data.fsToken, toast, canMutate: canEdit, onDialogChange: () => { dialogBack.sync(); syncAvailability() } })
 // Layers above the board, topmost first: Back on a phone closes them one at a time.
-const menu = initMenu({ onChange: () => dialogBack.sync() })
+const menu = initMenu({ onChange: () => { dialogBack.sync(); if (!menu.isOpen()) $('#sheet-more').setAttribute('aria-expanded', 'false') } })
 const dialogBack = dialogHistory({
   history,
   mobile: () => matchMedia('(max-width: 760px)').matches,
@@ -823,6 +832,8 @@ let currentDraft = null
 let draftFor = null // the session the composer's attachments were added for; outlives a close
 
 function openSheet(key, { compose = false } = {}) {
+  if (state.open !== key) propertiesOpen = false
+  syncSheetProperties()
   const switching = sessionPanel.isOpen && state.open !== key
   // Attachments belong to the session they were added for, never to the next one. Closing the
   // panel and opening the same session again keeps them.
@@ -874,6 +885,7 @@ function renderSheetHead() {
   pill.style.setProperty('--c', COLORS[it.column])
   pill.innerHTML = it.sleeping ? `${ICON.moon}${esc(t('sheet.asleep'))}` : `<span class="dot ${it.column}" style="--c:${COLORS[it.column]}"></span>${esc(colTitle(it.column))}`
   $('#sheet-name').textContent = it.name
+  $('#sheet-name').title = it.name
   const tokens = it.context >= 1000 ? `${Math.round(it.context / 1000)}k` : it.context
   const context = it.contextPct != null ? t('meta.contextPct', { pct: Math.round(it.contextPct), tokens }) : it.context ? t('meta.context', { tokens }) : ''
   $('#sheet-meta').textContent = [catInfo(catOf(it)).title, it.workspace && t('meta.workspace', { name: it.workspace }), it.activity && (ago(it.activity) === t('ago.now') ? t('meta.activeNow') : t('meta.active', { ago: ago(it.activity) })), context].filter(Boolean).join(' · ')
@@ -935,15 +947,17 @@ function renderSheetBody(reset) {
   if (!it) return
   renderSheetCard(it)
   const atBottom = sheetBody.scrollHeight - sheetBody.scrollTop - sheetBody.clientHeight < 40
-  let html = ''
+  let html = '', question = ''
   if (it.column === 'me') {
     const later = it.attention === 'later'
     const why = t(it.attention ? `why.${it.attention}` : 'why.default')
     const wave = dismissable(it) ? `<button class="button asked-dismiss" data-act="dismiss">${ICON.check}<span>${esc(t(later ? 'asked.seen' : 'asked.noReply'))}</span></button>` : ''
     const text = later ? t('asked.later') : it.question || t('asked.terminal')
-    html += `<div class="asked"><b>${esc(why)}</b>${esc(text)}${wave}</div>`
+    question = `<div class="asked"><b>${esc(why)}</b>${esc(text)}${wave}</div>`
     if (state.detail?.screen) html += `<pre class="screen">${esc(state.detail.screen)}</pre>`
   }
+  if (sheetQuestion._html !== question) { sheetQuestion.innerHTML = question; sheetQuestion._html = question }
+  sheetQuestion.hidden = !question
   html += `<div class="section-title">${esc(t('thread.title'))}</div><div class="thread">`
   const conv = state.detail?.conversation
   if (!conv) html += `<p class="row-value muted">${esc(t('loading'))}</p>`
@@ -1015,7 +1029,7 @@ sheetCard.addEventListener('keydown', async e => {
   toast(r.ok ? t(input.id === 'wait' ? (input.value.trim() ? 'toast.waitSet' : 'toast.waitCleared') : 'saved') : r.error, !r.ok)
 })
 
-sheetBody.addEventListener('click', e => {
+sheetQuestion.addEventListener('click', e => {
   if (e.target.closest('[data-act="dismiss"]') && state.open) dismissAsk(state.open)
 })
 $('#sheet-focus').addEventListener('click', () => state.open && focusSession(state.open))
@@ -1028,6 +1042,22 @@ $('#sheet-wake').addEventListener('click', async () => {
   toast(r.ok ? t('toast.woke') : r.error, !r.ok)
 })
 $('#sheet-sleep').addEventListener('click', () => state.open && sleepSession(state.open))
+$('#sheet-more').addEventListener('click', e => {
+  const button = e.currentTarget, rect = button.getBoundingClientRect()
+  const items = ['sheet-wake', 'sheet-sleep', 'sheet-changes', 'sheet-history', 'sheet-new']
+    .map(id => document.getElementById(id)).filter(el => el && !el.hidden)
+    .map(el => ({ id: el.id, label: el.textContent.trim(), disabled: el.disabled, reason: el.disabled ? (!canMutate() && ['sheet-wake', 'sheet-sleep', 'sheet-new'].includes(el.id) ? t('mobile.readOnly') : el.title || t('mobile.readOnly')) : '' }))
+  menu.open(items, { x: rect.right, y: rect.top, source: e.detail === 0 ? 'keyboard' : matchMedia('(pointer: coarse)').matches ? 'touch' : 'mouse', origin: button, label: t('sheet.more'), onPick: id => {
+    const action = document.getElementById(id)
+    if (!action || action.disabled || action.hidden) return
+    // Dialogs must return focus to this visible opener, not the hidden toolbar button.
+    if (id === 'sheet-history') return state.open && files.lookHistory(state.open, itemOf(state.open)?.cwd ?? '', button)
+    if (id === 'sheet-changes') return state.open && files.lookChanges(state.open, button)
+    if (id === 'sheet-new') return state.open && newSession({ item: itemOf(state.open) }, button)
+    action.click()
+  } })
+  button.setAttribute('aria-expanded', 'true')
+})
 
 // Composer: Enter sends, Shift+Enter breaks the line; the box grows with the text. Files come
 // in through the clip, Ctrl+V (a screenshot) or a drop on the panel; each uploads at once and
