@@ -209,6 +209,11 @@ const metaCache = new Map() // meta file -> { mtimeMs, meta }
 const fileCache = new Map() // transcript -> { mtimeMs, size, head, tail }
 const runCache = new Map() // workflow run file -> { mtimeMs, run }
 const countCache = new Map() // transcript -> { size, offset, tools }
+// A helper that finished and has not changed for a while is looked at again only now and then:
+// a board of sessions with a hundred helpers each would stat them all on every refresh otherwise.
+const QUIET_MS = 10 * 60_000
+const RECHECK_MS = 30_000
+const checked = new Map() // transcript -> { at: when its files were last looked at, status }
 
 /** A folder's entries, read again only when the folder's time changes. */
 function list(dir) {
@@ -338,11 +343,16 @@ export function helpersOf(transcript, { alive = false, since = null } = {}) {
     const m = AGENT_FILE.exec(name)
     if (!m) return
     const path = join(dir, name)
-    const file = readTranscript(path)
+    const metaPath = join(dir, `agent-${m[1]}.meta.json`)
+    const last = checked.get(path)
+    const cached = fileCache.get(path)
+    const quiet = cached && last && !['running', 'idle'].includes(last.status) && Date.now() - cached.mtimeMs > QUIET_MS && Date.now() - last.at < RECHECK_MS
+    const file = quiet ? cached : readTranscript(path)
     if (!file) return
-    const meta = readMeta(join(dir, `agent-${m[1]}.meta.json`))
+    const meta = quiet ? (metaCache.get(metaPath)?.meta ?? {}) : readMeta(metaPath)
     const h = describe(m[1], meta, workflow)
     const status = helperStatus({ meta, tail: file.tail, kind: h.kind, alive, since, mtimeMs: file.mtimeMs })
+    checked.set(path, { at: quiet ? last.at : Date.now(), status })
     helpers.push({
       ...h,
       status,
@@ -440,5 +450,5 @@ export function helperDetail(transcript, id, opts) {
 
 /** For tests: forget what was read. */
 export function clearHelperCache() {
-  for (const c of [dirCache, metaCache, fileCache, runCache, countCache]) c.clear()
+  for (const c of [dirCache, metaCache, fileCache, runCache, countCache, checked]) c.clear()
 }
