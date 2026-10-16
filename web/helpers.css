@@ -73,8 +73,11 @@
 .helpers-chip:hover { background: var(--fill); }
 .helpers-chip:active { transform: scale(0.97); }
 .helpers-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.helpers-chip .n { flex: none; color: var(--label); font-weight: 600; white-space: nowrap; }
-.helpers-chip .d { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.helpers-chip .n { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--label); font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
+.helpers-chip .d { flex: 1 1 0; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* A narrow card keeps the count and lets the description go. */
+.card { container: card / inline-size; }
+@container card (max-width: 240px) { .helpers-chip .d { display: none; } }
 .hdots { display: inline-flex; flex: none; padding-left: 4px; }
 .hd { width: 10px; height: 10px; margin-left: -4px; border-radius: 50%; background: var(--hc); box-shadow: 0 0 0 2px var(--surface); }
 
@@ -129,14 +132,14 @@ button.rel:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px
 .helper-last > span:nth-child(2) { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .helper-more { display: block; min-height: 34px; color: var(--accent); font-size: 12.5px; font-weight: 500; text-align: center; }
 
-/* The sessions it works with, among the card's fields. */
+/* The sessions it works with, among the card's fields: one chip each, marked with how. */
 .rel-row { align-items: flex-start; }
 .rel-row .row-label { padding-top: 4px; }
-.rel-row .row-value { display: flex; flex-direction: column; gap: 6px; }
-.rel-line { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
-.rel-k { flex: none; display: inline-flex; align-items: center; gap: 5px; width: 98px; padding-top: 5px; font-size: 12px; color: var(--label-2); }
-.rel-k svg { width: 13px; height: 13px; color: var(--label-3); }
 .rel-chips { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.rel-marks { display: inline-flex; gap: 1px; color: var(--label-2); }
+.rel-marks svg { width: 12px; height: 12px; }
+.rel-more { height: 26px; padding: 0 8px; border: 0; background: none; color: var(--accent); font-size: 12.5px; font-weight: 500; }
+.rel-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 6px; }
 .rel-chip {
   display: inline-flex;
   align-items: center;
@@ -237,9 +240,6 @@ button.link-line:focus-visible, .link-line > summary:focus-visible { outline: 2p
 @media (max-width: 760px) {
   #sheet .sheet-helpers { max-height: 24vh; padding: 0 16px 8px; }
   .helper-row { min-height: 48px; }
-  .rel-k { width: auto; }
-  .rel-line { flex-direction: column; gap: 4px; }
-  .rel-k { padding-top: 0; }
   .helpers .helper-thread { padding: 12px 12px 20px; }
 }
 @media (prefers-reduced-motion: reduce) {

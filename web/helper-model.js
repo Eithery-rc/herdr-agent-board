@@ -60,7 +60,10 @@ export function groupHelpers(helpers = [], workflows = []) {
   }
 }
 
-/** The helper a line of the thread is about: by its id, the call that made it, or a teammate's name. */
+/**
+ * The helper a line of the thread is about: by its id, the call that made it, or its name (a
+ * teammate's first, else the newest helper of that name).
+ */
 export function findHelper(helpers = [], ref = {}) {
   if (ref.id) {
     const h = helpers.find(x => x.id === ref.id)
@@ -70,8 +73,9 @@ export function findHelper(helpers = [], ref = {}) {
     const h = helpers.find(x => x.toolUseId === ref.tool)
     if (h) return h
   }
-  if (ref.name) return helpers.filter(x => x.kind === 'teammate' && x.name === ref.name).sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))[0] ?? null
-  return null
+  if (!ref.name) return null
+  const named = helpers.filter(x => x.name === ref.name || x.id === ref.name).sort((a, b) => (b.kind === 'teammate') - (a.kind === 'teammate') || (b.startedAt ?? 0) - (a.startedAt ?? 0))
+  return named[0] ?? null
 }
 
 const norm = s => String(s ?? '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
@@ -94,5 +98,8 @@ export function relatedKeys(it) {
   return new Set([l.from?.key, ...(l.started ?? []).map(x => x.key), ...(l.talks ?? []).map(x => x.key)].filter(Boolean))
 }
 
-/** The card's short count: "3 helpers" while they run, else nothing. */
-export const liveCount = it => (it?.helpers?.running ?? 0) + (it?.helpers?.workflows ?? 0)
+/**
+ * The card's short count: the helpers at work (a workflow's agents among them), or the workflows
+ * that run between two of their agents; 0 when nothing works.
+ */
+export const liveCount = it => it?.helpers?.running || it?.helpers?.workflows || 0

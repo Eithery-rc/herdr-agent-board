@@ -224,12 +224,31 @@ export function startServer({ cfg, log = () => {} } = {}) {
   const answering = new Set() // sessions with an answer being typed into their dialog
   const find = key => items.find(i => i.key === key)
 
+  /**
+   * Messages between sessions in a thread: the other session's card key, found by the pipe it
+   * writes from (exact while it runs), and no pipes for the page.
+   */
+  function withSessions(conv) {
+    const byPipe = new Map(items.filter(i => i.pipe).map(i => [i.pipe, i]))
+    const at = pipe => byPipe.get(String(pipe ?? '').replace(/^uds:/, ''))
+    return conv.map(m => {
+      if (m.role === 'peer') {
+        const { pipe, ...rest } = m
+        const other = at(pipe)
+        return other ? { ...rest, key: other.key } : rest
+      }
+      if (!m.send?.to.startsWith('uds:')) return m
+      const other = at(m.send.to)
+      return { ...m, send: { ...m.send, to: other?.autoName || other?.name || m.send.name || '', key: other?.key ?? null } }
+    })
+  }
+
   async function detail(item) {
     // checkout: whether its folder is in git, for the sheet's Changes button.
     const { transcript, alive, since, pipe, ...shown } = item
     // helpers: every subagent, fork, workflow agent and teammate, newest first (helpers.mjs).
     const own = helpersOf(transcript, { alive, since })
-    const out = { item: shown, conversation: conversation(transcript, 60), helpers: own.helpers.map(publicHelper), workflows: own.workflows, screen: '', dialog: null, checkout: await isCheckout(item.cwd) }
+    const out = { item: shown, conversation: withSessions(conversation(transcript, 60)), helpers: own.helpers.map(publicHelper), workflows: own.workflows, screen: '', dialog: null, checkout: await isCheckout(item.cwd) }
     if (item.status === 'blocked' && item.pane) {
       try {
         const text = await herdrText(['agent', 'read', item.pane, '--source', 'visible'], 5000)
@@ -571,7 +590,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
         const item = find(hm[1])
         if (!item) return json(404, { error: t('err.gone') })
         const d = helperDetail(item.transcript, hm[2], { alive: item.alive, since: item.since })
-        return d ? json(200, d) : json(404, { error: t('helpers.gone') })
+        return d ? json(200, { ...d, conversation: withSessions(d.conversation) }) : json(404, { error: t('helpers.gone') })
       }
       const m = /^\/api\/session\/([^/]+)(?:\/(\w+))?$/.exec(path)
       if (m) {

@@ -47,7 +47,9 @@ export function lineEvents(line, state) {
       if (state.seen.has(b.id)) continue
       state.seen.add(b.id)
       if (b.name === 'SendMessage' && typeof b.input?.to === 'string' && typeof b.input?.message === 'string') {
-        out.push({ kind: 'sent', to: b.input.to.replace(/\s*\[[^\]]*\]\s*$/, '').trim().slice(0, 300), summary: clip(String(b.input.summary ?? firstLine(b.input.message)), 200), at })
+        const to = b.input.to.replace(/\s*\[[^\]]*\]\s*$/, '').trim().slice(0, 300)
+        // A reply to the pipe a message came from: the sender's name, for when that pipe is gone.
+        out.push({ kind: 'sent', to, name: state.pipes.get(to) ?? '', summary: clip(String(b.input.summary ?? firstLine(b.input.message)), 200), at })
         continue
       }
       const spawn = spawnOf(b.name, b.input)
@@ -70,6 +72,7 @@ function received(origin, at, state) {
   const name = String(origin.name ?? '').slice(0, 120)
   const pipe = String(origin.from ?? '').slice(0, 300)
   if (!name && !pipe) return null
+  if (pipe && name) state.pipes.set(pipe, name)
   return { kind: 'received', name, pipe, id, text: clip(firstLine(origin.body), 200), at }
 }
 
@@ -96,12 +99,12 @@ export function createLinks({ onChange = () => {} } = {}) {
   let running = false
 
   async function read(path) {
-    const f = files.get(path) ?? { offset: 0, events: [], state: { pending: new Map(), seen: new Set() } }
+    const f = files.get(path) ?? { offset: 0, events: [], state: { pending: new Map(), seen: new Set(), pipes: new Map() } }
     files.set(path, f)
     const st = await stat(path).catch(() => null)
     if (!st) return false
     // Rewritten from the start (it never is, but a smaller file cannot be read on from the old place).
-    if (st.size < f.offset) Object.assign(f, { offset: 0, events: [], state: { pending: new Map(), seen: new Set() } })
+    if (st.size < f.offset) Object.assign(f, { offset: 0, events: [], state: { pending: new Map(), seen: new Set(), pipes: new Map() } })
     if (st.size === f.offset) return false
     const before = f.events.length
     const fh = await open(path, 'r')
@@ -201,7 +204,7 @@ export function relate(items, eventsOf) {
         if (!theirs.from || theirs.from.at <= ev.at) theirs.from = { key: a.key, name: a.name, at: ev.at }
       } else if (ev.kind === 'sent') {
         // A reply goes to the pipe the message came from.
-        const b = ev.to.startsWith('uds:') ? byPipe.get(ev.to.slice(4)) : one(ev.to, a)
+        const b = ev.to.startsWith('uds:') ? (byPipe.get(ev.to.slice(4)) ?? one(ev.name, a)) : one(ev.to, a)
         if (b && b.key !== a.key) talk(a, b, 'out', ev.at)
       } else if (ev.kind === 'received') {
         const b = byPipe.get(ev.pipe.replace(/^uds:/, '')) ?? one(ev.name, a)

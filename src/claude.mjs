@@ -397,10 +397,12 @@ function turns(text, { sidechain = false } = {}) {
   const tools = new Map() // tool_use id -> item
   // Another session's message can be queued into a turn and come again as a line of its own.
   const peers = new Set()
+  const pipes = new Map() // a sender's message pipe -> its name: a reply goes to the pipe
   const peer = (p, at) => {
     const key = p.id || JSON.stringify([p.from, p.text])
     if (peers.has(key)) return
     peers.add(key)
+    if (p.pipe && p.from) pipes.set(p.pipe, p.from)
     items.push({ role: 'peer', ...p, at })
   }
   // A background task reporting back or a board reminder: a line of its own (notices.mjs). One
@@ -421,7 +423,8 @@ function turns(text, { sidechain = false } = {}) {
   for (const line of text.split('\n')) {
     if (!line || !(line.includes('"type":"user"') || line.includes('"type":"assistant"') || line.includes('"type":"queued_command"'))) continue
     const o = parse(line)
-    if (!o || (o.isSidechain && !sidechain) || o.isMeta || o.isCompactSummary) continue
+    // Claude Code keeps another session's message as a meta line: it is shown all the same.
+    if (!o || (o.isSidechain && !sidechain) || (o.isMeta && o.origin?.kind !== 'peer') || o.isCompactSummary) continue
     const content = o.message?.content
     const at = Date.parse(o.timestamp) || 0
     // A prompt sent while the session worked goes into the running turn, and the transcript
@@ -487,6 +490,8 @@ function turns(text, { sidechain = false } = {}) {
           if (ask) Object.assign(t, { id: b.id, ask: ask.map(({ question, header, multiSelect }) => ({ question, header, multiSelect })), answers: null })
           const link = linkOf(b)
           if (link) Object.assign(t, { id: b.id }, link)
+          // A reply to the pipe a message came from goes to whoever sent that message.
+          if (link?.send?.to.startsWith('uds:')) link.send.name = pipes.get(link.send.to) ?? ''
           tools.set(b.id, t)
           items.push(t)
         }

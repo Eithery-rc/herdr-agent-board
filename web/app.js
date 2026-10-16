@@ -194,7 +194,7 @@ function syncAvailability() {
     banner.textContent = t(canEdit() ? 'mobile.readOnly' : 'live.off')
   }
   for (const element of document.querySelectorAll('#sheet-focus, #sheet-sleep, #sheet-wake, [data-act="focus"], [data-act="sleep"]')) element.disabled = blocked || (missing && !!element.closest('#sheet')) || (element.id === 'sheet-sleep' && inTurn(itemOf(state.open) ?? {}))
-  for (const element of document.querySelectorAll('#attach, #lang, #cat-new, #sheet-card button:not(.rel-chip), #sheet-card input, #cats-sheet button:not([data-close]):not([data-layout]), #cats-sheet input, #sched-body .sched-x, #sched-body .sched-mode, [data-act="dismiss"]')) element.disabled = !canEdit()
+  for (const element of document.querySelectorAll('#attach, #lang, #cat-new, #sheet-card button:not(.rel-chip):not(.rel-more), #sheet-card input, #cats-sheet button:not([data-close]):not([data-layout]), #cats-sheet input, #sched-body .sched-x, #sched-body .sched-mode, [data-act="dismiss"]')) element.disabled = !canEdit()
   // New sessions go through herdr: they wait for fresh data like going to a session does.
   for (const element of document.querySelectorAll('#new-session, #sheet-new, .lane-new')) {
     element.disabled = blocked
@@ -1148,20 +1148,32 @@ function renderSheetCard(it) {
  * The sessions this one works with, in its sheet: who started it, whom it started, whom it wrote
  * with and how often each way. A name opens that session.
  */
+const relAll = new Set() // sessions whose sheet shows every linked session, not the first few
 function relationsRow(it) {
+  const peers = linkedSessions(it)
+  if (!peers.length) return ''
+  const all = relAll.has(it.key) || peers.length <= 6
+  const chips = (all ? peers : peers.slice(0, 5)).map(p => {
+    const other = itemOf(p.key)
+    const marks = `${p.from ? ICON.from : ''}${p.started ? ICON.spawned : ''}`
+    const io = p.in || p.out ? `<span class="rel-io">${p.in ? `<i>↓${p.in}</i>` : ''}${p.out ? `<i>↑${p.out}</i>` : ''}</span>` : ''
+    const title = [p.from && t('rel.fromHint', { name: other.name }), p.started && t('rel.startedThis'), (p.in || p.out) && t('rel.talkHint', { name: other.name, in: p.in, out: p.out, when: ago(p.at) })].filter(Boolean).join('\n')
+    return `<button class="rel-chip" data-session="${esc(p.key)}" style="--lane:${catInfo(catOf(other)).color}" title="${esc(title)}">${marks ? `<span class="rel-marks">${marks}</span>` : ''}<span class="rel-name">${esc(other.name)}</span>${io}</button>`
+  })
+  if (!all) chips.push(`<button class="rel-more" data-rel-all>${esc(t('rel.more', { n: peers.length - 5 }))}</button>`)
+  return `<div class="row rel-row"><span class="row-label">${esc(t('rel.row'))}</span><div class="row-value rel-chips">${chips.join('')}</div></div>`
+}
+
+/** Each session this one is linked with, once: who started it first, then by the latest contact. */
+function linkedSessions(it) {
   const l = it.links
-  if (!l) return ''
-  const chip = (key, extra = '', title = '') => {
-    const other = itemOf(key)
-    if (!other) return ''
-    return `<button class="rel-chip" data-session="${esc(key)}" style="--lane:${catInfo(catOf(other)).color}" title="${esc(title || t('rel.open', { name: other.name }))}"><span class="rel-name">${esc(other.name)}</span>${extra}</button>`
-  }
-  const lines = []
-  const line = (icon, label, chips) => chips && lines.push(`<div class="rel-line"><span class="rel-k">${icon}${esc(label)}</span><span class="rel-chips">${chips}</span></div>`)
-  if (l.from) line(ICON.from, t('rel.startedBy'), chip(l.from.key))
-  line(ICON.spawned, t('rel.startedList'), (l.started ?? []).map(x => chip(x.key)).join(''))
-  line(ICON.peer, t('rel.talks'), (l.talks ?? []).map(x => chip(x.key, `<span class="rel-io">${x.in ? `<i>↓${x.in}</i>` : ''}${x.out ? `<i>↑${x.out}</i>` : ''}</span>`, t('rel.talkHint', { name: itemOf(x.key)?.name ?? '', in: x.in, out: x.out, when: ago(x.at) }))).join(''))
-  return lines.length ? `<div class="row rel-row"><span class="row-label">${esc(t('rel.row'))}</span><div class="row-value">${lines.join('')}</div></div>` : ''
+  if (!l) return []
+  const by = new Map()
+  const get = key => by.get(key) ?? by.set(key, { key, from: false, started: false, in: 0, out: 0, at: 0 }).get(key)
+  if (l.from) Object.assign(get(l.from.key), { from: true, at: l.from.at })
+  for (const s of l.started ?? []) Object.assign(get(s.key), { started: true, at: Math.max(get(s.key).at, s.at) })
+  for (const x of l.talks ?? []) Object.assign(get(x.key), { in: x.in, out: x.out, at: Math.max(get(x.key).at, x.at) })
+  return [...by.values()].filter(p => itemOf(p.key)).sort((a, b) => b.from - a.from || b.at - a.at)
 }
 
 /** The session's reminders in its sheet: the first three, the rest in the schedule panel. */
@@ -1231,9 +1243,10 @@ function renderHelpersStrip() {
     const more = running.filter(h => !h.workflow).length - 4
     if (more > 0) rows += `<button class="helper-more" data-helpers-all>${esc(t('helpers.more', { n: more }))}</button>`
     if (!rows) {
-      const last = list[0] ?? runs[0]
+      // The newest of the session's own helpers or workflow runs (not an agent inside a run).
+      const last = [...list.filter(h => !h.workflow), ...runs].sort((a, b) => (b.endedAt ?? b.activity ?? 0) - (a.endedAt ?? a.activity ?? 0))[0]
       const when = last.endedAt ?? last.activity
-      rows = `<button class="helper-last" data-helpers-all>${kindIcon(last.kind ? last : { kind: 'workflow' })}<span>${esc(t('helpers.last', { title: last.kind ? helperTitle(last) : last.name || last.id, when: ago(when) }))}</span>${statusMark(last.status)}</button>`
+      rows = `<button class="helper-last" ${last.kind ? `data-helper="${esc(last.id)}"` : `data-run-open="${esc(last.id)}"`}>${kindIcon(last.kind ? last : { kind: 'workflow' })}<span>${esc(t('helpers.last', { title: last.kind ? helperTitle(last) : last.name || last.id, when: ago(when) }))}</span>${statusMark(last.status)}</button>`
     }
     html = `<header class="helpers-head"><h3 id="sheet-helpers-title">${esc(t('helpers.title'))}</h3><span class="helpers-sum">${esc(sum)}</span><button class="helpers-all" data-helpers-all title="${esc(t('helpers.allHint'))}">${esc(t('helpers.all'))}${ICON.chev}</button></header><div class="helper-rows">${rows}</div>`
   }
@@ -1310,13 +1323,15 @@ function thread(conv, it, ctx = {}) {
 }
 
 /** A name in the thread that leads somewhere: a session on the board, a teammate, or just the name. */
-function whoHTML(name, it, ctx, helpers) {
+function whoHTML(name, it, ctx, helpers, key = null) {
   // In a helper's own conversation, its session goes by "main" or "team-lead".
   if (ctx.helper && ['main', 'team-lead'].includes(name)) return `<b>${esc(it.name ?? name)}</b>`
-  const session = sessionByName(state.data.items, name, it.key)
+  // A reply to a message pipe whose session is gone: no name to give.
+  if (!name && !key) return `<b>${esc(t('thread.anotherSession'))}</b>`
+  const session = (key && itemOf(key)) || sessionByName(state.data.items, name, it.key)
   if (session) return `<button class="who" data-session="${esc(session.key)}" title="${esc(t('rel.open', { name: session.name }))}">${esc(session.name)}</button>`
   const mate = findHelper(helpers, { name })
-  if (mate) return `<button class="who" data-helper="${esc(mate.id)}" title="${esc(t('helpers.open'))}">${esc(name)}</button>`
+  if (mate) return `<button class="who" data-helper="${esc(mate.id)}" title="${esc(t('helpers.open'))}">${esc(mate.name || helperTitle(mate))}</button>`
   return `<b>${esc(name)}</b>`
 }
 
@@ -1327,7 +1342,7 @@ function linkLine(m, it, ctx, helpers) {
     const h = findHelper(helpers, { id: m.helper.id, tool: m.id })
     const kind = h?.kind ?? m.helper.kind
     const title = h ? helperTitle(h) : m.detail || m.helper.name || m.helper.type
-    const sub = [h?.type ?? m.helper.type, (h?.name ?? m.helper.name) !== title ? (h?.name ?? m.helper.name) : '', t(m.helper.background ? 'helpers.background' : 'helpers.foreground')].filter(Boolean).join(' · ')
+    const sub = [h?.type ?? m.helper.type, (h?.name ?? m.helper.name) !== title ? (h?.name ?? m.helper.name) : '', t((h ? h.background : m.helper.background) ? 'helpers.background' : 'helpers.foreground')].filter(Boolean).join(' · ')
     const time = h ? took(h) : null
     const mark = h ? `<span class="h-time"${h.status === 'running' && h.startedAt ? ` data-since="${h.startedAt}"` : ''}>${time != null ? esc(stopwatch(time)) : ''}</span>${statusMark(h.status)}` : !m.done ? statusMark('running') : ''
     const line = `${kindIcon({ kind, color: h?.color })}<span class="link-text"><span class="link-title">${esc(t('thread.helper', { kind: t(`helpers.kind.${kind}`), title }))}</span>${sub ? ` <small>${esc(sub)}</small>` : ''}</span>${mark}`
@@ -1346,14 +1361,14 @@ function linkLine(m, it, ctx, helpers) {
   }
   // A message to another session or a teammate: its first words in the line, the whole of it inside.
   const text = t('thread.sent', { name: '\u0000' }).split('\u0000')
-  const line = `<span class="h-icon k-session">${ICON.out}</span><span class="link-text">${esc(text[0])}${whoHTML(m.send.to, it, ctx, helpers)}${esc(text[1] ?? '')}${m.send.summary ? ` <small>${esc(m.send.summary)}</small>` : ''}</span>${when}`
+  const line = `<span class="h-icon k-session">${ICON.out}</span><span class="link-text">${esc(text[0])}${whoHTML(m.send.to, it, ctx, helpers, m.send.key)}${esc(text[1] ?? '')}${m.send.summary ? ` <small>${esc(m.send.summary)}</small>` : ''}</span>${when}`
   if (!m.send.text) return `<div class="link-line">${line}</div>`
   return `<details class="link-line sent" data-i="sent-${esc(m.id)}"><summary>${line}${ICON.chev}</summary><div class="notice-body"><div class="md">${markdown(m.send.text)}</div></div></details>`
 }
 
 /** Another session's or a teammate's message; in a helper's conversation, what its session asked. */
 function peerBubble(m, it, ctx, helpers) {
-  const from = ctx.helper && m.role === 'user' ? `<b>${esc(it.name ?? '')}</b>` : whoHTML(m.from, it, ctx, helpers)
+  const from = ctx.helper && m.role === 'user' ? `<b>${esc(it.name ?? '')}</b>` : whoHTML(m.from, it, ctx, helpers, m.key)
   const label = t(ctx.helper && m.role === 'user' ? 'thread.task' : 'thread.peer', { name: '\u0000' }).split('\u0000')
   const head = `<div class="peer-from">${m.team ? HELPER_ICONS.teammate : ICON.peer}<span>${esc(label[0])}${from}${esc(label[1] ?? '')}</span>${m.summary ? `<small>${esc(m.summary)}</small>` : ''}</div>`
   return `<div class="msg peer${m.team ? ' team' : ''}">${head}<div class="md">${markdown(m.text)}</div><span class="when">${clock(m.at)}</span></div>`
@@ -1370,7 +1385,10 @@ function notice(m, helpers = []) {
   const file = m.file && !m.detail ? `<span class="notice-file fs-inline" data-path="${esc(m.file)}">${esc(t('notice.output'))}</span>` : ''
   // An agent that reported back: its whole conversation is a click away.
   const agent = m.kind === 'agent' && m.id ? findHelper(helpers, { id: m.id }) : null
-  const open = agent ? `<button class="notice-open" data-helper="${esc(agent.id)}" title="${esc(t('helpers.open'))}">${esc(t('notice.open'))}</button>` : ''
+  // A workflow reports under its task id, which its run file keeps.
+  const run = m.kind === 'workflow' && m.id ? (state.detail?.workflows ?? []).find(w => w.taskId === m.id) : null
+  const open = agent ? `<button class="notice-open" data-helper="${esc(agent.id)}" title="${esc(t('helpers.open'))}">${esc(t('notice.open'))}</button>`
+    : run ? `<button class="notice-open" data-run-open="${esc(run.id)}" title="${esc(t('helpers.open'))}">${esc(t('notice.open'))}</button>` : ''
   const line = `<span class="notice-mark">${mark}</span><span class="notice-text"${m.summary ? ` title="${esc(m.summary)}"` : ''}>${esc(text)}${sub ? ` <small>${esc(sub)}</small>` : ''}</span>${file}${open}<span class="when">${clock(m.at)}</span>`
   if (!m.detail) return `<div class="notice ${tone}">${line}</div>`
   // An agent's report is markdown; a monitor's lines and a tool's result are kept as they came.
@@ -1387,6 +1405,10 @@ sheetCard.addEventListener('click', e => {
   if (e.target.closest('[data-sched-more]')) return openSchedule(state.open)
   const other = e.target.closest('[data-session]')
   if (other) return goToSession(other.dataset.session)
+  if (e.target.closest('[data-rel-all]') && state.open) {
+    relAll.add(state.open)
+    return renderSheetCard(itemOf(state.open))
+  }
   const b = e.target.closest('#cats button, #cols button')
   if (!b || !state.open) return
   moveCard(state.open, b.dataset.cat ? { cat: b.dataset.cat } : { column: b.dataset.col })

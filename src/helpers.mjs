@@ -14,7 +14,7 @@
 // read again only when it grew.
 import { closeSync, openSync, readSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { conversation, promptOf, toolDetail, toolLabel } from './claude.mjs'
+import { conversation, promptOf, saidIn, toolDetail, toolLabel } from './claude.mjs'
 
 const clip = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
 // A helper's id as Claude Code names its files: agent-<id>.jsonl, the id letters, digits and dashes.
@@ -81,7 +81,8 @@ export function headInfo(text) {
 /**
  * Where a helper's transcript ends: what it does now, and how far it got.
  *   last      end (its final answer) | tool (a call runs) | waiting (the model is on it) |
- *             interrupted (stopped by the user) | error (an API error) | none
+ *             background (its turn ended, a background task of its own is still out: `waiting`
+ *             says how many) | interrupted (stopped by the user) | error (an API error) | none
  *   now       the call that runs: { name, label, detail }, or null
  *   after     the last call before the model's turn now, for "thinking after Read"
  *   tokens    the last request's context and answer, as Claude Code counts a subagent's tokens
@@ -134,14 +135,29 @@ export function tailInfo(text) {
           if (results.has(b.id)) info.after = call.label
           else info.now = call
         }
-      } else if (b?.type === 'text' && !info.result && b.text?.trim() && !synthetic) info.result = clip(b.text.trim(), 400)
+      } else if (!info.result && !synthetic && saidIn(o, b)) info.result = clip(saidIn(o, b), 400)
     }
     if (info.tokens != null && (info.now || info.after) && info.result) break
   }
   // A workflow agent ends by handing its structured output back.
   if (info.last === 'waiting' && lastResult && names.get(lastResult) === 'StructuredOutput') info.last = 'end'
+  // A helper that ended its turn with a background command still out is not done: Claude Code
+  // wakes it with that command's notification. (Agents it started are helpers of their own:
+  // helpersOf looks at them.)
+  if (info.last === 'end') {
+    const out = backgroundTasks(text)
+    if (out) Object.assign(info, { last: 'background', waiting: out })
+  }
   if (info.last !== 'tool') info.now = null
   return info
+}
+
+/** How many background commands a transcript started that have not reported back. */
+export function backgroundTasks(text) {
+  const t = String(text ?? '')
+  const started = new Set([...t.matchAll(/Command running in background with ID: ([\w-]+)/g)].map(m => m[1]))
+  for (const m of t.matchAll(/<task-id>([\w-]+)<\/task-id>/g)) started.delete(m[1])
+  return started.size
 }
 
 /**
@@ -152,12 +168,16 @@ export function tailInfo(text) {
  *   alive    the session's Claude process runs
  *   since    when that process started (ms), or null
  */
-export function helperStatus({ meta = {}, tail = {}, kind, alive = false, since = null, mtimeMs = 0 }) {
+export function helperStatus({ meta = {}, tail = {}, kind, alive = false, since = null, mtimeMs = 0, now = Date.now() }) {
   if (meta.stoppedByUser) return 'stopped'
   if (tail.last === 'end') return kind === 'teammate' && alive && !(since && mtimeMs < since) ? 'idle' : 'done'
   if (tail.last === 'interrupted') return 'stopped'
   if (tail.last === 'error') return 'failed'
-  if (meta.finished) return 'done'
+  // Its turn is over but its background work goes on (last: background): like a turn that runs,
+  // it is at work while the session's process can still wake it; after an hour without a word,
+  // the notification went elsewhere or never came.
+  if (tail.last === 'background' && now - mtimeMs > 3_600_000) return 'done'
+  if (meta.finished && tail.last !== 'background') return 'done'
   if (!alive || (since && mtimeMs < since)) return 'stopped'
   return 'running'
 }
@@ -245,8 +265,11 @@ function readTranscript(path) {
   return entry
 }
 
-/** How many tool calls a transcript holds, counted on from where the last count stopped. */
-export function countTools(path) {
+/**
+ * How many tool calls a transcript holds, counted on from where the last count stopped. `skip`
+ * is the call that started it: a fork's transcript begins with its parent's.
+ */
+export function countTools(path, skip = null) {
   const st = statSync(path, { throwIfNoEntry: false })
   if (!st) return 0
   let c = countCache.get(path)
@@ -258,7 +281,11 @@ export function countTools(path) {
       if (!line.includes('"tool_use"') || !line.includes('"type":"assistant"')) continue
       const o = parse(line)
       if (o?.type !== 'assistant' || !Array.isArray(o.message?.content)) continue
-      for (const b of o.message.content) if (b?.type === 'tool_use' && !c.seen.has(b.id)) c.seen.add(b.id) && c.tools++
+      for (const b of o.message.content) {
+        if (b?.type !== 'tool_use' || b.id === skip || c.seen.has(b.id)) continue
+        c.seen.add(b.id)
+        c.tools++
+      }
     }
     c.offset += Buffer.byteLength(text.slice(0, end))
   }
@@ -326,6 +353,7 @@ export function helpersOf(transcript, { alive = false, since = null } = {}) {
       from: file.head.from,
       now: status === 'running' ? file.tail.now : null,
       after: status === 'running' && !file.tail.now ? file.tail.after : '',
+      waiting: status === 'running' ? (file.tail.waiting ?? 0) : 0, // background tasks it waits for
       tokens: file.tail.tokens,
       result: ['done', 'idle', 'failed'].includes(status) ? file.tail.result : '',
       path,
@@ -333,6 +361,13 @@ export function helpersOf(transcript, { alive = false, since = null } = {}) {
   }
   const names = list(subagents)
   for (const name of names) add(subagents, name, null)
+  // A helper whose turn is over while an agent it started still works is at work too: that
+  // agent's notification wakes it.
+  for (const h of helpers) {
+    if (h.status !== 'done' || h.kind === 'teammate') continue
+    const kids = helpers.filter(k => k.parent === h.id && k.status === 'running').length
+    if (kids) Object.assign(h, { status: 'running', waiting: h.waiting + kids, result: '' })
+  }
   const workflows = []
   if (names.includes('workflows')) {
     for (const run of list(join(subagents, 'workflows'))) {
@@ -397,7 +432,7 @@ export function helperDetail(transcript, id, opts) {
   const h = helpers.find(x => x.id === id)
   if (!h) return null
   return {
-    helper: { ...publicHelper(h), tools: countTools(h.path), prompt: h.prompt },
+    helper: { ...publicHelper(h), tools: countTools(h.path, h.toolUseId), prompt: h.prompt },
     workflow: h.workflow ? (workflows.find(w => w.id === h.workflow) ?? null) : null,
     conversation: conversation(h.path, 80, { sidechain: true }),
   }

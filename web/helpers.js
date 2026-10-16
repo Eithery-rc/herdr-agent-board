@@ -40,8 +40,8 @@ export const kindIcon = h => `<span class="h-icon k-${esc(h.kind)}"${h.color ? `
  */
 export function helperRowHTML(h, tr) {
   const title = helperTitle(h)
-  const what = h.status === 'running' && (h.now || h.after)
-    ? h.now ? `<b>${esc(h.now.label)}</b> ${esc(h.now.detail)}` : esc(tr('helpers.after', { tool: h.after }))
+  const what = h.status === 'running' && (h.now || h.after || h.waiting)
+    ? h.now ? `<b>${esc(h.now.label)}</b> ${esc(h.now.detail)}` : h.waiting ? esc(tr('helpers.waitingBg', { n: h.waiting })) : esc(tr('helpers.after', { tool: h.after }))
     : esc([h.status === 'running' ? tr('helpers.thinking') : '', h.type, h.name && h.name !== title ? h.name : '', h.phase].filter(Boolean).join(' · '))
   const time = took(h)
   return `<button class="helper-row${h.depth ? ' nested' : ''}" data-helper="${esc(h.id)}" data-status="${esc(h.status)}" title="${esc(`${title} · ${tr(`helpers.status.${h.status}`)}`)}">
@@ -160,6 +160,12 @@ export function initHelpers({ t, item, detail, renderThread, upgrade, openSessio
     s.stack = []
     s.data = null
     focus.close()
+    // The row it came from may have been drawn anew meanwhile: the same row takes the focus back.
+    if (origin && !origin.isConnected && document.activeElement === document.body) {
+      const same = ['helper', 'runOpen'].find(k => origin.dataset?.[k])
+      const sel = same ? `[data-${same === 'helper' ? 'helper' : 'run-open'}="${CSS.escape(origin.dataset[same])}"]` : origin.matches?.('[data-helpers-all]') ? '[data-helpers-all]' : ''
+      if (sel) document.querySelector(`#sheet ${sel}`)?.focus({ preventScroll: true })
+    }
   }
   function back() {
     if (s.stack.length < 2) return close()
