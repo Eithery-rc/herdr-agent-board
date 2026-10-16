@@ -213,6 +213,8 @@ button.link-line:focus-visible, .link-line > summary:focus-visible { outline: 2p
 .peer-from small { color: var(--label-3); }
 
 /* ---------------------------------------------------------------- the window */
+/* Just under the quick look: a file in a helper's conversation opens over it. */
+.ql.helpers { z-index: 69; }
 .helpers .ql-win { width: min(880px, calc(100vw - 48px)); }
 .helper-head .ql-icon .h-icon { width: 30px; height: 30px; }
 .helper-head .ql-icon .h-icon svg { width: 17px; height: 17px; stroke-width: 1.6; }

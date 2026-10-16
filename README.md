@@ -89,6 +89,10 @@ raised when it is already open.
 - "Terminal" in the sheet (a card's menu, Ctrl+` with the sheet open): a live shell in the
   session's folder, or the session's own terminal, to type into from the board. See
   [Terminal](#terminal).
+- Helpers and sessions working together: a card says when subagents, forks, workflow agents or
+  teammates of its session are at work, and which session started it; the sheet lists the
+  helpers, and each one's own conversation opens live. See
+  [Helpers and linked sessions](#helpers-and-linked-sessions).
 - Right click (or a long press on a touch screen, or the menu key / Shift+F10 on a focused card)
   opens the board's own menu: on a card (open, go to herdr, message, wake or sleep, rename, move
   to a category, status, "No reply needed", open its folder, Changes, History, a new session in
@@ -327,6 +331,72 @@ It runs commands on this computer, so:
 `POST /api/term/<key>/<agent|shell>/input` with `{ session, steps: [{ text } | { key }] }`.
 Code: `src/terminal.mjs` (the shell, the reads, the input), `web/terminal.js` (the window),
 `web/term-model.js` (ANSI, line diffs, links, the caret), `web/term-keys.js` (keys, both ends).
+
+## Helpers and linked sessions
+
+A session rarely works alone. Its helpers are what Claude Code runs for it: subagents (the Agent
+tool, in the background or while the session waits), forks, the agents of a workflow, and
+in-process teammates. Sessions in herdr also hand work to each other: one starts another with
+`spawn-agent` and they write to each other with SendMessage.
+
+- On a card, only while it is so: "3 helpers at work" with a dot for each (a subagent blue, a fork
+  purple, a workflow teal, a teammate in its own color) and what the newest one does. A session
+  whose turn is over can still have helpers at work; its card says so where it is. At its foot,
+  quietly, the session that started it (a click opens that one) and how many it started. Pointing
+  at a card, or tabbing to it, rings the cards of the sessions it works with. The toolbar counts
+  the helpers at work on the whole board.
+- In the sheet, above the conversation: the helpers at work, each with what it does now (the
+  call that runs, or "thinking after Read") and a running clock; with none at work, the newest one
+  in a line. "All" opens the list: at work, workflow runs with their agents, teammates, then the
+  finished ones, newest first. A helper another helper started goes under it.
+- A helper's row opens its own conversation in a window grown out of the row: what the session
+  asked it, its messages, its calls folded as in the session's thread, its report; read again
+  every second and a half while it works. The head says what it is (subagent, fork, workflow
+  agent, teammate; its type, name and model; in the background or not) and how it stands, the
+  foot how long it ran, its tool calls and its tokens (the last request's, as Claude Code counts a
+  subagent's). Backspace goes back to the list, Esc closes.
+- "Sessions" among the card's fields: each linked session once, marked when it started this one
+  or this one started it, with the messages each way. A name opens that session.
+- In the conversation, a call that works with others is a line of its own: a subagent, fork or
+  workflow it started (it opens the helper, with its status and clock), a message it sent to
+  another session or a teammate (it opens to the whole text), a session it started with
+  spawn-agent. Another session's or a teammate's message is a bubble with their name; an agent's
+  report has "Conversation" beside it.
+
+Where it comes from, all read, nothing written:
+
+- `~/.claude/projects/<project>/<session id>/subagents/agent-<id>.jsonl` is a helper's own
+  transcript and `agent-<id>.meta.json` says what it is (agentType, description, the tool call
+  that made it, `isFork`, `name`, `requestShape` background or foreground, `taskKind`
+  `in_process_teammate`, `parentAgentId` for one a helper started, `stoppedByUser`). Workflow
+  agents are under `subagents/workflows/<run>/`; a run's name and totals are in
+  `<session id>/workflows/<run>.json` once it is over, its name in
+  `workflows/scripts/<name>-<run>.js` while it runs. A teammate's team is
+  `~/.claude/teams/session-<id>/` (its members); the board needs only the helper files.
+- How a helper stands comes from the end of its transcript: its final answer (done; a teammate
+  then waits for its next message), a call without a result or the model at work (at work),
+  "Request interrupted" (stopped), an API error (failed). A helper that ended its turn while a
+  background command of its own, or an agent it started, is still out is at work: Claude Code
+  wakes it when that reports back (after an hour without a word, it counts as done). Only a
+  session whose Claude process runs has helpers at work, and only those that process wrote to:
+  what a process left half done before the session slept or restarted is stopped.
+- Who started whom: the `pane=<id> name=<name>` line spawn-agent prints, matched to the card in
+  that pane under that name (a pane id comes back once its tab is gone). Messages: the session's
+  SendMessage calls, and the messages that came in (Claude Code records the sender's name and the
+  pipe it writes from). A name is matched only when one session on the board goes by it; a reply
+  to a pipe, by the session that runs on that pipe now, else by who wrote from it.
+
+What it costs: a helper's meta file and the head and tail of its transcript are read once and
+again only when they change (time and size); a session's folder is listed again only when it
+changes. The links come from a read of each session's transcript in the background, once in
+full and then only what it gained, parsing only the lines with a marker (spawn-agent,
+SendMessage, a message from another session). A helper's whole conversation is read only when
+its window is open.
+
+`GET /api/session/<key>` carries `helpers` and `workflows`; `GET /api/session/<key>/helper/<id>`
+one helper with its conversation, where the id only picks among that session's own helpers. The
+board payload has each item's `helpers` (counts and the newest at work) and `links`. Code:
+`src/helpers.mjs`, `src/links.mjs`, `web/helpers.js` (the window), `web/helper-model.js`.
 
 ## Moving a card by hand
 
