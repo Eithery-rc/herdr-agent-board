@@ -143,6 +143,8 @@ export function cardMenu(it, ctx) {
     { id: 'focus', label: t(it.sleeping ? 'menu.wakeFocus' : 'menu.focus'), ...herdr() },
     // Looking needs no fresh data; typing and opening a shell wait for it in the window itself.
     ctx.terminal && (it.cwd || it.pane) && { id: 'terminal', label: t('term.open'), hint: 'Ctrl+`' },
+    // A MokuPilot call with a fork of the session: needs the board, not fresh herdr data.
+    ctx.mokupilot && claude && it.agent === 'claude' && { id: 'mokupilot', label: t('mokupilot.call'), ...edit() },
     { id: 'write', label: t('menu.write'), ...(it.pane ? {} : { disabled: true, reason: t('err.noPane') }) },
     it.sleeping
       ? { id: 'wake', label: t('sheet.wake'), ...herdr() }

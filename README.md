@@ -64,7 +64,7 @@ Steps 1 and 2 are what the board needs; the rest adds to it.
 `board doctor` (or `herdr plugin action invoke agent-board.doctor`) says what is set up and what
 is not, what each missing piece costs and how to fix it: the commands (and whether PowerShell or
 Git Bash finds someone else's of that name first), the hooks and the status line (and whether they
-run this copy of the plugin), the key, herdr-wake, how new sessions start, the notifications. The
+run this copy of the plugin), the key, herdr-wake, how new sessions start, MokuPilot, the notifications. The
 web board says it too, quietly: "Setup incomplete" in its toolbar while something the board needs
 does not work (see [Web board](#web-board)).
 
@@ -107,6 +107,13 @@ can go to the pane in herdr instead. The same goes to the board as `POST /api/re
   the moon on a card), "Wake" for sleeping sessions. To close: click the board beside it, flick
   it out the way it came, or Esc. Another card switches it to that session. Attachments stay
   with their session through a close.
+- "Call in MokuPilot" (the sheet, a card's menu), when [MokuPilot](https://github.com/MokuTeam/MokuPilot)
+  is on this computer: a MokuPilot call starts at once, its agent a fork of the session
+  (`claude --resume <id> --fork-session`, in the folder the session started in), so it knows what
+  the session knows while the session itself stays as it was. The board runs MokuPilot's launcher
+  with `call --claude-session <id> --cwd <folder>`; a running MokuPilot takes it over. Found by
+  itself (`MokuPilot.exe` where its installer puts it, else `meet` on PATH, `meet.cmd` standing
+  for its checkout) or set in [Settings](#settings) as `mokupilot`.
 - The sheet's place and size are the viewer's own (kept in this browser): docked right, left or
   at the bottom, flush with that edge like a sidebar, where the board makes room for it (a window
   too narrow for that keeps the board's columns and lays the sheet over them), or floating over
@@ -728,7 +735,11 @@ busy session, 240), `port` (web board, 12422), `web` (false turns the
 web board off), `terminal` (false turns the web board's [terminal](#terminal) off), `browser`
 (path for the app window), `terminalTitle` (window title pattern to
 raise, default `<COMPUTERNAME>:*`), `raiseTerminal`, `launch` (how new sessions start: `claude`,
-`command`, `agent`, `args`, `timeoutSec`, see [New sessions](#new-sessions)).
+`command`, `agent`, `args`, `timeoutSec`, see [New sessions](#new-sessions)), `mokupilot` (calls
+with a fork of a session: `false` turns them off; `{ "dir": "<MokuPilot checkout>" }` runs its
+`.venv` Python with `run.py` on Windows, its `meet` elsewhere; `{ "command": [...] }` a program
+and its first arguments, one per element, no shell, the board adding `call --claude-session <id>
+--cwd <folder>`, or the whole line when it has `{session}` or `{cwd}` in it).
 
 Cards: `%LOCALAPPDATA%\herdr\plugins\agent-board\cards\<session id>.json`.
 

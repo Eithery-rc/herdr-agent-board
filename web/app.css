@@ -813,7 +813,7 @@ div.notice, .notice > summary { display: flex; align-items: flex-start; gap: 7px
 .composer-actions { display: flex; gap: 6px; margin-bottom: 10px; overflow-x: auto; scrollbar-width: none; }
 .composer-actions::-webkit-scrollbar { display: none; }
 .composer-actions > .button { flex: none; }
-@container sheet (max-width: 819px) {
+@container sheet (max-width: 999px) {
   .composer-actions > .button:not(#sheet-focus):not(#sheet-more) { justify-content: center; width: 30px; padding: 0; }
   .composer-actions > .button:not(#sheet-focus):not(#sheet-more) > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 }
