@@ -1171,7 +1171,8 @@ function renderSheetHead() {
   $('#sheet-name').title = it.name
   const tokens = it.context >= 1000 ? `${Math.round(it.context / 1000)}k` : it.context
   const context = it.contextPct != null ? t('meta.contextPct', { pct: Math.round(it.contextPct), tokens }) : it.context ? t('meta.context', { tokens }) : ''
-  $('#sheet-meta').textContent = [catInfo(catOf(it)).title, it.workspace && t('meta.workspace', { name: it.workspace }), it.activity && (ago(it.activity) === t('ago.now') ? t('meta.activeNow') : t('meta.active', { ago: ago(it.activity) })), context].filter(Boolean).join(' · ')
+  // Each fact whole on its line: the line breaks between them, after a separator, never inside one.
+  $('#sheet-meta').innerHTML = [catInfo(catOf(it)).title, it.workspace && t('meta.workspace', { name: it.workspace }), it.activity && (ago(it.activity) === t('ago.now') ? t('meta.activeNow') : t('meta.active', { ago: ago(it.activity) })), context].filter(Boolean).map(part => `<span>${esc(part)}</span>`).join(' · ')
   $('#sheet-meta').title = context ? t('meta.contextHint') : ''
   $('#sheet-history').hidden = !it.session // a Claude project to look back in
   const term = $('#sheet-term')

@@ -17,9 +17,10 @@
   --label-2: rgba(60, 60, 67, 0.64);
   --label-3: rgba(60, 60, 67, 0.38);
   --separator: rgba(60, 60, 67, 0.14);
-  --material: rgba(245, 245, 247, 0.92);
+  --material: rgba(245, 245, 247, 0.96);
   --material-thick: rgba(250, 250, 252, 0.8);
   --panel: #fbfbfd;
+  --panel-float: #ffffff;
   --scroll: rgba(60, 60, 67, 0.28);
   --edge: rgba(255, 255, 255, 0.6);
   --shadow-card: 0 0 0 0.5px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.05), 0 4px 14px rgba(0, 0, 0, 0.035);
@@ -54,9 +55,10 @@
     --label-2: rgba(235, 235, 245, 0.62);
     --label-3: rgba(235, 235, 245, 0.32);
     --separator: rgba(84, 84, 88, 0.6);
-    --material: rgba(14, 14, 16, 0.92);
+    --material: rgba(14, 14, 16, 0.96);
     --material-thick: rgba(38, 38, 40, 0.78);
     --panel: #121214;
+    --panel-float: #242427;
     --scroll: rgba(235, 235, 245, 0.22);
     --edge: rgba(255, 255, 255, 0.08);
     --shadow-card: 0 0 0 0.5px rgba(255, 255, 255, 0.07), 0 1px 2px rgba(0, 0, 0, 0.5);
@@ -79,9 +81,10 @@
   --label-2: rgba(235, 235, 245, 0.62);
   --label-3: rgba(235, 235, 245, 0.32);
   --separator: rgba(84, 84, 88, 0.6);
-  --material: rgba(14, 14, 16, 0.92);
+  --material: rgba(14, 14, 16, 0.96);
   --material-thick: rgba(38, 38, 40, 0.78);
   --panel: #121214;
+  --panel-float: #242427;
   --scroll: rgba(235, 235, 245, 0.22);
   --edge: rgba(255, 255, 255, 0.08);
   --shadow-card: 0 0 0 0.5px rgba(255, 255, 255, 0.07), 0 1px 2px rgba(0, 0, 0, 0.5);
@@ -464,7 +467,7 @@ body.dragging { cursor: grabbing; }
   container: sheet / size;
   border-radius: 22px;
   /* A window of thick glass: the board only tints it, its text stays clear of what is behind. */
-  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  background: color-mix(in srgb, var(--panel-float) 94%, transparent);
   backdrop-filter: blur(40px) saturate(180%);
   -webkit-backdrop-filter: blur(40px) saturate(180%);
   box-shadow: var(--shadow-sheet), inset 0 0.5px 0 var(--edge);
@@ -576,7 +579,8 @@ body.panel-resizing, body.panel-resizing * { cursor: var(--grab-cursor) !importa
 
 .sheet-title { flex: 1; min-width: 0; }
 .sheet-title h2 { margin: 6px 0 0; font: 700 22px/1.15 var(--font-display); letter-spacing: -0.018em; overflow-wrap: anywhere; }
-.sheet-meta { margin: 4px 0 0; font-size: 12.5px; color: var(--label-2); text-wrap: pretty; }
+.sheet-meta { margin: 4px 0 0; font-size: 12.5px; color: var(--label-2); }
+.sheet-meta > span { white-space: nowrap; }
 .sheet-properties-toggle, #sheet-more { display: none; }
 .sheet-question { flex: 0 1 auto; min-height: 0; max-height: 24vh; overflow: auto; padding: 0 18px 10px 22px; }
 .sheet-question .asked { margin: 0; }
@@ -1386,7 +1390,7 @@ button.swatch:active { transform: scale(0.88); }
 .limits .warm b { color: var(--orange); }
 .limits .hot b { color: var(--red); }
 .limits.stale { opacity: 0.55; }
-.limits { border: 0; min-height: 28px; font-family: inherit; }
+.limits { align-items: center; border: 0; min-height: 28px; font-family: inherit; }
 .limits-pop { position: fixed; z-index: 65; width: min(340px, calc(100vw - 16px)); max-height: calc(100dvh - 16px); overflow: auto; padding: 14px; border-radius: 14px; background: var(--material-thick); backdrop-filter: blur(30px); box-shadow: var(--shadow-lift); font-size: 13px; outline: none; }
 .limits-pop header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .limits-pop h3 { margin: 0; font-size: 15px; }
