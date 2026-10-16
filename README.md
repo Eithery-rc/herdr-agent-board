@@ -83,7 +83,13 @@ board: exit code 3 means the board does not run or has no session in that pane, 
 can go to the pane in herdr instead. The same goes to the board as `POST /api/reveal` with
 `{ "pane": "<id>" }` or `{ "key": "<session>" }`.
 
-- Lanes by category, columns by state, live over Server-Sent Events.
+- Lanes by category, columns by state, live over Server-Sent Events. A column with no card on
+  show narrows to its head (name and count) and the others share its room, gliding as it fills
+  or empties.
+- One compact toolbar row: the title with the board's summary under it while the row has room
+  (else in the title's tooltip), the lanes, search, and the rarer toggles (asleep, categories,
+  schedule, language) as small buttons named by their tooltips. A narrower window takes two
+  rows, a phone three.
 - A card says what the session works on (its own `board doing`, else Claude's title of the
   session, else "You: <your last request>"), its last words, the tool it runs now, the question
   it is stuck on, what it waits for.
@@ -100,7 +106,9 @@ can go to the pane in herdr instead. The same goes to the board as `POST /api/re
   it out the way it came, or Esc. Another card switches it to that session. Attachments stay
   with their session through a close.
 - The sheet's place and size are the viewer's own (kept in this browser): docked right, left or
-  at the bottom, where the board makes room for it, or floating over the board. The button in
+  at the bottom, flush with that edge like a sidebar, where the board makes room for it (a window
+  too narrow for that keeps the board's columns and lays the sheet over them), or floating over
+  the board as a window of its own. The button in
   its head picks the place; or pull the sheet by its head until it comes loose and throw it to
   an edge (a preview shows where it lands). Its inner edge resizes it (double-click: the default
   size; arrow keys once it has focus; flung narrower than half the smallest size, it folds
@@ -613,7 +621,7 @@ finished, without its words.
 
 ## Language
 
-English and Russian. The globe button on the web board's toolbar switches between them; the
+English and Russian. The language button (EN or RU) on the web board's toolbar switches between them; the
 choice is `language` in config.json (`"auto"`, the default, follows the system's language,
 English when there is no dictionary for it). A switch reaches at once the web board, the
 terminal board, error messages, and the agents' next brief, which tells them the language to

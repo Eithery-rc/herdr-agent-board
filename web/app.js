@@ -366,6 +366,7 @@ function renderToolbar(visible) {
   if (helping) parts.push(`<b>${helping}</b> ${t('sum.helpers', { n: helping })}`)
   if (asleep) parts.push(`${asleep} ${t('sum.asleep', { n: asleep })}`)
   $('#summary').innerHTML = parts.join(' · ')
+  $('.titles').title = $('#summary').textContent // the summary hides in a narrower toolbar
   const attentionCount = visible.filter(it => !it.launchOnly && laneShown(catOf(it)) && (it.column === 'me' || unseenResult(it, viewed))).length
   const next = $('#next-attention')
   next.disabled = !attentionCount
@@ -395,13 +396,44 @@ function renderToolbar(visible) {
   }
   for (const b of seg.querySelectorAll('button')) b.setAttribute('aria-selected', String(b.dataset.id === state.filter))
   placeThumb(false)
+  fadeLanes()
 
-  // Column heads with counts.
+  // Column heads with counts; a column without cards narrows to its head.
+  const shown = visible.filter(i => laneShown(catOf(i)))
+  const filled = state.data.columns.map(c => shown.some(i => colOf(i) === c.id))
   const head = $('#columns-head')
   const html = state.data.columns
-    .map(c => `<div class="col-head"><span class="dot" style="--c:${COLORS[c.id]}"></span>${esc(colTitle(c.id))}<span class="n">${visible.filter(i => i.column === c.id && laneShown(catOf(i))).length}</span></div>`)
+    .map((c, k) => `<div class="col-head${filled[k] ? '' : ' vacant'}"><span class="dot" style="--c:${COLORS[c.id]}"></span><span class="t">${esc(colTitle(c.id))}</span><span class="n">${shown.filter(i => i.column === c.id).length}</span></div>`)
     .join('')
   if (head.innerHTML !== html) head.innerHTML = html
+  // Nothing on show at all: the columns keep their even widths.
+  fitColumns(state.data.columns.map(c => c.id), filled.some(Boolean) ? filled : filled.map(() => true))
+}
+
+// Each column's share of the board's width: 1 with cards, 0 without, when it keeps only its
+// minimum (--col-min, the head's width). The shares move on springs, so cards glide to their new
+// width when a column fills or empties instead of the board jumping.
+const colShares = new Map() // column id -> Spring
+let colIds = []
+let colsQueued = false
+function fitColumns(ids, filled) {
+  colIds = ids
+  ids.forEach((id, k) => {
+    const want = filled[k] ? 1 : 0
+    const share = colShares.get(id)
+    if (!share) colShares.set(id, new Spring({ value: want, damping: 1, response: 0.4, precision: 0.002, onUpdate: queueColumns }))
+    else if (share.target !== want) share.to(want)
+  })
+  queueColumns()
+}
+function queueColumns() {
+  if (colsQueued) return
+  colsQueued = true
+  queueMicrotask(() => {
+    colsQueued = false
+    const tracks = colIds.map(id => `minmax(var(--col-min), ${Math.max(0, colShares.get(id).value).toFixed(3)}fr)`)
+    document.documentElement.style.setProperty('--cols', tracks.join(' '))
+  })
 }
 
 /** Claude's usage windows from the usagebar cache, when there is one: a small pill by the live dot. */
@@ -467,6 +499,15 @@ function placeThumb(jump) {
     segThumb.w.to(w)
   }
 }
+
+/** The lanes control fades at an edge with more lanes past it. */
+function fadeLanes() {
+  const seg = $('#lanes')
+  const hidden = seg.scrollWidth - seg.clientWidth
+  seg.classList.toggle('fade-start', seg.scrollLeft > 1)
+  seg.classList.toggle('fade-end', hidden - seg.scrollLeft > 1)
+}
+$('#lanes').addEventListener('scroll', fadeLanes, { passive: true })
 
 const laneShown = cat => state.filter === 'all' || state.filter === cat
 
@@ -2324,7 +2365,10 @@ addEventListener('keydown', e => {
   }
 })
 addEventListener('scroll', () => $('.toolbar').classList.toggle('scrolled', scrollY > 2), { passive: true })
-addEventListener('resize', () => placeThumb(true))
+addEventListener('resize', () => {
+  placeThumb(true)
+  fadeLanes()
+})
 setInterval(render, 30_000) // ages
 
 applyTexts()
@@ -2340,7 +2384,7 @@ $('#sheet-history').addEventListener('click', e => state.open && files.lookHisto
 // the menus and Shift+N, and grows out of whichever it was.
 {
   const button = document.createElement('button')
-  button.className = 'pill-toggle new-session'
+  button.className = 'pill-toggle icon-only new-session'
   button.id = 'new-session'
   button.dataset.hint = 'launch.toolbarHint'
   button.innerHTML = `${ICON.plus}<span data-i18n="launch.toolbar"></span>`

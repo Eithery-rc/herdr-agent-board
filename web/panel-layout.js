@@ -1,10 +1,13 @@
 // Where the side panel sits and how big it is: plain geometry, shared by the page (panel.js) and
-// the tests. A panel docks right, left or at the bottom, where the board makes room for it, or
-// floats over the board. Rectangles are { x, y, w, h } in CSS pixels of the window `vp` ({ w, h }).
+// the tests. A panel docks right, left or at the bottom, flush with the window's edge like a
+// sidebar, where the board makes room for it, or floats over the board as a window inset from the
+// edges. A window too narrow to make room beside a side panel gets it over the board, inset like
+// a floating one (Slide Over, where room is Split View). Rectangles are { x, y, w, h } in CSS
+// pixels of the window `vp` ({ w, h }).
 import { project, rubberband } from './spring.js'
 
 export const DOCKS = ['right', 'left', 'bottom', 'float']
-/** The panel's inset from the window's edges. */
+/** A floating panel's inset from the window's edges; a docked one sits on them. */
 export const MARGIN = 12
 /** A docked panel leaves the board at least this much: width beside it, height above it. */
 export const BOARD_MIN = { w: 320, h: 180 }
@@ -20,8 +23,8 @@ const finite = v => typeof v === 'number' && Number.isFinite(v)
 
 /** Smallest and largest size (width beside, height at the bottom) of a panel docked at `dock`. */
 export function sizeLimits(dock, vp) {
-  if (dock === 'bottom') return { min: MIN.bottom, max: Math.max(MIN.bottom, vp.h - 2 * MARGIN - BOARD_MIN.h) }
-  return { min: MIN.side, max: Math.max(MIN.side, Math.min(MAX_SIDE, vp.w - 2 * MARGIN - BOARD_MIN.w)) }
+  if (dock === 'bottom') return { min: MIN.bottom, max: Math.max(MIN.bottom, vp.h - BOARD_MIN.h) }
+  return { min: MIN.side, max: Math.max(MIN.side, Math.min(MAX_SIDE, vp.w - BOARD_MIN.w)) }
 }
 
 export function floatLimits(vp) {
@@ -35,11 +38,26 @@ export function dockSize(layout, dock, vp) {
   return clamp(own ?? (dock === 'bottom' ? Math.round(vp.h * DEFAULT.bottom) : DEFAULT.side), min, max)
 }
 
-/** A docked panel's rectangle at `size`, unlimited: a drag shows sizes past the limits, softened. */
-export function dockRect(dock, size, vp) {
-  if (dock === 'left') return { x: MARGIN, y: MARGIN, w: size, h: vp.h - 2 * MARGIN }
-  if (dock === 'bottom') return { x: MARGIN, y: vp.h - MARGIN - size, w: vp.w - 2 * MARGIN, h: size }
-  return { x: vp.w - MARGIN - size, y: MARGIN, w: size, h: vp.h - 2 * MARGIN }
+/**
+ * A docked panel's rectangle at `size`, unlimited: a drag shows sizes past the limits, softened.
+ * `inset`: its distance from the window's edges, when it lies over the board.
+ */
+export function dockRect(dock, size, vp, inset = 0) {
+  if (dock === 'left') return { x: inset, y: inset, w: size, h: vp.h - 2 * inset }
+  if (dock === 'bottom') return { x: 0, y: vp.h - size, w: vp.w, h: size }
+  return { x: vp.w - inset - size, y: inset, w: size, h: vp.h - 2 * inset }
+}
+
+/** Does a panel docked at a side lie over the board, the window too narrow to make room beside it? */
+export function overlays(layout, vp) {
+  return (layout.dock === 'left' || layout.dock === 'right') && !roomFor(layout, vp)[layout.dock]
+}
+
+/** What a side panel lying over the board takes of the toolbar's width, per side, so its controls stay clear of it. */
+export function overFor(layout, vp) {
+  const over = { left: 0, right: 0 }
+  if (overlays(layout, vp)) over[layout.dock] = dockSize(layout, layout.dock, vp) + MARGIN
+  return over
 }
 
 /** A floating panel, whole and inside the window. */
@@ -53,14 +71,14 @@ export function clampFloat(r, vp) {
 /** A floating panel before the viewer has placed one: by the right edge, below the toolbar's controls. */
 export function defaultFloat(vp) {
   const w = DEFAULT.w
-  const h = Math.min(DEFAULT.h, vp.h - 176)
-  return clampFloat({ x: vp.w - w - 48, y: 152, w, h }, vp)
+  const h = Math.min(DEFAULT.h, vp.h - 132)
+  return clampFloat({ x: vp.w - w - 48, y: 108, w, h }, vp)
 }
 
 /** Where the panel rests for `layout` ({ dock, side, bottom, float }). */
 export function rectFor(layout, vp) {
   if (layout.dock === 'float') return clampFloat(layout.float ?? defaultFloat(vp), vp)
-  return dockRect(layout.dock, dockSize(layout, layout.dock, vp), vp)
+  return dockRect(layout.dock, dockSize(layout, layout.dock, vp), vp, overlays(layout, vp) ? MARGIN : 0)
 }
 
 /** Where a docked panel comes in from and leaves to: just past its own edge. A floating one fades in place. */
@@ -75,7 +93,7 @@ export function offRect(dock, r) {
 export function roomFor(layout, vp) {
   const room = { left: 0, right: 0, bottom: 0 }
   if (layout.dock !== 'float') {
-    const size = dockSize(layout, layout.dock, vp) + MARGIN
+    const size = dockSize(layout, layout.dock, vp)
     // At modest desktop widths the side panel overlays the board. Its dock, size,
     // drag handles and saved preference stay intact; a wide window still makes room.
     if (layout.dock === 'bottom' || vp.w - size >= BOARD_COLUMNS_MIN) room[layout.dock] = size

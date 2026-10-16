@@ -17,8 +17,10 @@
   --label-2: rgba(60, 60, 67, 0.64);
   --label-3: rgba(60, 60, 67, 0.38);
   --separator: rgba(60, 60, 67, 0.14);
-  --material: rgba(245, 245, 247, 0.72);
+  --material: rgba(245, 245, 247, 0.92);
   --material-thick: rgba(250, 250, 252, 0.8);
+  --panel: #fbfbfd;
+  --scroll: rgba(60, 60, 67, 0.28);
   --edge: rgba(255, 255, 255, 0.6);
   --shadow-card: 0 0 0 0.5px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.05), 0 4px 14px rgba(0, 0, 0, 0.035);
   --shadow-lift: 0 0 0 0.5px rgba(0, 0, 0, 0.06), 0 18px 40px rgba(0, 0, 0, 0.16), 0 4px 12px rgba(0, 0, 0, 0.08);
@@ -36,6 +38,7 @@
   --gutter: 28px;
   --gap: 12px;
   --cols: repeat(5, minmax(0, 1fr));
+  --col-min: 136px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -48,8 +51,10 @@
     --label-2: rgba(235, 235, 245, 0.62);
     --label-3: rgba(235, 235, 245, 0.32);
     --separator: rgba(84, 84, 88, 0.6);
-    --material: rgba(18, 18, 20, 0.72);
+    --material: rgba(14, 14, 16, 0.92);
     --material-thick: rgba(38, 38, 40, 0.78);
+    --panel: #121214;
+    --scroll: rgba(235, 235, 245, 0.22);
     --edge: rgba(255, 255, 255, 0.08);
     --shadow-card: 0 0 0 0.5px rgba(255, 255, 255, 0.07), 0 1px 2px rgba(0, 0, 0, 0.5);
     --shadow-lift: 0 0 0 0.5px rgba(255, 255, 255, 0.1), 0 20px 50px rgba(0, 0, 0, 0.6);
@@ -64,7 +69,9 @@
 }
 
 * { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; }
+/* Quiet scrollbars: a thin thumb on no track, so the board's bar beside a docked panel reads as
+   part of the window, not as a strip of its own. */
+html { -webkit-text-size-adjust: 100%; scrollbar-width: thin; scrollbar-color: var(--scroll) transparent; }
 body {
   margin: 0;
   min-height: 100vh;
@@ -89,28 +96,63 @@ svg .fill { fill: currentColor; stroke: none; opacity: 0.32; }
 }
 
 /* ---------------------------------------------------------------- toolbar */
+/* One compact row, like a window's unified toolbar: the title with its summary as a subtitle on
+   the left, the controls on the right, the column heads under them. Rarely used toggles are
+   icons; their names stay for screen readers and tooltips. A narrow page wraps the row (below). */
 .toolbar {
   position: sticky;
   top: 0;
   z-index: 20;
-  padding: 18px var(--gutter) 0;
+  padding: 10px var(--gutter) 0;
   background: var(--material);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   transition: box-shadow 200ms ease;
 }
+/* The row's own width: the page's, less a side panel lying over the board (panel.js), so the
+   controls stay clear of it and lay themselves out for what is left. */
+.toolbar-fit { container: tools / inline-size; margin: 0 var(--over-right, 0px) 0 var(--over-left, 0px); }
 /* Scroll edge: a hairline only once content actually runs under the bar. */
 .toolbar.scrolled { box-shadow: 0 0.5px 0 var(--separator), 0 8px 24px -16px rgba(0, 0, 0, 0.2); }
-.toolbar-row { display: flex; align-items: flex-end; gap: 20px; flex-wrap: wrap; }
-.titles { flex: 1 1 auto; min-width: 200px; }
+.toolbar-row { display: flex; align-items: center; gap: 16px; min-height: 40px; }
+.titles { flex: 1 0 auto; min-width: 0; }
 h1 {
   margin: 0;
-  font: 700 28px/1.08 var(--font-display);
-  letter-spacing: -0.022em;
+  font: 700 19px/1.15 var(--font-display);
+  letter-spacing: -0.016em;
+  white-space: nowrap;
 }
-.summary { margin: 4px 0 0; font-size: 13px; color: var(--label-2); font-variant-numeric: tabular-nums; }
+.summary { margin: 1px 0 0; overflow: hidden; font-size: 12px; color: var(--label-2); font-variant-numeric: tabular-nums; white-space: nowrap; text-overflow: ellipsis; }
 .summary b { color: var(--label); font-weight: 600; }
-.controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; max-width: 100%; }
+.controls { display: flex; flex: 0 1 auto; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
+.controls > * { flex: none; }
+.controls > .segmented { flex: 0 1 auto; min-width: 0; }
+/* An icon in place of a label; the label is still its name. */
+.pill-toggle.icon-only { justify-content: center; min-width: 28px; padding: 0 7px; }
+.pill-toggle.icon-only > span[data-i18n] { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.pill-toggle:hover:not(:disabled) { color: var(--label); }
+#lang { padding: 0 9px; font-variant-numeric: tabular-nums; }
+#lang svg { display: none; }
+#next-attention:disabled { opacity: 0.45; }
+/* The summary rides under the title while the row has room for it; its words are the title's tooltip too. */
+@container tools (max-width: 1580px) { .summary { display: none; } }
+/* Less room: the title and the buttons on top, the lanes and search on a second row. A phone
+   gives the lanes a row of their own, and search shares the third with what needs you. */
+@container tools (max-width: 1200px) {
+  .toolbar-row { flex-wrap: wrap; gap: 0 6px; }
+  .toolbar-row::after { content: ""; order: 2; flex: 0 0 100%; }
+  .controls { display: contents; }
+  .titles { order: 0; flex: 1 1 auto; margin-right: 10px; }
+  .controls > * { order: 1; }
+  .controls > .segmented, .controls > .search { order: 3; margin-top: 8px; }
+  .controls > .search { flex: 1 1 200px; min-width: 120px; }
+  .search input { width: 100%; min-width: 0; }
+}
+@container tools (max-width: 560px) {
+  .controls > .segmented { flex: 1 0 100%; }
+  .controls > .search, #next-attention, .limits, .live { order: 4; margin-top: 8px; }
+  .controls > .search { flex: 1 1 90px; min-width: 0; }
+}
 
 /* Never wider than the page (a phone, a board beside a wide panel): it scrolls in its own row. */
 .segmented {
@@ -124,6 +166,10 @@ h1 {
   scrollbar-width: none;
 }
 .segmented::-webkit-scrollbar { display: none; }
+/* Lanes past the edge fade out there, so the strip reads as one that scrolls (app.js). */
+.segmented.fade-end { mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+.segmented.fade-start { mask-image: linear-gradient(to right, transparent, #000 28px); }
+.segmented.fade-start.fade-end { mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
 .segmented button {
   position: relative;
   z-index: 1;
@@ -176,6 +222,7 @@ h1 {
   color: var(--label-2);
   font-size: 12.5px;
   font-weight: 500;
+  white-space: nowrap;
   transition: transform 100ms ease-out, background 150ms ease;
 }
 .pill-toggle[aria-pressed="true"] { color: var(--label); }
@@ -190,10 +237,15 @@ h1 {
   display: grid;
   grid-template-columns: var(--cols);
   gap: var(--gap);
-  padding: 16px 0 10px;
+  padding: 8px 0 8px;
 }
-.col-head { display: flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600; color: var(--label-2); letter-spacing: 0.01em; }
-.col-head .n { font-weight: 500; color: var(--label-3); font-variant-numeric: tabular-nums; }
+.col-head { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 12.5px; font-weight: 600; color: var(--label-2); letter-spacing: 0.01em; }
+.col-head .t { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.col-head .n { flex: none; font-weight: 500; color: var(--label-3); font-variant-numeric: tabular-nums; }
+/* An empty column keeps a narrow strip with its name and count; the room goes to the others,
+   while a card stays a card's width however wide its column grows. */
+.col-head.vacant { color: var(--label-3); }
+@container page (min-width: 961px) { .col { max-width: 560px; } }
 
 /* ---------------------------------------------------------------- board */
 .board { padding: 4px var(--gutter) max(140px, calc(var(--room-bottom, 0px) + 28px)); }
@@ -394,6 +446,23 @@ body.dragging { cursor: grabbing; }
   touch-action: pan-y;
 }
 .sheet.open { visibility: visible; }
+/* Docked, it is part of the window: flush with its edge and square there, solid, set off from
+   the board by a hairline and a soft shadow (it can lie over the board in a narrower window).
+   Floating, it stays a window of glass, inset and rounded. */
+.sheet[data-dock="right"], .sheet[data-dock="left"], .sheet[data-dock="bottom"] {
+  border-radius: 0;
+  background: var(--panel);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.sheet[data-dock="right"] { box-shadow: -1px 0 0 var(--separator), -20px 0 44px -30px rgba(0, 0, 0, 0.5); }
+.sheet[data-dock="left"] { box-shadow: 1px 0 0 var(--separator), 20px 0 44px -30px rgba(0, 0, 0, 0.5); }
+.sheet[data-dock="bottom"] { box-shadow: 0 -1px 0 var(--separator), 0 -20px 44px -30px rgba(0, 0, 0, 0.5); }
+.sheet.over {
+  border-radius: 22px;
+  background: var(--panel);
+  box-shadow: var(--shadow-sheet), inset 0 0.5px 0 var(--edge);
+}
 .sheet-inner { position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; border-radius: inherit; }
 .sheet-grip { display: none; position: absolute; z-index: 2; left: 6px; top: 50%; width: 4px; height: 40px; margin-top: -20px; border-radius: 2px; background: var(--label-3); opacity: 0.35; cursor: grab; touch-action: none; }
 .sheet[data-dock="left"] .sheet-grip { left: auto; right: 6px; }
@@ -437,13 +506,13 @@ body.panel-grabbing, body.panel-resizing { user-select: none; -webkit-user-selec
 body.panel-grabbing, body.panel-grabbing * { cursor: grabbing !important; }
 body.panel-resizing, body.panel-resizing * { cursor: var(--grab-cursor) !important; }
 
-/* Where a panel let go now would dock: grown out of the panel, on springs (panel.js). */
+/* Where a panel let go now would dock: grown out of the panel, on springs (panel.js). Square,
+   as the docked panel is, unless it would lie over the board. */
 .dock-preview {
   position: fixed;
   top: 0;
   left: 0;
   z-index: 39;
-  border-radius: 22px;
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 50%, transparent);
   backdrop-filter: blur(8px) saturate(140%);
@@ -451,6 +520,7 @@ body.panel-resizing, body.panel-resizing * { cursor: var(--grab-cursor) !importa
   pointer-events: none;
   will-change: transform, opacity;
 }
+.dock-preview.over { border-radius: 22px; }
 
 /* The place menu, out of the button in the panel's head. */
 .layout-menu {
@@ -480,7 +550,7 @@ body.panel-resizing, body.panel-resizing * { cursor: var(--grab-cursor) !importa
 
 .sheet-title { flex: 1; min-width: 0; }
 .sheet-title h2 { margin: 6px 0 0; font: 700 22px/1.15 var(--font-display); letter-spacing: -0.018em; overflow-wrap: anywhere; }
-.sheet-meta { margin: 4px 0 0; font-size: 12.5px; color: var(--label-2); }
+.sheet-meta { margin: 4px 0 0; font-size: 12.5px; color: var(--label-2); text-wrap: pretty; }
 .sheet-properties-toggle, #sheet-more { display: none; }
 .sheet-question { flex: 0 1 auto; min-height: 0; max-height: 24vh; overflow: auto; padding: 0 18px 10px 22px; }
 .sheet-question .asked { margin: 0; }
@@ -515,7 +585,7 @@ body.panel-resizing, body.panel-resizing * { cursor: var(--grab-cursor) !importa
   overscroll-behavior: contain;
   padding: 2px 18px 16px 22px;
   /* Scroll edge: content fades under the head and the composer instead of a hard line. */
-  mask-image: linear-gradient(transparent, #000 10px, #000 calc(100% - 14px), transparent);
+  mask-image: linear-gradient(transparent, #000 18px, #000 calc(100% - 14px), transparent);
 }
 .detail-status { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px; margin: 4px 0 8px; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--orange) 12%, var(--surface)); font-size: 12px; }
 .detail-status span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
@@ -708,7 +778,15 @@ div.notice, .notice > summary { display: flex; align-items: flex-start; gap: 7px
 .notice-body > pre { margin: 0; font: 11.5px/1.5 var(--mono); white-space: pre-wrap; }
 
 .composer { padding: 10px 14px 14px 18px; }
-.composer-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+/* One row: going to the session keeps its words; the rest are icons named by their tooltips
+   while the panel is narrow, and spell themselves out once it is wide enough. */
+.composer-actions { display: flex; gap: 6px; margin-bottom: 10px; overflow-x: auto; scrollbar-width: none; }
+.composer-actions::-webkit-scrollbar { display: none; }
+.composer-actions > .button { flex: none; }
+@container sheet (max-width: 819px) {
+  .composer-actions > .button:not(#sheet-focus):not(#sheet-more) { justify-content: center; width: 30px; padding: 0; }
+  .composer-actions > .button:not(#sheet-focus):not(#sheet-more) > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
 .button {
   display: inline-flex;
   align-items: center;
@@ -1385,12 +1463,12 @@ button.swatch:active { transform: scale(0.88); }
 /* The page's own width, not the window's: a docked panel narrows it. */
 @container page (max-width: 960px) {
   .toolbar, .board { --gutter: 16px; }
+  .toolbar { padding-bottom: 10px; }
   .columns-head { display: none; }
   .lane-grid { grid-template-columns: 1fr; }
   .col:not(.has-cards) { display: none; }
   body.dragging .col:not([data-col="work"]) { display: flex; }
   .col-label { display: flex; align-items: center; gap: 6px; margin: 4px 0 0 2px; font-size: 12px; font-weight: 600; color: var(--label-2); }
-  .search input { width: 110px; }
 }
 
 /* ---------------------------------------------------------------- accessibility */

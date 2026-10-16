@@ -13,6 +13,8 @@ import {
   MARGIN,
   MIN,
   offRect,
+  overFor,
+  overlays,
   rectFor,
   resizeFloat,
   restoreLayout,
@@ -35,8 +37,8 @@ test('the panel lands on whole device pixels, so its text stays sharp', () => {
 
 test('size limits leave the board its room and never invert in a small window', () => {
   assert.deepEqual(sizeLimits('right', vp), { min: 360, max: 1200 })
-  assert.deepEqual(sizeLimits('left', { w: 1000, h: 800 }), { min: 360, max: 1000 - 2 * MARGIN - 320 })
-  assert.deepEqual(sizeLimits('bottom', vp), { min: 320, max: 1000 - 2 * MARGIN - 180 })
+  assert.deepEqual(sizeLimits('left', { w: 1000, h: 800 }), { min: 360, max: 1000 - 320 })
+  assert.deepEqual(sizeLimits('bottom', vp), { min: 320, max: 1000 - 180 })
   const tiny = { w: 700, h: 400 }
   for (const dock of ['right', 'bottom']) {
     const { min, max } = sizeLimits(dock, tiny)
@@ -51,14 +53,14 @@ test('docked sizes: the viewer’s own within today’s limits, else the default
   assert.equal(dockSize({ ...fresh, side: 100 }, 'right', vp), MIN.side)
   // A wide panel in a narrower window: shown smaller, kept as chosen for the next wide window.
   const wide = { ...fresh, side: 900 }
-  assert.equal(dockSize(wide, 'right', { w: 1000, h: 800 }), 1000 - 24 - 320)
+  assert.equal(dockSize(wide, 'right', { w: 1000, h: 800 }), 1000 - 320)
   assert.equal(wide.side, 900)
 })
 
-test('rectangles per dock, and the way in and out along the same edge', () => {
-  assert.deepEqual(rectFor(fresh, vp), { x: 1600 - 12 - 560, y: 12, w: 560, h: 976 })
-  assert.deepEqual(rectFor({ ...fresh, dock: 'left' }, vp), { x: 12, y: 12, w: 560, h: 976 })
-  assert.deepEqual(rectFor({ ...fresh, dock: 'bottom' }, vp), { x: 12, y: 1000 - 12 - 420, w: 1576, h: 420 })
+test('rectangles per dock, flush with the window like a sidebar, and the way in and out along the same edge', () => {
+  assert.deepEqual(rectFor(fresh, vp), { x: 1600 - 560, y: 0, w: 560, h: 1000 })
+  assert.deepEqual(rectFor({ ...fresh, dock: 'left' }, vp), { x: 0, y: 0, w: 560, h: 1000 })
+  assert.deepEqual(rectFor({ ...fresh, dock: 'bottom' }, vp), { x: 0, y: 1000 - 420, w: 1600, h: 420 })
   const right = rectFor(fresh, vp)
   assert.ok(offRect('right', right).x >= vp.w)
   const left = rectFor({ ...fresh, dock: 'left' }, vp)
@@ -68,14 +70,27 @@ test('rectangles per dock, and the way in and out along the same edge', () => {
   assert.deepEqual(offRect('float', right), right)
 })
 
+test('a side panel the window has no room for lies over the board, inset like a window, and keeps the toolbar clear', () => {
+  const laptop = { w: 1440, h: 900 }
+  assert.equal(overlays(fresh, laptop), true)
+  assert.deepEqual(rectFor(fresh, laptop), { x: 1440 - 12 - 560, y: 12, w: 560, h: 876 })
+  assert.deepEqual(rectFor({ ...fresh, dock: 'left' }, laptop), { x: 12, y: 12, w: 560, h: 876 })
+  assert.deepEqual(overFor(fresh, laptop), { left: 0, right: 572 })
+  assert.deepEqual(overFor({ ...fresh, dock: 'left' }, laptop), { left: 572, right: 0 })
+  assert.equal(overlays(fresh, vp), false)
+  assert.deepEqual(overFor(fresh, vp), { left: 0, right: 0 })
+  assert.equal(overlays({ ...fresh, dock: 'bottom' }, laptop), false)
+  assert.equal(overlays({ ...fresh, dock: 'float' }, laptop), false)
+})
+
 test('the board makes room without collapsing columns at modest desktop widths', () => {
   assert.deepEqual(roomFor(fresh, { ...vp, w: 1440 }), { left: 0, right: 0, bottom: 0 })
-  assert.deepEqual(roomFor(fresh, { ...vp, w: 1800 }), { left: 0, right: 572, bottom: 0 })
+  assert.deepEqual(roomFor(fresh, { ...vp, w: 1800 }), { left: 0, right: 560, bottom: 0 })
   assert.deepEqual(roomFor({ ...fresh, dock: 'left' }, { ...vp, w: 1440 }), { left: 0, right: 0, bottom: 0 })
-  assert.deepEqual(roomFor({ ...fresh, dock: 'left' }, { ...vp, w: 1800 }), { left: 572, right: 0, bottom: 0 })
-  assert.deepEqual(roomFor(fresh, { ...vp, w: 1532 }), { left: 0, right: 0, bottom: 0 })
-  assert.deepEqual(roomFor(fresh, { ...vp, w: 1533 }), { left: 0, right: 572, bottom: 0 })
-  assert.deepEqual(roomFor({ ...fresh, dock: 'bottom', bottom: 400 }, vp), { left: 0, right: 0, bottom: 412 })
+  assert.deepEqual(roomFor({ ...fresh, dock: 'left' }, { ...vp, w: 1800 }), { left: 560, right: 0, bottom: 0 })
+  assert.deepEqual(roomFor(fresh, { ...vp, w: 1520 }), { left: 0, right: 0, bottom: 0 })
+  assert.deepEqual(roomFor(fresh, { ...vp, w: 1521 }), { left: 0, right: 560, bottom: 0 })
+  assert.deepEqual(roomFor({ ...fresh, dock: 'bottom', bottom: 400 }, vp), { left: 0, right: 0, bottom: 400 })
   assert.deepEqual(roomFor({ ...fresh, dock: 'float' }, vp), { left: 0, right: 0, bottom: 0 })
 })
 

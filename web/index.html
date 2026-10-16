@@ -16,6 +16,7 @@
 <body>
   <div class="page">
   <header class="toolbar">
+    <div class="toolbar-fit">
     <div class="toolbar-row">
       <div class="titles">
         <h1 data-i18n="tb.title">Agents</h1>
@@ -27,15 +28,15 @@
           <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg>
           <input id="search" type="search" placeholder="Search" data-i18n-placeholder="tb.search" autocomplete="off" spellcheck="false">
         </label>
-        <button class="pill-toggle" id="sleepers" aria-pressed="true" title="Show sleeping sessions" data-i18n-title="tb.sleepersTitle">
+        <button class="pill-toggle icon-only" id="sleepers" aria-pressed="true" title="Show sleeping sessions" data-i18n-title="tb.sleepersTitle">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15.5 12.2A6.5 6.5 0 0 1 7.8 4.5a6.5 6.5 0 1 0 7.7 7.7Z"/></svg>
           <span data-i18n="tb.sleepers">Asleep</span>
         </button>
-        <button class="pill-toggle" id="cats-open" title="Categories: titles, colors, folders, order" data-i18n-title="tb.catsTitle">
+        <button class="pill-toggle icon-only" id="cats-open" title="Categories: titles, colors, folders, order" data-i18n-title="tb.catsTitle">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 4.5h6l7 7-5 5-7-7Z"/><circle cx="7" cy="8" r="1.1"/></svg>
           <span data-i18n="tb.cats">Categories</span>
         </button>
-        <button class="pill-toggle" id="sched-open" title="Reminders and repeating pings the agents set" data-i18n-title="tb.schedTitle">
+        <button class="pill-toggle icon-only" id="sched-open" title="Reminders and repeating pings the agents set" data-i18n-title="tb.schedTitle">
           <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="11" r="6"/><path d="M10 8v3.2l2 1.3M3.6 5.4 6 3.3M16.4 5.4 14 3.3"/></svg>
           <span data-i18n="tb.sched">Schedule</span>
           <span class="n" id="sched-count"></span>
@@ -52,6 +53,7 @@
         <button class="limits" id="limits" aria-haspopup="dialog" aria-expanded="false" aria-controls="limits-pop" hidden></button>
         <span class="live" id="live" title="No connection to the board"></span>
       </div>
+    </div>
     </div>
     <p id="connection-state" role="status" hidden></p>
     <div class="columns-head" id="columns-head"></div>
@@ -93,7 +95,7 @@
           <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="13" rx="2.6"/><path d="m6 8.2 2.6 2.1L6 12.4M10.4 12.6h3.6"/></svg>
           <span data-i18n="term.open">Terminal</span>
         </button>
-        <button class="button" id="sheet-wake" hidden>
+        <button class="button" id="sheet-wake" hidden data-i18n-title="sheet.wake">
           <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="3.5"/><path d="M10 2.5v2m0 11v2m7.5-7.5h-2m-11 0h-2m12.8-5.3-1.4 1.4M6.1 13.9l-1.4 1.4m0-10.6 1.4 1.4m7.8 7.8 1.4 1.4"/></svg>
           <span data-i18n="sheet.wake">Wake</span>
         </button>
