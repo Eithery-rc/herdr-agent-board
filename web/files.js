@@ -1,8 +1,8 @@
 // Files, folders and links in the chat. Paths the agents mention become chips once the server
-// finds them on disk; a chip opens a quick look over the board: images, PDF, video and audio,
-// Markdown (rendered or source), code and text with line numbers (a :line is shown and lit),
-// JSON, CSV as a table, folders as a list to walk through. From there: open with the system,
-// show in its folder, copy the path. Web links open in the default browser.
+// finds them on disk; a chip opens a quick look over the board: images (they zoom, zoom.js),
+// PDF, video and audio, Markdown (rendered or source), code and text with line numbers (a :line
+// is shown and lit), JSON, CSV as a table, folders as a list to walk through. From there: open
+// with the system, show in its folder, copy the path. Web links open in the default browser.
 //
 // The quick look grows out of the chip it was opened from and shrinks back into it, on a spring
 // that can be caught midway; it dims the board, Esc closes it, Backspace walks back.
@@ -10,6 +10,7 @@ import { changedFiles } from './diff.js'
 import { markdown } from './markdown.js'
 import { reducedMotion, Spring } from './spring.js'
 import { modalFocus } from './modal-focus.js'
+import { zoomImage } from './zoom.js'
 
 const $ = (root, sel) => root.querySelector(sel)
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
@@ -172,19 +173,49 @@ export function initFiles({ t, token, toast, canMutate = () => true, onDialogCha
         <button class="icon-button ql-close">${ICONS.close}</button>
       </header>
       <div class="ql-body"></div>
-      <footer class="ql-foot"></footer>
+      <footer class="ql-foot look-foot"><span class="look-foot-text"></span><span class="ql-zoom" hidden><span class="ql-zoom-level"></span><button class="ql-zoom-button"></button></span></footer>
     </section>`
   document.body.append(root)
   const win = $(root, '.ql-win')
   const focus = modalFocus(root, win)
   const scrim = $(root, '.ql-scrim')
   const body = $(root, '.ql-body')
+  const setFoot = text => ($(root, '.look-foot-text').textContent = text)
 
   const ql = { stack: [], origin: null, seq: 0, mode: 'view', data: null }
   // p: 0 = folded into the chip it came from, 1 = open. Interruptible: a close while opening
   // turns around from wherever the window is.
   const motion = new Spring({ value: 0, damping: 1, response: 0.34, precision: 0.002, onUpdate: v => paint(v), onRest: v => v === 0 && finishClose() })
   let from = { dx: 0, dy: 0, s: 0.2 }
+
+  // An image zooms (zoom.js); the footer shows the scale and a button in to 100% or back to fit.
+  let zoom = null
+  let zoomShown = ''
+  const zoomBox = $(root, '.ql-zoom')
+  let percentIn = null
+  function percent(s) {
+    if (percentIn?.lang !== t().lang) percentIn = { lang: t().lang, format: new Intl.NumberFormat(t().lang, { style: 'percent', maximumFractionDigits: 0 }) }
+    return percentIn.format.format(s)
+  }
+  function zoomBar(z) {
+    const level = z ? percent(z.s) : ''
+    const label = z ? (z.fit ? percent(z.to) : tr('ql.fit')) : ''
+    if (`${level}|${label}` === zoomShown) return
+    zoomShown = `${level}|${label}`
+    zoomBox.hidden = !z
+    if (!z) return
+    const hint = z.fit ? tr('ql.zoomTo', { pct: label }) : tr('ql.fitHint')
+    $(zoomBox, '.ql-zoom-level').textContent = level
+    const button = $(zoomBox, 'button')
+    button.textContent = label
+    button.title = hint
+    button.setAttribute('aria-label', hint)
+  }
+  function dropZoom() {
+    zoom?.destroy()
+    zoom = null
+    zoomBar(null)
+  }
 
   /** Where the window starts from: the chip's centre and width, or a small drop when it is gone. */
   function measureFrom(el) {
@@ -252,6 +283,7 @@ export function initFiles({ t, token, toast, canMutate = () => true, onDialogCha
   }
   function finishClose() {
     root.hidden = true
+    dropZoom()
     body.innerHTML = ''
     ql.data = null
     focus.close()
@@ -270,9 +302,10 @@ export function initFiles({ t, token, toast, canMutate = () => true, onDialogCha
     if (target.changes) return showChanges(target, seq, fresh)
     if (target.history) return showHistory(target)
     head({ path: target.path, name: target.path.split(/[\\/]/).filter(Boolean).pop() ?? target.path, kind: 'file' })
+    dropZoom()
     body.className = 'ql-body loading'
     body.innerHTML = `<div class="ql-wait">${esc(tr('loading'))}</div>`
-    $(root, '.ql-foot').textContent = ''
+    setFoot('')
     const d = await post('/api/fs/preview', { path: target.path })
     if (seq !== ql.seq) return
     ql.data = { ...d, line: target.line }
@@ -293,9 +326,10 @@ export function initFiles({ t, token, toast, canMutate = () => true, onDialogCha
       return render()
     }
     head({ kind: 'changes', name: tr('changes.title'), path: target.cache?.path ?? '' })
+    dropZoom()
     body.className = 'ql-body loading'
     body.innerHTML = `<div class="ql-wait">${esc(tr('loading'))}</div>`
-    $(root, '.ql-foot').textContent = ''
+    setFoot('')
     let d = { available: false }
     try {
       d = await (await fetch(`/api/session/${encodeURIComponent(target.changes)}/changes`)).json()
@@ -330,6 +364,7 @@ export function initFiles({ t, token, toast, canMutate = () => true, onDialogCha
 
   function render() {
     const d = ql.data
+    dropZoom()
     if (d.kind === 'history') return showHistory(ql.stack.at(-1))
     const foot = []
     body.className = `ql-body k-${d.dir ? 'dir' : d.kind}`
@@ -347,7 +382,7 @@ export function initFiles({ t, token, toast, canMutate = () => true, onDialogCha
       if (d.total > d.entries.length) foot.push(tr('ql.firstItems', { n: d.entries.length }))
     } else {
       foot.push(size(d.size))
-      if (d.kind === 'image') body.innerHTML = `<div class="ql-media checker"><img src="${rawUrl(d.path)}" alt=""></div>`
+      if (d.kind === 'image') body.innerHTML = `<div class="ql-media ql-stage"><img class="checker" src="${rawUrl(d.path)}" alt="${esc(d.name)}"></div>`
       else if (d.kind === 'pdf') body.innerHTML = `<iframe class="ql-frame" src="${rawUrl(d.path)}" title="${esc(d.name)}"></iframe>`
       else if (d.kind === 'video') body.innerHTML = `<div class="ql-media"><video controls preload="metadata" src="${rawUrl(d.path)}"></video></div>`
       else if (d.kind === 'audio') body.innerHTML = `<div class="ql-media audio">${ICONS.audio}<audio controls preload="metadata" src="${rawUrl(d.path)}"></audio></div>`
@@ -363,9 +398,18 @@ export function initFiles({ t, token, toast, canMutate = () => true, onDialogCha
       if (d.mtime) foot.push(tr('ql.modified', { date: date(d.mtime) }))
     }
     if (d.dir && d.mtime) foot.push(tr('ql.modified', { date: date(d.mtime) }))
-    $(root, '.ql-foot').textContent = foot.filter(Boolean).join(' · ')
+    setFoot(foot.filter(Boolean).join(' · '))
     const img = $(body, 'img')
-    img?.addEventListener('load', () => ($(root, '.ql-foot').textContent = [`${img.naturalWidth} × ${img.naturalHeight}`, ...foot].join(' · ')), { once: true })
+    img?.addEventListener(
+      'load',
+      () => {
+        if (img.naturalWidth) setFoot([`${img.naturalWidth} × ${img.naturalHeight}`, ...foot].filter(Boolean).join(' · '))
+        // An SVG without a size of its own zooms from the size it was fitted at.
+        const size = img.naturalWidth && img.naturalHeight ? { w: img.naturalWidth, h: img.naturalHeight } : { w: img.offsetWidth, h: img.offsetHeight }
+        if (d.kind === 'image' && img.isConnected && size.w && size.h) zoom = zoomImage(img.parentElement, img, { size, vector: /\.svg$/i.test(d.path), onChange: zoomBar })
+      },
+      { once: true },
+    )
     const hit = $(body, '.ql-ln.hit')
     if (hit) requestAnimationFrame(() => (body.scrollTop = hit.offsetTop - body.clientHeight / 3))
     else body.scrollTop = 0
@@ -431,8 +475,7 @@ export function initFiles({ t, token, toast, canMutate = () => true, onDialogCha
   function hits(target) {
     const box = $(body, '.ql-hits')
     const d = target.result
-    const foot = $(root, '.ql-foot')
-    foot.textContent = ''
+    setFoot('')
     if (!d) return void (box.innerHTML = `<p class="ql-dnote">${esc(tr('history.prompt'))}</p>`)
     if (d.loading) return void (box.innerHTML = `<p class="ql-dnote">${esc(tr('loading'))}</p>`)
     if (d.unavailable) return void (box.innerHTML = empty('history', tr('history.unavailable')))
@@ -445,7 +488,7 @@ export function initFiles({ t, token, toast, canMutate = () => true, onDialogCha
         </article>`,
       )
       .join('')
-    foot.textContent = [tr('history.results', { n: d.results.length }), d.truncated ? tr('history.limited') : ''].filter(Boolean).join(' · ')
+    setFoot([tr('history.results', { n: d.results.length }), d.truncated ? tr('history.limited') : ''].filter(Boolean).join(' · '))
   }
 
   /** The text, escaped, with every place the query matches marked. */
@@ -524,6 +567,7 @@ export function initFiles({ t, token, toast, canMutate = () => true, onDialogCha
       return $(body, `.ql-dfile[data-i="${jump.dataset.jump}"]`)?.scrollIntoView({ block: 'start', behavior: reducedMotion.matches ? 'auto' : 'smooth' })
     }
     if (e.target.closest('.ql-refresh')) return show(true)
+    if (e.target.closest('.ql-zoom-button')) return zoom?.toggle()
     const mode = e.target.closest('[data-mode]')
     if (mode && ql.data) {
       ql.mode = mode.dataset.mode
@@ -581,6 +625,10 @@ export function initFiles({ t, token, toast, canMutate = () => true, onDialogCha
         e.preventDefault()
         e.stopImmediatePropagation()
         back()
+      } else if (zoom && !typing && zoom.key(e)) {
+        // + − 0 with or without Ctrl: the image zooms, not the page.
+        e.preventDefault()
+        e.stopImmediatePropagation()
       }
     },
     true,

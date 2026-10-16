@@ -1109,6 +1109,15 @@ button.swatch:active { transform: scale(0.88); }
 .ql-mode button[aria-pressed="true"] { background: var(--surface); color: var(--label); box-shadow: var(--shadow-card); }
 .ql-body { position: relative; flex: 1; min-height: 0; overflow: auto; background: var(--surface); }
 .ql-foot { min-height: 30px; padding: 7px 14px; border-top: 0.5px solid var(--separator); box-sizing: border-box; font-size: 12px; color: var(--label-2); font-variant-numeric: tabular-nums; }
+.look-foot { display: flex; align-items: center; gap: 12px; }
+.look-foot-text { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* The zoom: the scale, quiet, and one button in to 100% or back to fit. */
+.ql-zoom { display: inline-flex; flex: none; align-items: center; gap: 8px; margin: -4px -6px -4px 0; }
+.ql-zoom[hidden] { display: none; }
+.ql-zoom-button { height: 22px; padding: 0 9px; border: 0; border-radius: 7px; background: var(--fill); color: var(--label); font: 500 12px var(--font); font-variant-numeric: tabular-nums; cursor: pointer; transition: transform 100ms ease-out, background 150ms ease; }
+.ql-zoom-button:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.ql-zoom-button:active { transform: scale(0.96); }
+.ql-zoom-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ql-wait { padding: 48px; text-align: center; color: var(--label-3); }
 
 .ql-code { width: max-content; min-width: 100%; padding: 10px 0 16px; box-sizing: border-box; font: 12.5px/1.6 var(--mono); }
@@ -1149,6 +1158,13 @@ button.swatch:active { transform: scale(0.88); }
 .ql-media.audio { gap: 20px; align-content: center; }
 .ql-media.audio svg { width: 64px; height: 64px; color: var(--label-3); stroke-width: 1.2; }
 .checker { background: repeating-conic-gradient(var(--fill-2) 0 25%, transparent 0 50%) 0 0 / 20px 20px; }
+/* A zoomable image: zoom.js sizes and moves it; the cursor tells a click from a drag. */
+.ql-body.k-image { overflow: hidden; }
+.ql-stage.zoomable { position: relative; display: block; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; cursor: zoom-in; }
+.ql-stage.zoomable[data-zoom="in"] { cursor: grab; }
+.ql-stage.zoomable.dragging[data-zoom="in"] { cursor: grabbing; }
+.ql-stage.zoomable img { position: absolute; top: 0; left: 0; max-width: none; max-height: none; }
+.ql-stage.zoomable img.pixelated { image-rendering: pixelated; }
 .ql-frame { display: block; width: 100%; height: 100%; border: 0; background: #525659; }
 .ql-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; height: 100%; padding: 24px; box-sizing: border-box; text-align: center; color: var(--label-2); }
 .ql-empty svg { width: 60px; height: 60px; color: var(--label-3); stroke-width: 1.1; }
@@ -1309,6 +1325,7 @@ button.swatch:active { transform: scale(0.88); }
   .ql-tools { grid-column: 1 / -1; grid-row: 2; justify-content: flex-end; flex-wrap: wrap; }
   .ql-mode { margin-right: auto; }
   .ql-win { width: calc(100vw - 16px); height: calc(100vh - 16px); border-radius: 14px; }
+  .ql-stage { padding: 12px; }
   .ql-row { grid-template-columns: 18px minmax(0, 1fr) 64px; }
   .ql-row .m { display: none; }
   .ql-tools .ql-open { display: none; }

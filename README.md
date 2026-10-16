@@ -85,6 +85,12 @@ can go to the pane in herdr instead. The same goes to the board as `POST /api/re
   walk through (the path bar goes up; Backspace goes back). From there: open it with the
   system, show it in its folder, copy the path. Esc closes it. Web links open in the default
   browser.
+- Images and SVG in the quick look zoom as in Preview and Photos: Ctrl+wheel or a trackpad
+  pinch, two fingers on a phone, a click (a double-tap) zooms in to 100% at that spot and a
+  double-click goes back to fit, `+` `-` `0` (fit) and the arrows from the keyboard. A zoomed
+  image drags 1:1, glides on after a flick and gives at its edges; a plain wheel moves it. Up to
+  800% (an image pixel over three device pixels shows as a crisp square); the footer shows the
+  scale and a button in to 100% or back to fit. Each opening starts fitted.
 - "Categories" (or a click on a lane title): rename, recolor, add or remove the folders that
   sort sessions into the lane, create, delete (two clicks; its sessions fall back to the folder
   guess), drag rows by the handle to reorder lanes. Written to config.json at once.
