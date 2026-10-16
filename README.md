@@ -46,7 +46,10 @@ raised when it is already open.
   hand (also the "Status" chips in the sheet). See [Moving a card by hand](#moving-a-card-by-hand).
 - Click a card: a sheet with its card fields, the question and screen when it waits for you
   (a question form or a permission prompt is answered right there, see
-  [Answering from the board](#answering-from-the-board)), the conversation (tool calls folded), a message box, "Go to herdr" (focuses the pane and
+  [Answering from the board](#answering-from-the-board)), the conversation (tool calls folded;
+  a background command, agent, monitor or MCP task reporting back and a board reminder are a
+  quiet line of their own, not your message: an agent's report opens from it, a command's
+  "Output" opens its output file), a message box, "Go to herdr" (focuses the pane and
   brings the terminal window up), "Put to sleep" (through herdr-wake, idle sessions only; also
   the moon on a card), "Wake" for sleeping sessions. To close: click the board beside it, flick
   it out the way it came, or Esc. Another card switches it to that session. Attachments stay
@@ -307,7 +310,9 @@ are files, and the board keeps running.
 - Runs that came due while the board was off: a one-off is sent once, saying how late it is; a
   cron entry sends one prompt for all the runs it missed, saying how many. Time the board was
   off does not count against the wait.
-- A reminder prompt is not the user writing: the hook leaves the card's `ask` in place. A column
+- A reminder prompt is not the user writing, nor is a background task reporting back
+  (`<task-notification>`): the hook leaves the card's `ask` in place, and a question the agent
+  asked still waits for you. A column
   you dragged the card to goes, as with any work of the session.
 - One file per entry in `%LOCALAPPDATA%\herdr\plugins\agent-board\schedule\<id>.json`, written
   under the same per-file lock as the cards, so an agent cancelling an entry while the

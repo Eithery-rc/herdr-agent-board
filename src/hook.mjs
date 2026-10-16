@@ -1,11 +1,12 @@
 // Claude Code hooks (installed by the "install" action) that tell each session about the board.
 //   SessionStart (new, resume, clear, compact): the full brief, since the context is fresh.
 //   UserPromptSubmit: clears the card's `pin`, and its `ask` (the user answered) unless the prompt
-//   is a board reminder (scheduler.mjs); the brief once for sessions that were running before the
+//   is a board reminder or a task notification (notices.mjs); the brief once for sessions that were running before the
 //   install; after that a one-line reminder only while the card says it waits for something.
 // Only sessions in a herdr pane are briefed: `claude -p` runs and other terminals are not on the board.
 import { brief, BRIEF_VERSION, waitReminder } from './brief.mjs'
 import { loadConfig } from './config.mjs'
+import { isNotice } from './notices.mjs'
 import { readCard, writeCard } from './store.mjs'
 
 async function readStdin() {
@@ -21,9 +22,10 @@ async function main() {
   if (!sid || !process.env.HERDR_PANE_ID) return
   const card = readCard(sid)
   // The user wrote to the session: whatever it asked them is answered. A reminder from the board's
-  // scheduler is not the user, so its ask stays. A column the user dragged the card to has done
-  // its job either way: the session works again, which drops the pin anyway (model.mjs pinOf).
-  const fromBoard = /^\s*\[board (reminder|schedule)\b/.test(input.prompt ?? '')
+  // scheduler or a background task reporting back is not the user, so its ask stays. A column the
+  // user dragged the card to has done its job either way: the session works again, which drops
+  // the pin anyway (model.mjs pinOf).
+  const fromBoard = isNotice(input.prompt)
   if (event === 'UserPromptSubmit' && (card?.pin || (card?.ask && !fromBoard))) {
     writeCard(sid, { ...(!fromBoard && { ask: '', askSince: '' }), pin: '', pinAt: '', pinBusy: '' })
   }

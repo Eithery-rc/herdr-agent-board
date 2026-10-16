@@ -682,6 +682,30 @@ body.panel-resizing, body.panel-resizing * { cursor: var(--grab-cursor) !importa
 .tool-line .t { color: var(--label); font-weight: 500; white-space: nowrap; }
 .tool-line .d { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .tool-line.pending .t { color: var(--green); }
+/* A background task reporting back or a board reminder (notice-model.js): quiet, apart from the bubbles. */
+.notice { align-self: stretch; min-width: 0; font-size: 12px; line-height: 1.4; color: var(--label-2); }
+div.notice, .notice > summary { display: flex; align-items: flex-start; gap: 7px; padding: 4px 8px; border-radius: 9px; min-width: 0; }
+.notice > summary { list-style: none; cursor: default; }
+.notice > summary::-webkit-details-marker { display: none; }
+.notice > summary:hover { background: var(--fill-2); }
+.notice-mark { display: inline-grid; place-items: center; width: 15px; height: 15px; margin-top: 1px; border-radius: 50%; flex: none; color: #fff; background: var(--gray); }
+.notice-mark svg { width: 10px; height: 10px; stroke-width: 2.3; }
+.notice.ok .notice-mark { background: var(--green); }
+.notice.fail .notice-mark { background: var(--red); }
+.notice.info .notice-mark { background: var(--purple); }
+.notice.info .notice-mark svg { stroke-width: 1.9; }
+.notice-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.notice.fail .notice-text { color: var(--label); }
+.notice-text small { font-size: 11.5px; color: var(--label-3); }
+.notice-file { flex: none; color: var(--accent); font-weight: 500; }
+.notice-file:not([data-fs="file"]) { display: none; }
+.notice-file:hover { text-decoration: underline; cursor: pointer; }
+.notice .when { flex: none; font-size: 11px; opacity: 0.7; font-variant-numeric: tabular-nums; }
+.notice > summary .chev { flex: none; width: 11px; height: 11px; margin-top: 2.5px; transition: transform 200ms ease; }
+.notice[open] > summary .chev { transform: rotate(90deg); }
+.notice-body { margin: 2px 8px 6px 30px; padding: 8px 12px; border-radius: 12px; background: var(--fill-2); color: var(--label); font-size: 12.5px; line-height: 1.45; max-height: 360px; overflow: auto; overflow-wrap: anywhere; }
+.notice-body code { font: 12px var(--mono); padding: 1px 4px; border-radius: 4px; background: var(--fill); }
+.notice-body > pre { margin: 0; font: 11.5px/1.5 var(--mono); white-space: pre-wrap; }
 
 .composer { padding: 10px 14px 14px 18px; }
 .composer-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
@@ -1305,7 +1329,7 @@ button.swatch:active { transform: scale(0.88); }
 /* ---------------------------------------------------------------- accessibility */
 @media (prefers-reduced-motion: reduce) {
   .dot.work::after, .spin { animation: none; }
-  .card, .card-actions, .toolbar, .alarm, .sched-x, .sched-mode { transition: none; }
+  .card, .card-actions, .toolbar, .alarm, .sched-x, .sched-mode, .tools summary .chev, .notice > summary .chev { transition: none; }
 }
 @media (prefers-reduced-transparency: reduce) {
   .toolbar { background: var(--bg); backdrop-filter: none; -webkit-backdrop-filter: none; }
