@@ -9,11 +9,16 @@
   --yellow: #ffcc00;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --teal: #40c8e0;
     --pink: #ff375f;
     --yellow: #ffd60a;
   }
+}
+:root[data-theme="dark"] {
+  --teal: #40c8e0;
+  --pink: #ff375f;
+  --yellow: #ffd60a;
 }
 
 /* What a helper is: its icon in a tinted round, and the same color for its dot on a card. */

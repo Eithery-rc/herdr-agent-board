@@ -14,6 +14,7 @@
 import {
   clampFloat,
   defaultFloat,
+  dockAt,
   dockFromThrow,
   dockRect,
   dockSize,
@@ -26,6 +27,8 @@ import {
   MARGIN,
   offRect,
   outward,
+  overFor,
+  overlays,
   rectFor,
   resizeFloat,
   restoreLayout,
@@ -77,6 +80,17 @@ const modeNow = () => (phone.matches ? 'mobile' : layout.dock)
 export const panels = []
 const openPanel = () => panels.find(p => p.isOpen)
 
+/** Where the panels sit now, for Settings: right, left, bottom or float. */
+export const panelDock = () => layout.dock
+/** Settings picked a place: the open panel moves there, and the others open there next. */
+export function placePanels(dock) {
+  ;(openPanel() ?? panels[0])?.setDock(dock)
+}
+/** Settings asked for the default size of the panels' place. */
+export function resetPanelSize() {
+  ;(openPanel() ?? panels[0])?.resetSize()
+}
+
 // ---------------------------------------------------------------- the board makes room
 // Margins of the page (--room-left/right/bottom) on springs. While they move, the card the
 // panel is about keeps its place on screen, and stays clear of a panel at the bottom.
@@ -100,6 +114,9 @@ const room = Object.fromEntries(
     }),
   ]),
 )
+// A side panel that lies over the board (no room for it) still keeps the toolbar's controls
+// clear of it: --over-left/right, on springs as well.
+const over = Object.fromEntries(['left', 'right'].map(side => [side, new Spring({ damping: 1, response: 0.4, precision: 0.3, onUpdate: () => queueRoom() })]))
 /** The room a panel at the bottom takes now: where the board's visible part ends. */
 export const roomBelow = () => room.bottom.value
 
@@ -112,6 +129,7 @@ function queueRoom() {
 function applyRoom() {
   queued = false
   for (const side of SIDES) html.style.setProperty(`--room-${side}`, `${Math.round(room[side].value * 10) / 10}px`)
+  for (const side of ['left', 'right']) html.style.setProperty(`--over-${side}`, `${Math.round(over[side].value * 10) / 10}px`)
   if (anchor?.el.isConnected) {
     const r = anchor.el.getBoundingClientRect()
     const lowest = viewport().h - room.bottom.value - r.height - 16
@@ -135,10 +153,19 @@ function dropAnchor() {
 
 /** The board's room for the open panel (none on a phone, or for a floating one). */
 function syncRoom({ jump = false, velocity = {}, response = 0.4 } = {}) {
-  const want = openPanel() && !phone.matches ? roomFor(layout, viewport()) : { left: 0, right: 0, bottom: 0 }
-  if (jump) return SIDES.forEach(side => room[side].set(want[side]))
+  const open = openPanel()
+  const vp = viewport()
+  const want = open && !phone.matches ? roomFor(layout, vp) : { left: 0, right: 0, bottom: 0 }
+  const wantOver = open && !phone.matches ? overFor(layout, vp) : { left: 0, right: 0 }
+  // Over the board it casts a deeper shadow, a drawer over the cards rather than beside them.
+  open?.el.classList.toggle('over', !phone.matches && overlays(layout, vp))
+  if (jump) {
+    for (const side of ['left', 'right']) over[side].set(wantOver[side])
+    return SIDES.forEach(side => room[side].set(want[side]))
+  }
   holdAnchor()
   for (const side of SIDES) if (room[side].target !== want[side] || velocity[side]) room[side].to(want[side], { velocity: velocity[side], response })
+  for (const side of ['left', 'right']) if (over[side].target !== wantOver[side]) over[side].to(wantOver[side], { response })
   queueRoom()
 }
 
@@ -560,13 +587,16 @@ export class Panel {
     syncRoom({ response: 0.34 })
   }
 
-  /** While a loose panel moves: the dock it would land in now, shown as a preview. */
+  /** While a loose panel moves: the dock it would land in now, shown as a preview; where it lands when let go. */
   aim(g) {
     clearTimeout(g.idle)
-    const v = velocityOf(g.samples)
-    preview.show(dockFromThrow({ x: g.px, y: g.py }, v, viewport()), this.at())
+    const target = v => {
+      g.target = dockAt({ x: g.px, y: g.py }, v, viewport(), g.target)
+      preview.show(g.target, this.at())
+    }
+    target(velocityOf(g.samples))
     // Held still, the throw is over: aim again without the speed it had.
-    g.idle = setTimeout(() => this.g === g && preview.show(dockFromThrow({ x: g.px, y: g.py }, { x: 0, y: 0 }, viewport()), this.at()), 120)
+    g.idle = setTimeout(() => this.g === g && target({ x: 0, y: 0 }), 120)
   }
 
   up(e, cancelled = false) {
@@ -594,7 +624,7 @@ export class Panel {
     g.ox?.stop()
     g.oy?.stop()
     const vp = viewport()
-    const dock = dockFromThrow({ x: g.px, y: g.py }, v, vp)
+    const dock = dockFromThrow({ x: g.px, y: g.py }, v, vp, g.target)
     if (dock) layout = { ...layout, dock }
     else {
       const w = this.w.target
@@ -626,8 +656,13 @@ export class Panel {
     if (this.mode === 'float') return this.jump({ ...resizeFloat(g.at, g.edge, dx, dy, vp), p: 1 })
     g.raw = this.mode === 'right' ? g.at.w - dx : this.mode === 'left' ? g.at.w + dx : g.at.h - dy
     const size = soft(g.raw, sizeLimits(this.mode, vp))
+    // The board follows the edge 1:1, unless at this size the panel lies over it.
+    const sized = { ...layout, dock: this.mode, [this.mode === 'bottom' ? 'bottom' : 'side']: size }
+    const lies = overlays(sized, vp)
     this.jump({ ...dockRect(this.mode, size, vp), p: 1 })
-    room[this.mode].set(size + MARGIN)
+    this.el.classList.toggle('over', lies)
+    room[this.mode].set(lies ? 0 : size)
+    if (this.mode !== 'bottom') over[this.mode].set(lies ? size + MARGIN : 0)
   }
 
   resizeEnd(g, v) {

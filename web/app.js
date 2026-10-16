@@ -18,7 +18,7 @@ import { markdown } from './markdown.js'
 import { initMenu } from './menu.js'
 import { noticeLine } from './notice-model.js'
 import { initQuestions } from './questions.js'
-import { keepInSight, menuOpen, Panel, panels, roomBelow } from './panel.js'
+import { keepInSight, menuOpen, Panel, panelDock, panels, placePanels, resetPanelSize, roomBelow } from './panel.js'
 import { renameInPlace } from './rename.js'
 import { initSetupNote } from './setup.js'
 import { reducedMotion, rubberband, Spring, velocityOf } from './spring.js'
@@ -220,7 +220,7 @@ function syncAvailability() {
     banner.textContent = t(canEdit() ? 'mobile.readOnly' : 'live.off')
   }
   for (const element of document.querySelectorAll('#sheet-focus, #sheet-sleep, #sheet-wake, [data-act="focus"], [data-act="sleep"]')) element.disabled = blocked || (missing && !!element.closest('#sheet')) || (element.id === 'sheet-sleep' && inTurn(itemOf(state.open) ?? {}))
-  for (const element of document.querySelectorAll('#attach, #lang, #cat-new, #sheet-card button:not(.rel-chip):not(.rel-more), #sheet-card input, #cats-sheet button:not([data-close]):not([data-layout]), #cats-sheet input, #sched-body .sched-x, #sched-body .sched-mode, [data-act="dismiss"]')) element.disabled = !canEdit()
+  for (const element of document.querySelectorAll('#attach, #cat-new, #sheet-card button:not(.rel-chip):not(.rel-more), #sheet-card input, #cats-sheet button:not([data-close]):not([data-layout]), #cats-sheet input, #sched-body .sched-x, #sched-body .sched-mode, [data-act="dismiss"]')) element.disabled = !canEdit()
   // New sessions go through herdr: they wait for fresh data like going to a session does.
   for (const element of document.querySelectorAll('#new-session, #sheet-new, .lane-new')) {
     element.disabled = blocked
@@ -347,9 +347,6 @@ function applyTexts() {
   for (const el of document.querySelectorAll('[data-i18n-placeholder]')) el.placeholder = t(el.dataset.i18nPlaceholder)
   if (state.connected) updateLive($('#live'), state.data, t)
   else $('#live').title = t('live.none')
-  const names = state.data.languages ?? LANGUAGES
-  $('#lang-code').textContent = t.lang.toUpperCase()
-  $('#lang').title = t('tb.lang', { name: names[t.lang] ?? t.lang })
 }
 
 // ---------------------------------------------------------------- toolbar
@@ -366,6 +363,7 @@ function renderToolbar(visible) {
   if (helping) parts.push(`<b>${helping}</b> ${t('sum.helpers', { n: helping })}`)
   if (asleep) parts.push(`${asleep} ${t('sum.asleep', { n: asleep })}`)
   $('#summary').innerHTML = parts.join(' · ')
+  $('.titles').title = $('#summary').textContent // the summary hides in a narrower toolbar
   const attentionCount = visible.filter(it => !it.launchOnly && laneShown(catOf(it)) && (it.column === 'me' || unseenResult(it, viewed))).length
   const next = $('#next-attention')
   next.disabled = !attentionCount
@@ -395,13 +393,44 @@ function renderToolbar(visible) {
   }
   for (const b of seg.querySelectorAll('button')) b.setAttribute('aria-selected', String(b.dataset.id === state.filter))
   placeThumb(false)
+  fadeLanes()
 
-  // Column heads with counts.
+  // Column heads with counts; a column without cards narrows to its head.
+  const shown = visible.filter(i => laneShown(catOf(i)))
+  const filled = state.data.columns.map(c => shown.some(i => colOf(i) === c.id))
   const head = $('#columns-head')
   const html = state.data.columns
-    .map(c => `<div class="col-head"><span class="dot" style="--c:${COLORS[c.id]}"></span>${esc(colTitle(c.id))}<span class="n">${visible.filter(i => i.column === c.id && laneShown(catOf(i))).length}</span></div>`)
+    .map((c, k) => `<div class="col-head${filled[k] ? '' : ' vacant'}"><span class="dot" style="--c:${COLORS[c.id]}"></span><span class="t">${esc(colTitle(c.id))}</span><span class="n">${shown.filter(i => i.column === c.id).length}</span></div>`)
     .join('')
   if (head.innerHTML !== html) head.innerHTML = html
+  // Nothing on show at all: the columns keep their even widths.
+  fitColumns(state.data.columns.map(c => c.id), filled.some(Boolean) ? filled : filled.map(() => true))
+}
+
+// Each column's share of the board's width: 1 with cards, 0 without, when it keeps only its
+// minimum (--col-min, the head's width). The shares move on springs, so cards glide to their new
+// width when a column fills or empties instead of the board jumping.
+const colShares = new Map() // column id -> Spring
+let colIds = []
+let colsQueued = false
+function fitColumns(ids, filled) {
+  colIds = ids
+  ids.forEach((id, k) => {
+    const want = filled[k] ? 1 : 0
+    const share = colShares.get(id)
+    if (!share) colShares.set(id, new Spring({ value: want, damping: 1, response: 0.4, precision: 0.002, onUpdate: queueColumns }))
+    else if (share.target !== want) share.to(want)
+  })
+  queueColumns()
+}
+function queueColumns() {
+  if (colsQueued) return
+  colsQueued = true
+  queueMicrotask(() => {
+    colsQueued = false
+    const tracks = colIds.map(id => `minmax(var(--col-min), ${Math.max(0, colShares.get(id).value).toFixed(3)}fr)`)
+    document.documentElement.style.setProperty('--cols', tracks.join(' '))
+  })
 }
 
 /** Claude's usage windows from the usagebar cache, when there is one: a small pill by the live dot. */
@@ -467,6 +496,15 @@ function placeThumb(jump) {
     segThumb.w.to(w)
   }
 }
+
+/** The lanes control fades at an edge with more lanes past it. */
+function fadeLanes() {
+  const seg = $('#lanes')
+  const hidden = seg.scrollWidth - seg.clientWidth
+  seg.classList.toggle('fade-start', seg.scrollLeft > 1)
+  seg.classList.toggle('fade-end', hidden - seg.scrollLeft > 1)
+}
+$('#lanes').addEventListener('scroll', fadeLanes, { passive: true })
 
 const laneShown = cat => state.filter === 'all' || state.filter === cat
 
@@ -941,7 +979,12 @@ narrowSheet.addEventListener('change', syncSheetProperties)
 // Paths in the thread become chips with a quick look; web links open in the default browser.
 const files = initFiles({ t: () => t, token: () => state.data.fsToken, toast, canMutate: canEdit, onDialogChange: () => { dialogBack.sync(); syncAvailability() } })
 // Layers above the board, topmost first: Back on a phone closes them one at a time.
-const menu = initMenu({ onChange: () => { dialogBack.sync(); if (!menu.isOpen()) $('#sheet-more').setAttribute('aria-expanded', 'false') } })
+const menu = initMenu({
+  onChange: () => {
+    dialogBack.sync()
+    if (!menu.isOpen()) for (const b of document.querySelectorAll('#sheet-more, #settings')) b.setAttribute('aria-expanded', 'false')
+  },
+})
 const dialogBack = dialogHistory({
   history,
   mobile: () => matchMedia('(max-width: 760px)').matches,
@@ -1128,7 +1171,8 @@ function renderSheetHead() {
   $('#sheet-name').title = it.name
   const tokens = it.context >= 1000 ? `${Math.round(it.context / 1000)}k` : it.context
   const context = it.contextPct != null ? t('meta.contextPct', { pct: Math.round(it.contextPct), tokens }) : it.context ? t('meta.context', { tokens }) : ''
-  $('#sheet-meta').textContent = [catInfo(catOf(it)).title, it.workspace && t('meta.workspace', { name: it.workspace }), it.activity && (ago(it.activity) === t('ago.now') ? t('meta.activeNow') : t('meta.active', { ago: ago(it.activity) })), context].filter(Boolean).join(' · ')
+  // Each fact whole on its line: the line breaks between them, after a separator, never inside one.
+  $('#sheet-meta').innerHTML = [catInfo(catOf(it)).title, it.workspace && t('meta.workspace', { name: it.workspace }), it.activity && (ago(it.activity) === t('ago.now') ? t('meta.activeNow') : t('meta.active', { ago: ago(it.activity) })), context].filter(Boolean).map(part => `<span>${esc(part)}</span>`).join(' · ')
   $('#sheet-meta').title = context ? t('meta.contextHint') : ''
   $('#sheet-history').hidden = !it.session // a Claude project to look back in
   const term = $('#sheet-term')
@@ -2252,10 +2296,10 @@ $('#lanes').addEventListener('click', e => {
   store.set('board.filter', state.filter)
   render()
 })
-$('#lang').addEventListener('click', async () => {
+/** The board's language, for every board (the server keeps it in config.json). */
+async function chooseLanguage(next) {
   if (!canEdit()) return toast(t('live.off'), true)
-  const codes = Object.keys(state.data.languages ?? LANGUAGES)
-  const next = codes[(codes.indexOf(t.lang) + 1) % codes.length]
+  if (next === t.lang) return
   state.langAsked = { lang: next, at: Date.now() }
   setLanguage(next)
   render()
@@ -2266,18 +2310,62 @@ $('#lang').addEventListener('click', async () => {
   } catch (err) {
     toast(t('err.offline', { why: err.message }), true)
   }
-})
+}
 $('#search').addEventListener('input', e => {
   state.query = e.target.value
   render()
 })
-$('#sleepers').addEventListener('click', e => {
-  state.sleepers = !state.sleepers
-  store.set('board.sleepers', state.sleepers ? '1' : '0')
-  e.currentTarget.setAttribute('aria-pressed', String(state.sleepers))
+function setSleepers(on) {
+  state.sleepers = on
+  store.set('board.sleepers', on ? '1' : '0')
   render()
+}
+
+// ---------------------------------------------------------------- settings
+// The gear: how the board looks (light, dark or as the system has it), its language, where the
+// panels sit, and whether sleeping sessions show. Light or dark is this browser's (theme.js
+// applies it before the page paints); the language is the board's, for every board.
+const THEMES = ['auto', 'light', 'dark']
+const themeNow = () => document.documentElement.dataset.theme ?? 'auto'
+function setTheme(theme) {
+  if (theme === themeNow()) return
+  store.set('board.theme', theme)
+  const apply = () => {
+    if (theme === 'auto') delete document.documentElement.dataset.theme
+    else document.documentElement.dataset.theme = theme
+  }
+  // A cross-fade, not a flash from one brightness to the other.
+  if (document.startViewTransition && !reducedMotion.matches) document.startViewTransition(apply)
+  else apply()
+}
+$('#settings').addEventListener('click', e => {
+  const button = e.currentTarget
+  const rect = button.getBoundingClientRect()
+  const names = state.data.languages ?? LANGUAGES
+  const edit = canEdit() ? {} : { disabled: true, reason: t('live.off') }
+  const items = [
+    { id: 'theme', label: t('set.theme'), submenu: THEMES.map(id => ({ id: `theme:${id}`, label: t(`set.theme.${id}`), checked: themeNow() === id })) },
+    { id: 'lang', label: t('set.lang'), ...edit, submenu: Object.entries(names).map(([code, name]) => ({ id: `lang:${code}`, label: name, checked: t.lang === code })) },
+    { id: 'panel', label: t('set.panel'), submenu: [...['right', 'left', 'bottom', 'float'].map(id => ({ id: `dock:${id}`, label: t(`panel.${id}`), checked: panelDock() === id })), { separator: true }, { id: 'dock:reset', label: t('panel.reset') }] },
+    { separator: true },
+    { id: 'sleepers', label: t('tb.sleepersTitle'), checked: state.sleepers },
+  ]
+  button.setAttribute('aria-expanded', 'true')
+  menu.open(items, {
+    x: rect.right,
+    y: rect.bottom + 6,
+    source: e.detail === 0 ? 'keyboard' : matchMedia('(pointer: coarse)').matches ? 'touch' : 'mouse',
+    origin: button,
+    label: t('set.title'),
+    onPick: id => {
+      const [kind, value] = id.split(':')
+      if (kind === 'theme') setTheme(value)
+      else if (kind === 'lang') chooseLanguage(value)
+      else if (kind === 'dock') value === 'reset' ? resetPanelSize() : placePanels(value)
+      else if (id === 'sleepers') setSleepers(!state.sleepers)
+    },
+  })
 })
-$('#sleepers').setAttribute('aria-pressed', String(state.sleepers))
 
 function openNextAttention() {
   const key = nextAttention(visibleItems().filter(it => !it.launchOnly && laneShown(catOf(it))), state.open, viewed)
@@ -2324,7 +2412,10 @@ addEventListener('keydown', e => {
   }
 })
 addEventListener('scroll', () => $('.toolbar').classList.toggle('scrolled', scrollY > 2), { passive: true })
-addEventListener('resize', () => placeThumb(true))
+addEventListener('resize', () => {
+  placeThumb(true)
+  fadeLanes()
+})
 setInterval(render, 30_000) // ages
 
 applyTexts()
@@ -2340,7 +2431,7 @@ $('#sheet-history').addEventListener('click', e => state.open && files.lookHisto
 // the menus and Shift+N, and grows out of whichever it was.
 {
   const button = document.createElement('button')
-  button.className = 'pill-toggle new-session'
+  button.className = 'pill-toggle icon-only new-session'
   button.id = 'new-session'
   button.dataset.hint = 'launch.toolbarHint'
   button.innerHTML = `${ICON.plus}<span data-i18n="launch.toolbar"></span>`
@@ -2462,7 +2553,7 @@ initBoardMenus({
       store.set('board.filter', id)
       render()
     },
-    sleepers: () => $('#sleepers').click(),
+    sleepers: () => setSleepers(!state.sleepers),
     search: () => $('#search').focus(),
     copy: copyText,
     openPath,

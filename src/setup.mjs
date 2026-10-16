@@ -7,7 +7,7 @@
 // fixtures instead.
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { delimiter, isAbsolute, join, resolve } from 'node:path'
+import { isAbsolute, join, posix, resolve, win32 } from 'node:path'
 import { translator } from '../web/i18n.js'
 import { launcherLabel } from './launch.mjs'
 import { ROOT } from './paths.mjs'
@@ -163,12 +163,14 @@ const sizeOf = file => {
  * file of that very name.
  */
 export function findCommand(name, { env = process.env, platform = process.platform, exists = existsSync, read = readText, size = sizeOf } = {}) {
-  const dirs = String(env.PATH ?? env.Path ?? '').split(platform === 'win32' ? ';' : delimiter).filter(Boolean)
+  // Paths as `platform` writes them, which need not be the system this runs on (the tests).
+  const paths = platform === 'win32' ? win32 : posix
+  const dirs = String(env.PATH ?? env.Path ?? '').split(paths.delimiter).filter(Boolean)
   const exts = ['.ps1', ...String(env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean).map(e => e.toLowerCase())]
   const hit = list => {
     for (const dir of dirs) {
       for (const n of list) {
-        const file = join(dir, n)
+        const file = paths.join(dir, n)
         if (!exists(file) || isFolder(file)) continue
         const target = size(file) <= SHIM_MAX ? shimTarget(read(file)) : null
         return { file, target, ...(target && !exists(target) && { gone: true }) }

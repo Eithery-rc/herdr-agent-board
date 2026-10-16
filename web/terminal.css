@@ -9,10 +9,14 @@
   --term-edge: rgba(0, 0, 0, 0.18);
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --term-bg: #0f0f11;
     --term-edge: rgba(255, 255, 255, 0.08);
   }
+}
+:root[data-theme="dark"] {
+  --term-bg: #0f0f11;
+  --term-edge: rgba(255, 255, 255, 0.08);
 }
 
 .term .ql-win { height: min(860px, calc(var(--term-vh, 100vh) - 48px)); }
