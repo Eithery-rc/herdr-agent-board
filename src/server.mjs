@@ -11,7 +11,7 @@ import http from 'node:http'
 import { extname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
-import { focus, send, sleepSession, wake } from './actions.mjs'
+import { focus, raiseTerminal, send, sleepSession, wake } from './actions.mjs'
 import { answerPermission, answerQuestions } from './answer.mjs'
 import { checkoutChanges, isCheckout } from './changes.mjs'
 import { searchHistory } from './history.mjs'
@@ -21,7 +21,7 @@ import { describe, FILE_TOKEN, MEDIA_TYPES, openWith, preview, resolvePath } fro
 import { categoryInfo, colorHex, editCategories, editSettings, laneRank, liveConfig, PALETTE } from './config.mjs'
 import { lang, t } from './lang.mjs'
 import { LANGUAGES } from '../web/i18n.js'
-import { herdrText } from './herdr.mjs'
+import { herdr, herdrText } from './herdr.mjs'
 import { createLaunches, listDirs, renameSession } from './launch.mjs'
 import { checkName } from '../web/launch-model.js'
 import { messageGate } from './message-gate.mjs'
@@ -31,6 +31,7 @@ import { CARDS_DIR, ROOT, STATE_DIR } from './paths.mjs'
 import { listEntries, readLog, removeEntry, SCHEDULE_DIR, updateEntry } from './schedule.mjs'
 import { startScheduler } from './scheduler.mjs'
 import { writeCard } from './store.mjs'
+import { createTerminals } from './terminal.mjs'
 
 const WEB = join(ROOT, 'web')
 // Files and screenshots sent to sessions from the board; the message carries their paths.
@@ -138,6 +139,9 @@ export function startServer({ cfg, log = () => {} } = {}) {
   const clients = new Set()
   // Sessions started from the board (launch.mjs): their progress goes out with the board.
   const launches = createLaunches({ cfg, log, onChange: () => publish() })
+  // The terminal (terminal.mjs): shells the board opened in sessions' folders, and live panes.
+  const terminals = createTerminals()
+  const terminalOn = () => cfg.terminal !== false
 
   /** The board as clients see it, without the time of the last successful refresh. */
   function board() {
@@ -152,7 +156,8 @@ export function startServer({ cfg, log = () => {} } = {}) {
     const list = items.map(({ transcript, ...rest }) => launches.decorate(rest))
     // The schedule without the scheduler's bookkeeping; the log is what was sent or missed lately.
     const schedules = listEntries().map(({ claim, tried, waited, ...entry }) => entry)
-    return { version, lang: lang(), language: cfg.language ?? 'auto', languages: LANGUAGES, fsToken: FILE_TOKEN, stale, limits: claudeLimits(), items: list, launches: launches.list(), categories, swatches: SWATCHES, columns: COLUMNS.map(({ id, title }) => ({ id, title })), schedules, scheduleLog: readLog(20) }
+    // terminal: whether the board offers one (config `terminal`); shells: sessions it opened one for.
+    return { version, lang: lang(), language: cfg.language ?? 'auto', languages: LANGUAGES, fsToken: FILE_TOKEN, stale, limits: claudeLimits(), items: list, launches: launches.list(), categories, swatches: SWATCHES, columns: COLUMNS.map(({ id, title }) => ({ id, title })), schedules, scheduleLog: readLog(20), terminal: terminalOn(), shells: terminalOn() ? terminals.keys() : [] }
   }
 
   /**
@@ -300,6 +305,62 @@ export function startServer({ cfg, log = () => {} } = {}) {
       }
       default:
         return { ok: false, error: `unknown action ${action}` }
+    }
+  }
+
+  /**
+   * A pane on show in the page's terminal, over Server-Sent Events: the screen, then line diffs.
+   * EventSource sends no headers, so the per-run token (only the board's page reads it) stands in
+   * for X-Board, as for raw files; the stream only reads.
+   */
+  function termStream(req, res, url, item, target) {
+    const json = (code, body) => {
+      res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+      res.end(JSON.stringify(body))
+    }
+    if (url.searchParams.get('t') !== FILE_TOKEN) return json(403, { error: 'token' })
+    if (target === 'agent' && item.sleeping) return json(409, { error: t('term.err.asleep') })
+    const pane = target === 'shell' ? terminals.shellOf(item.key)?.pane : item.pane
+    if (!pane) return json(404, { error: t(target === 'shell' ? 'term.err.noShell' : 'err.noPane') })
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive', 'x-content-type-options': 'nosniff' })
+    res.write('retry: 3000\n\n')
+    const stop = terminals.watch(pane, { shell: target === 'shell', key: item.key }, msg => {
+      res.write(msg.t === 'ping' ? ': ping\n\n' : `data: ${JSON.stringify(msg)}\n\n`)
+      if (msg.t === 'gone') res.end()
+    })
+    req.on('close', stop)
+  }
+
+  /** What the terminal's buttons and keys do. Errors come back as text keys (lang.mjs). */
+  async function termAction(item, target, op, body) {
+    const fail = (key, vars) => ({ ok: false, error: t(key, { name: item.name, ...vars }) })
+    try {
+      if (op === 'input') {
+        const p = await terminals.inputPane(item, target, body.session)
+        if (p.error) return fail(p.error)
+        const r = await terminals.input(p.pane, body.steps)
+        return r.ok ? r : fail(r.error, { why: r.why })
+      }
+      if (target !== 'shell') return fail('term.err.target')
+      if (op === 'open') {
+        const r = await terminals.openShell(item, t('term.tabLabel', { name: item.name }))
+        publish()
+        return r.ok ? r : fail(r.error, { path: r.why })
+      }
+      if (op === 'close') {
+        const r = await terminals.closeShell(item.key)
+        publish()
+        return r
+      }
+      // focus: the shell's tab in herdr, and the terminal window up.
+      const shell = terminals.shellOf(item.key)
+      if (!shell) return fail('term.err.noShell')
+      await herdr(['tab', 'focus', shell.tab])
+      if (cfg.raiseTerminal !== false) raiseTerminal(cfg)
+      return { ok: true }
+    } catch (err) {
+      // herdr's message only: nothing typed or read goes to the log or back.
+      return fail('term.err.herdr', { why: err.code || err.message })
     }
   }
 
@@ -465,6 +526,25 @@ export function startServer({ cfg, log = () => {} } = {}) {
         }
         return json(404, { error: 'not found' })
       }
+      // The terminal: a session's pane or the board's shell in its folder, live, and typed into.
+      if (path.startsWith('/api/term/')) {
+        if (!terminalOn()) return json(404, { error: t('term.off') })
+        const tm = /^\/api\/term\/([^/]+)\/(agent|shell)\/(stream|open|close|focus|input)$/.exec(path)
+        if (!tm) return json(404, { error: 'not found' })
+        const item = find(tm[1])
+        if (!item) return json(404, { error: t('err.gone') })
+        const [, , target, op] = tm
+        if (req.method === 'GET' && op === 'stream') return termStream(req, res, url, item, target)
+        if (req.method !== 'POST') return json(405, { error: 'method' })
+        if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })
+        // It runs commands on this computer: only from the board's own page, on fresh herdr data.
+        const origin = req.headers.origin
+        if (origin && origin !== `http://127.0.0.1:${port}` && origin !== `http://localhost:${port}`) return json(403, { error: 'origin' })
+        if (refuseStale()) return json(409, { ok: false, error: t('mobile.readOnly') })
+        const body = await readBody(req)
+        const r = await termAction(item, target, op, body)
+        return json(r.ok ? 200 : 409, r)
+      }
       const m = /^\/api\/session\/([^/]+)(?:\/(\w+))?$/.exec(path)
       if (m) {
         const item = find(m[1])
@@ -551,6 +631,8 @@ export function startServer({ cfg, log = () => {} } = {}) {
       refresh()
       // The port makes it one board per machine, so one scheduler; claims cover an overlap.
       const scheduler = startScheduler({ cfg, log, onChange: refresh })
+      // Shells a board before this one opened and that are gone by now are forgotten.
+      terminals.prune().then(publish)
       resolve({ port, url: `http://127.0.0.1:${port}/`, refresh, scheduler })
     })
   })

@@ -82,6 +82,10 @@ test('a card’s menu follows its state', () => {
   const pinned = cardMenu({ ...idle, pin: 'done', column: 'done', auto: 'idle' }, { ...fresh, column: 'done' })
   assert.equal(find(pinned, 'status').submenu.at(-1).id, 'col:idle')
   assert.equal(find(pinned, 'status').submenu.at(-1).label, 'Auto')
+  // The terminal, where the board offers one: looking needs no fresh data, so it is never gray.
+  assert.deepEqual(ids(cardMenu(idle, { ...fresh, terminal: true })).slice(0, 3), ['open', 'focus', 'terminal'])
+  assert.equal(find(cardMenu(idle, { ...fresh, terminal: true, canMutate: false }), 'terminal').disabled, undefined)
+  assert.ok(!find(cardMenu({ ...idle, cwd: '', pane: null }, { ...fresh, terminal: true }), 'terminal'))
   // Not a Claude session (no id): no sleep, no history, no session id to copy.
   const other = cardMenu({ ...idle, session: null, key: 'pane-w1:p2' }, fresh)
   assert.ok(!find(other, 'sleep') && !find(other, 'history'))

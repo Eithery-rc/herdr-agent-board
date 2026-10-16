@@ -10,8 +10,8 @@ const SLOP = 9 // px a finger may wander before a long press becomes a scroll
 /**
  * board: what the page knows and can do (app.js): t(), menu, canMutate(), canEdit(), item(key),
  * column(it), category(it), state(), launch (launch.js), and do: { open, focus, write, wake,
- * sleep, rename, move, dismiss, clear, changes, history, newSession, cats, filter, sleepers,
- * search, copy, openPath, look, focusLaunch }.
+ * sleep, rename, move, dismiss, clear, changes, history, terminal, newSession, cats, filter,
+ * sleepers, search, copy, openPath, look, focusLaunch }.
  */
 export function initBoardMenus(board) {
   const { menu } = board
@@ -69,7 +69,7 @@ export function initBoardMenus(board) {
     const nameEl = el.matches?.('.card') ? el.querySelector('.name') : el
     return {
       label: it.name,
-      items: cardMenu(it, { ...ctx(), categories: state.data.categories, column: board.column(it), category: board.category(it) }),
+      items: cardMenu(it, { ...ctx(), terminal: state.data.terminal !== false, categories: state.data.categories, column: board.column(it), category: board.category(it) }),
       pick: id => {
         const [what, arg] = id.split(/:(.*)/s)
         const from = el.isConnected ? el : pointRect(at.x, at.y)

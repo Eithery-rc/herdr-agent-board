@@ -19,6 +19,7 @@ import { initQuestions } from './questions.js'
 import { keepInSight, menuOpen, Panel, panels, roomBelow } from './panel.js'
 import { renameInPlace } from './rename.js'
 import { reducedMotion, rubberband, Spring, velocityOf } from './spring.js'
+import { initTerminal } from './terminal.js'
 import { capital, dayLabel, longWhen, shortWhen, span, timeOf } from './when.js'
 
 const $ = sel => document.querySelector(sel)
@@ -108,6 +109,7 @@ const state = {
 const itemOf = key => state.data.items.find(i => i.key === key)
 let launchUI = null // new sessions (launch.js), set up with the sheet below
 let questionsUI = null // questions asked in a terminal (questions.js), set up with the sheet below
+let termUI = null // the terminal window (terminal.js), set up with the sheet below
 const catOf = it => state.moved.get(it.key) ?? it.category
 const colOf = it => state.movedCol.get(it.key)?.col ?? it.column
 /** A turn is on: it works, or a dialog stopped it midway. */
@@ -193,6 +195,7 @@ function syncAvailability() {
   if (missing) for (const element of document.querySelectorAll('#sheet-card button, #sheet-card input, #sheet [data-act], #sheet-new, #attach, #sheet-changes, #sheet-history')) element.disabled = true
   else for (const element of document.querySelectorAll('#sheet-changes, #sheet-history')) element.disabled = false
   files.refreshAvailability()
+  termUI?.sync()
   questionsUI?.sync()
   syncComposer()
   renderDetailState()
@@ -298,6 +301,7 @@ function setLanguage(lang) {
   renderAttachments()
   syncComposer()
   files.relabel()
+  termUI?.relabel()
 }
 
 function applyTexts() {
@@ -851,8 +855,8 @@ const dialogBack = dialogHistory({
   history,
   mobile: () => matchMedia('(max-width: 760px)').matches,
   // Asked at once when a reload finds the Back sentinel: launchUI is set up just below.
-  isOpen: () => menu.isOpen() || !!launchUI?.isOpen() || files.isOpen() || limitsOpen() || panels.some(panel => panel.isOpen),
-  closeTop: () => menu.isOpen() ? menu.close() : launchUI?.isOpen() ? launchUI.close() : files.isOpen() ? files.back() : limitsOpen() ? closeLimits(true) : panels.find(panel => panel.isOpen)?.close(),
+  isOpen: () => menu.isOpen() || !!launchUI?.isOpen() || files.isOpen() || !!termUI?.isOpen() || limitsOpen() || panels.some(panel => panel.isOpen),
+  closeTop: () => menu.isOpen() ? menu.close() : launchUI?.isOpen() ? launchUI.close() : files.isOpen() ? files.back() : termUI?.isOpen() ? termUI.close() : limitsOpen() ? closeLimits(true) : panels.find(panel => panel.isOpen)?.close(),
 })
 launchUI = initLaunch({
   t: () => t,
@@ -871,6 +875,28 @@ launchUI = initLaunch({
   focusLaunch,
 })
 addEventListener('popstate', () => dialogBack.pop())
+// A shell in the session's folder, or the session's own terminal, live in a window (terminal.js).
+termUI = initTerminal({
+  t: () => t,
+  toast,
+  canMutate,
+  item: itemOf,
+  token: () => state.data.fsToken,
+  shells: () => state.data.shells,
+  wake: async key => {
+    setBusy(key, t('busy.waking'))
+    const r = await act(key, 'wake')
+    setBusy(key, null)
+    if (!r.ok) toast(r.error, true)
+  },
+  focusAgent: key => focusSession(key),
+  openUrl: href => files.openUrl(href),
+  onDialogChange: () => dialogBack.sync(),
+})
+function openTerminal(key, from) {
+  if (state.data.terminal === false || !itemOf(key)) return
+  termUI.open(key, from)
+}
 questionsUI = initQuestions({
   box: sheetQuestion,
   t: () => t,
@@ -986,6 +1012,10 @@ function renderSheetHead() {
   $('#sheet-meta').textContent = [catInfo(catOf(it)).title, it.workspace && t('meta.workspace', { name: it.workspace }), it.activity && (ago(it.activity) === t('ago.now') ? t('meta.activeNow') : t('meta.active', { ago: ago(it.activity) })), context].filter(Boolean).join(' · ')
   $('#sheet-meta').title = context ? t('meta.contextHint') : ''
   $('#sheet-history').hidden = !it.session // a Claude project to look back in
+  const term = $('#sheet-term')
+  term.hidden = state.data.terminal === false || !(it.cwd || it.pane)
+  term.classList.toggle('has-shell', (state.data.shells ?? []).includes(it.key))
+  term.title = t((state.data.shells ?? []).includes(it.key) ? 'term.shellOpen' : 'term.hint')
   $('#sheet-wake').hidden = !it.sleeping
   const sleep = $('#sheet-sleep')
   sleep.hidden = it.sleeping || !it.session
@@ -1158,6 +1188,7 @@ sheetQuestion.addEventListener('click', e => {
   if (e.target.closest('[data-act="dismiss"]') && state.open) dismissAsk(state.open)
 })
 $('#sheet-focus').addEventListener('click', () => state.open && focusSession(state.open))
+$('#sheet-term').addEventListener('click', e => state.open && openTerminal(state.open, e.currentTarget))
 $('#sheet-wake').addEventListener('click', async () => {
   const key = state.open
   if (!key) return
@@ -1169,7 +1200,7 @@ $('#sheet-wake').addEventListener('click', async () => {
 $('#sheet-sleep').addEventListener('click', () => state.open && sleepSession(state.open))
 $('#sheet-more').addEventListener('click', e => {
   const button = e.currentTarget, rect = button.getBoundingClientRect()
-  const items = ['sheet-wake', 'sheet-sleep', 'sheet-changes', 'sheet-history', 'sheet-new']
+  const items = ['sheet-term', 'sheet-wake', 'sheet-sleep', 'sheet-changes', 'sheet-history', 'sheet-new']
     .map(id => document.getElementById(id)).filter(el => el && !el.hidden)
     .map(el => ({ id: el.id, label: el.textContent.trim(), disabled: el.disabled, reason: el.disabled ? (!canMutate() && ['sheet-wake', 'sheet-sleep', 'sheet-new'].includes(el.id) ? t('mobile.readOnly') : el.title || t('mobile.readOnly')) : '' }))
   menu.open(items, { x: rect.right, y: rect.top, source: e.detail === 0 ? 'keyboard' : matchMedia('(pointer: coarse)').matches ? 'touch' : 'mouse', origin: button, label: t('sheet.more'), onPick: id => {
@@ -1179,6 +1210,7 @@ $('#sheet-more').addEventListener('click', e => {
     if (id === 'sheet-history') return state.open && files.lookHistory(state.open, itemOf(state.open)?.cwd ?? '', button)
     if (id === 'sheet-changes') return state.open && files.lookChanges(state.open, button)
     if (id === 'sheet-new') return state.open && newSession({ item: itemOf(state.open) }, button)
+    if (id === 'sheet-term') return state.open && openTerminal(state.open, button)
     action.click()
   } })
   button.setAttribute('aria-expanded', 'true')
@@ -2016,6 +2048,10 @@ addEventListener('keydown', e => {
   } else if (e.key === '/' && !typing) {
     e.preventDefault()
     $('#search').focus()
+  } else if (e.code === 'Backquote' && e.ctrlKey && !e.altKey && !e.metaKey && state.open && sessionPanel.isOpen && !files.isOpen()) {
+    // Ctrl+`: the terminal of the session in the sheet (its window closes with it again).
+    e.preventDefault()
+    openTerminal(state.open, $('#sheet-term'))
   }
 })
 addEventListener('scroll', () => $('.toolbar').classList.toggle('scrolled', scrollY > 2), { passive: true })
@@ -2149,6 +2185,7 @@ initBoardMenus({
     },
     changes: (key, el) => files.lookChanges(key, el),
     history: (key, el) => files.lookHistory(key, itemOf(key)?.cwd ?? '', el),
+    terminal: (key, el) => openTerminal(key, el),
     newSession,
     cats: id => openCats(id),
     filter: id => {

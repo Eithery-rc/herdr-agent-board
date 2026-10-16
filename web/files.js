@@ -586,5 +586,5 @@ export function initFiles({ t, token, toast, canMutate = () => true, onDialogCha
     true,
   )
 
-  return { upgrade, look, back, refreshAvailability: syncActions, lookChanges: (key, el) => look({ changes: key }, el), lookHistory: (key, cwd, el) => look({ history: key, cwd }, el), close, isOpen: () => !root.hidden && motion.target === 1, relabel: () => !root.hidden && (labels(), ql.data && render()) }
+  return { upgrade, look, back, openUrl, refreshAvailability: syncActions, lookChanges: (key, el) => look({ changes: key }, el), lookHistory: (key, cwd, el) => look({ history: key, cwd }, el), close, isOpen: () => !root.hidden && motion.target === 1, relabel: () => !root.hidden && (labels(), ql.data && render()) }
 }

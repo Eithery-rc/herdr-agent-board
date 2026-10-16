@@ -141,6 +141,8 @@ export function cardMenu(it, ctx) {
   return tidy([
     { id: 'open', label: t('menu.open'), hint: 'Enter' },
     { id: 'focus', label: t(it.sleeping ? 'menu.wakeFocus' : 'menu.focus'), ...herdr() },
+    // Looking needs no fresh data; typing and opening a shell wait for it in the window itself.
+    ctx.terminal && (it.cwd || it.pane) && { id: 'terminal', label: t('term.open'), hint: 'Ctrl+`' },
     { id: 'write', label: t('menu.write'), ...(it.pane ? {} : { disabled: true, reason: t('err.noPane') }) },
     it.sleeping
       ? { id: 'wake', label: t('sheet.wake'), ...herdr() }
