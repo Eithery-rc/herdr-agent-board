@@ -530,7 +530,7 @@ test('the board’s spawn-agent in a new workspace uses its first pane; a dialog
   const { box, post, board, launched } = await boardServer(t)
   const dir = join(box.dir, 'Delta')
   mkdirSync(dir)
-  const rootPane = { result: { pane: { pane_id: 'wN:p1', tab_id: 'wN:t1', agent: 'claude', agent_status: 'blocked' } } }
+  const rootPane = { seq: [{ result: { pane: { pane_id: 'wN:p1', tab_id: 'wN:t1', agent: null } } }, { result: { pane: { pane_id: 'wN:p1', tab_id: 'wN:t1', agent: 'claude', agent_status: 'blocked' } } }] }
   const state = { ...HERDR, 'pane get': rootPane, 'pane run': { result: null }, 'agent get': blocked, 'agent list': { result: { agents: [] } }, 'pane read': { text: 'Found 2 new MCP servers in .mcp.json\n❯ 1. Use these servers' } }
   box.state(state)
   const { id } = await (await post('/api/launch', { name: 'Delta job', cwd: dir, category: 'acme', workspace: { create: 'Delta space' }, message: 'Go.' })).json()

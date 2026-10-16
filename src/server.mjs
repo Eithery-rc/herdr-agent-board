@@ -148,14 +148,25 @@ export function startServer({ cfg, log = () => {} } = {}) {
   const terminalOn = () => cfg.terminal === undefined || cfg.terminal === true
   // What of the board is not set up on this computer (setup.mjs), for the page's quiet note:
   // { todo, sig }, the sig naming the problems (in English, so a language switch is no news).
-  // Checked at the start, every 10 minutes and whenever the page opens the note.
+  // Checked at the start, every 10 minutes and whenever the page opens the note; requests a few
+  // seconds apart, or while a check runs, share one.
   let setup = null
-  async function checkSetupNow() {
-    const facts = await gatherFacts(cfg)
-    const open = todo(checkSetup(facts))
-    setup = { todo: open.length, sig: open.map(c => `${c.id}:${c.level}:${c.title}`).join('|') }
-    publish()
-    return checkSetup(facts, t)
+  let setupFacts = null
+  let setupAt = 0
+  let setupRun = null
+  function checkSetupNow() {
+    if (setupRun) return setupRun
+    if (setupFacts && Date.now() - setupAt < 3000) return Promise.resolve(checkSetup(setupFacts, t))
+    setupRun = (async () => {
+      const facts = await gatherFacts(cfg)
+      setupFacts = facts
+      setupAt = Date.now()
+      const open = todo(checkSetup(facts))
+      setup = { todo: open.length, sig: open.map(c => `${c.id}:${c.level}:${c.title}`).join('|') }
+      publish()
+      return checkSetup(facts, t)
+    })().finally(() => (setupRun = null))
+    return setupRun
   }
 
   /** The board as clients see it, without the time of the last successful refresh. */

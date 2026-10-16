@@ -195,8 +195,9 @@ How it starts, by `launch` in config.json:
   `launch.command` below), with a session id the board picked, so the card has its lane before
   Claude starts. A new workspace's first tab is used for the session. `launch.claude` (`"claude"`)
   is what it types into the tab: a program, or a list of the program and its arguments, such as
-  `["claude", "--dangerously-skip-permissions"]` or `["claude-tg"]`. `launch.timeoutSec` (120)
-  is how long it waits for Claude to be ready. When Claude stops at a dialog before that, the card
+  `["claude", "--dangerously-skip-permissions"]` or `["claude-tg"]`. Without it, `launch.args`
+  (from before the board had its own launcher) are `claude`'s arguments. `launch.timeoutSec`
+  (120) is how long it waits for Claude to be ready. When Claude stops at a dialog before that, the card
   says so: the folder trust as below, any other in herdr; the board then names the session and
   sends the first message.
 - `launch.agent`: through herdr itself. A tab in the chosen workspace (or a new workspace),
@@ -257,8 +258,10 @@ pane=<pane id> name=<Name> agent=<herdr name>
 
 which is how the board knows who started whom. It fails (exit code 1, the reason on stderr) when
 the folder is not there, Claude is not ready in time, or Claude waits for a dialog first (the
-folder trust): answer it in that tab, then name and brief the session there. `--pane` starts
-Claude in that pane, at a shell prompt, instead of a new tab.
+folder trust): answer it in that tab, then name and brief the session there. A brief that does
+not get through fails it too, saying so: the session runs, send the brief by hand rather than
+start another. A `/rename` that does not take is only a warning. `--pane` starts Claude in that
+pane instead of a new tab; it must be at a shell prompt, not running an agent.
 
 Details it takes care of: `/rename` runs without a turn, so herdr calls it stalled, and the
 screen is read for "Session renamed" instead. Right after it Claude can drop typed text, and a
@@ -270,8 +273,11 @@ goes through cmd.exe. From Git Bash, a brief that starts with `/` (a slash comma
 as a path (MSYS rewrites such arguments for Windows programs): use `--brief-file` there too.
 
 `launch.claude` is typed at the tab's shell prompt (PowerShell, bash, zsh, fish): plain words as
-they are, other arguments in single quotes (no single quote or control character in them). The
-program itself must be a name on PATH, or a path without spaces.
+they are, other arguments in single quotes, which those shells take literally (in fish, keep a
+backslash away from the end and from another backslash). An argument with a quote in it
+(`'`, or a typographic one PowerShell also ends a string at) or a control character is refused.
+The program itself must be a name on PATH, or a path without spaces (backslashes only on
+Windows, where the tab runs PowerShell).
 
 Launches live in the board's memory. A board that restarts in the middle of one forgets it: its
 card goes, a launcher it ran is left running (and finishes or fails on its own), and a session
@@ -586,7 +592,8 @@ names the notifications). Any program or page can open such a link, so the handl
 but a pane id (`w1:p2`) and only shows or focuses that pane.
 
 Keep herdr's own notifications off (`[ui.toast] delivery = "off"`, herdr's default), or each
-comes twice; `board doctor` says when they are on. `node src/install.mjs --no-toast` takes the
+comes twice; `board doctor` says when they are on, and when another hook with "toast" in its
+command shows them too (a script of your own from before: take it out of settings.json). `node src/install.mjs --no-toast` takes the
 hooks out again (the protocol entry stays; it only ever opens a pane). The hooks run
 `powershell -File src\toast.ps1` from the plugin's folder, in the background, so Claude does not
 wait for them. To see one, from a herdr pane (`force` shows it for the pane you are in):

@@ -14,9 +14,10 @@ import { join } from 'node:path'
 import { loadConfig } from './config.mjs'
 import { t } from './lang.mjs'
 import { ROOT } from './paths.mjs'
-import { boardFiles, checkSetup, gatherFacts, patchSettings, report, shimFiles, tomlValue, herdrConfigFile } from './setup.mjs'
+import { boardFiles, checkSetup, gatherFacts, herdrConfigFile, patchSettings, readText, report, shimFiles, tomlValue } from './setup.mjs'
 
 const args = process.argv.slice(2)
+for (const a of args.filter(a => a !== '--toast' && a !== '--no-toast')) console.log(`ignored ${a}: the options are --toast and --no-toast`)
 let toast = args.includes('--toast') ? true : args.includes('--no-toast') ? false : undefined
 if (toast && process.platform !== 'win32') {
   console.log('desktop notifications: Windows only; on Linux and macOS herdr shows its own ([ui.toast] delivery = "system")')
@@ -26,6 +27,16 @@ if (toast && process.platform !== 'win32') {
 const settingsFile = join(homedir(), '.claude', 'settings.json')
 const binDir = join(homedir(), '.local', 'bin')
 const files = boardFiles(ROOT)
+
+// A settings.json that does not parse is left alone, and so is everything else.
+const text = readText(settingsFile)
+let before = {}
+try {
+  if (text !== null) before = JSON.parse(text)
+} catch {
+  console.log(`${settingsFile} is not valid JSON: fix it, then run the install again. Nothing was changed.`)
+  process.exit(1)
+}
 
 // --- commands
 mkdirSync(binDir, { recursive: true })
@@ -40,8 +51,7 @@ for (const [name, body] of Object.entries(shimFiles(ROOT))) {
 console.log(`commands: board, spawn-agent in ${binDir} (+ .cmd for PowerShell)`)
 
 // --- hooks, status line, notifications
-const before = existsSync(settingsFile) ? JSON.parse(readFileSync(settingsFile, 'utf8')) : {}
-if (existsSync(settingsFile)) copyFileSync(settingsFile, `${settingsFile}.bak-agent-board`)
+if (text !== null) copyFileSync(settingsFile, `${settingsFile}.bak-agent-board`)
 mkdirSync(join(homedir(), '.claude'), { recursive: true })
 const r = patchSettings(before, { root: ROOT, toast })
 writeFileSync(settingsFile, `${JSON.stringify(r.settings, null, 2)}\n`)
@@ -56,11 +66,3 @@ if (process.platform === 'win32') {
 // --- what else is (not) set up
 console.log('')
 console.log(report(checkSetup(await gatherFacts(loadConfig(), { root: ROOT }), t), t))
-
-function readText(file) {
-  try {
-    return readFileSync(file, 'utf8')
-  } catch {
-    return null
-  }
-}

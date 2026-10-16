@@ -41,7 +41,8 @@ export function parseArgs(argv) {
     const arg = String(argv[i])
     const m = /^--?([A-Za-z][A-Za-z-]*)(?:[=:]([\s\S]*))?$/.exec(arg)
     if (!m) throw new Error(`unexpected argument "${arg}". ${USAGE}`)
-    const key = OPTIONS[m[1].toLowerCase().replace(/-/g, '')]
+    const name = m[1].toLowerCase().replace(/-/g, '')
+    const key = Object.hasOwn(OPTIONS, name) ? OPTIONS[name] : null
     if (!key) throw new Error(`unknown option ${arg.replace(/[=:][\s\S]*$/, '')}. ${USAGE}`)
     if (key === 'help') {
       out.help = true
@@ -68,9 +69,12 @@ export function parseArgs(argv) {
   return out
 }
 
-/** `launch.claude` from config.json as a list: the program and its arguments. */
-export function claudeCommand(setting) {
-  if (setting === undefined || setting === null || setting === '') return ['claude']
+/**
+ * `launch.claude` from config.json as a list: the program and its arguments. Without it,
+ * `claude` with `launch.args`, the agent's arguments from before the board had its own launcher.
+ */
+export function claudeCommand(setting, args) {
+  if (setting === undefined || setting === null || setting === '') return ['claude', ...(Array.isArray(args) ? args.map(String) : [])]
   const list = typeof setting === 'string' ? [setting] : setting
   if (!Array.isArray(list) || !list.length || !list.every(s => typeof s === 'string') || !list[0].trim()) {
     throw new Error('launch.claude in the board’s config.json must be a program, or a list of the program and its arguments: ["claude", "--model", "opus"]')
@@ -83,19 +87,24 @@ export const choosesSession = command => command.some(a => /^(--session-id|-r|--
 
 /**
  * A command line for the tab's shell prompt (PowerShell, bash, zsh or fish): plain words as they
- * are, anything else in single quotes, which all of them take literally. The program cannot be
- * quoted (PowerShell would read a quoted word as a string, not a command), so it must be a plain
- * word: a name on PATH, or a path without spaces.
+ * are, anything else in single quotes, which take it literally (fish too, without a backslash
+ * before a quote or another backslash). Refused: a single quote, the typographic ones PowerShell
+ * also ends a string at, and control characters. The program cannot be quoted (PowerShell would
+ * read a quoted word as a string, not a command), so it must be a plain word: a name on PATH, or
+ * a path without spaces (with backslashes only on Windows, where the tab runs PowerShell).
  */
 export function shellLine(argv, win = process.platform === 'win32') {
-  const plain = win ? /^[\w=:./\\~+-]+$/ : /^[\w=:./~+-]+$/
+  const plain = /^[\w=:./~+-]+$/
   return argv
     .map((arg, i) => {
       const s = String(arg)
-      if (i === 0 && s.startsWith('-')) throw new Error(`launch.claude: the program "${s}" starts with a dash`)
+      if (i === 0) {
+        if (s.startsWith('-')) throw new Error(`launch.claude: the program "${s}" starts with a dash`)
+        if (plain.test(s) || (win && /^[\w=:./\\~+-]+$/.test(s))) return s
+        throw new Error(`launch.claude: "${s}" is typed at the tab's shell prompt, so the program must be a name on PATH or a path without spaces or quotes`)
+      }
       if (plain.test(s)) return s
-      if (i === 0) throw new Error(`launch.claude: "${s}" is typed at the tab's shell prompt, so the program must be a name on PATH or a path without spaces or quotes`)
-      if (/['\u0000-\u001f\u007f]/.test(s)) throw new Error(`launch.claude: the argument ${JSON.stringify(s)} cannot be typed into a shell as it is (a single quote or a control character)`)
+      if (/['\u2018-\u201b\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(s)) throw new Error(`launch.claude: the argument ${JSON.stringify(s)} cannot be typed into a shell as it is (a quote or a control character)`)
       return `'${s}'`
     })
     .join(' ')
@@ -111,6 +120,17 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
 const stalled = err => /agent_prompt_stalled/.test(`${err?.code} ${err?.message}`)
 const screen = pane => herdrText(['pane', 'read', pane, '--source', 'visible'], 5000).catch(() => '')
 
+/**
+ * Whether a line typed into the prompt is still on screen: its first 30 characters but spaces,
+ * found on the screen with its spaces and line breaks taken out (a narrow pane wraps it), or a
+ * pasted-text chip standing for it.
+ */
+export function stillTyped(shown, text) {
+  const squeeze = s => String(s ?? '').replace(/\s+/g, '')
+  const head = squeeze(String(text ?? '').split('\n')[0]).slice(0, 30)
+  return (!!head && squeeze(shown).includes(head)) || /Pasted text/.test(String(shown ?? ''))
+}
+
 /** Type a line into the agent's prompt; a leading dash would read as an option to herdr. */
 const prompt = (pane, text) => herdr(['agent', 'prompt', pane, /^-/.test(text) ? ` ${text}` : text])
 
@@ -124,18 +144,19 @@ export async function spawnAgent(o, { claude = ['claude'], log = () => {} } = {}
   const workspace = o.workspace || process.env.HERDR_WORKSPACE_ID
   if (!o.pane && !workspace) throw new Error('No herdr workspace: run it inside herdr or pass --workspace')
   const label = o.label?.trim() || o.name
-  const text = o.briefFile !== undefined ? readFileSync(o.briefFile, 'utf8').replace(/^﻿/, '').trim() : (o.brief ?? '').trim()
+  const text = o.briefFile !== undefined ? readFileSync(o.briefFile, 'utf8').replace(/^\uFEFF/, '').trim() : (o.brief ?? '').trim()
   const command = shellLine(o.sessionId && !choosesSession(claude) ? [...claude, '--session-id', o.sessionId] : claude)
 
   // The tab is labelled before Claude runs: a launcher may name things after it (a Telegram topic).
   let pane = o.pane
   if (pane) {
-    const tab = (await herdr(['pane', 'get', pane]))?.pane?.tab_id
-    if (tab) await herdr(['tab', 'rename', tab, label]).catch(() => {})
+    const p = (await herdr(['pane', 'get', pane]))?.pane
+    // Typed into a running agent, the command would go to it as a prompt.
+    if (p?.agent) throw new Error(`${pane} already runs ${p.agent}: --pane takes a pane at a shell prompt`)
+    if (p?.tab_id) await herdr(['tab', 'rename', p.tab_id, label]).catch(() => {})
   } else {
     pane = (await herdr(['tab', 'create', '--workspace', workspace, '--cwd', cwd, '--label', label, '--no-focus'])).root_pane.pane_id
   }
-  log(`pane ${pane}: ${command}`)
   await herdr(['pane', 'run', pane, command])
 
   const deadline = Date.now() + o.timeoutSec * 1000
@@ -170,11 +191,12 @@ export async function spawnAgent(o, { claude = ['claude'], log = () => {} } = {}
     agent = pane
   }
 
-  // /rename runs locally, no turn: herdr never sees it working and calls the prompt stalled.
+  // /rename runs locally, no turn: herdr never sees it working and calls the prompt stalled. The
+  // name is cosmetic and Claude runs by now: no failure for it, or a retry would start a second one.
   try {
     await prompt(pane, `/rename ${o.name}`)
   } catch (err) {
-    if (!stalled(err)) throw err
+    if (!stalled(err)) log(`/rename in ${pane}: ${err.message}`)
   }
   for (let i = 0; i < 10; i++) {
     await sleep(500)
@@ -192,9 +214,9 @@ export async function spawnAgent(o, { claude = ['claude'], log = () => {} } = {}
         await prompt(pane, text)
         sent = true
       } catch (err) {
-        if (!stalled(err)) throw err
-        const shown = await screen(pane)
-        if (shown.includes(text.split('\n')[0].slice(0, 30)) || /Pasted text/.test(shown)) {
+        // "brief did not reach" tells the board the session runs: no retry that starts another.
+        if (!stalled(err)) throw new Error(`The brief did not reach Claude in ${pane}: ${err.message}. Send it by hand: herdr agent prompt ${pane} "<brief>"`)
+        if (stillTyped(await screen(pane), text)) {
           await herdr(['pane', 'send-keys', pane, 'enter']).catch(() => {})
           sent = true
         }
@@ -211,7 +233,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     if (o.help) {
       console.log(USAGE)
     } else {
-      const r = await spawnAgent(o, { claude: claudeCommand(loadConfig().launch?.claude) })
+      const launch = loadConfig().launch ?? {}
+      const r = await spawnAgent(o, { claude: claudeCommand(launch.claude, launch.args), log: msg => console.error(`spawn-agent: ${msg}`) })
       console.log(`pane=${r.pane} name=${r.name} agent=${r.agent}`)
     }
   } catch (err) {

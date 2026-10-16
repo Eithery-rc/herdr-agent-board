@@ -44,12 +44,15 @@ export function initSetupNote({ t, esc, store, onDialogChange = () => {} }) {
   })
 
   const hiddenSig = () => store.get(HIDDEN_KEY, '')
-  const shown = () => summary?.todo > 0 && (open || hiddenSig() !== summary.sig)
+  // Open, it stays where the list hangs from, even once the last problem is fixed.
+  const shown = () => open || (summary?.todo > 0 && hiddenSig() !== summary.sig)
 
   function paintNote() {
     note.hidden = !shown()
     if (note.hidden) return
+    // The board renders every refresh: the note is redrawn only when its words change.
     const label = t()('setup.incomplete')
+    if (note.getAttribute('aria-label') === label) return
     note.innerHTML = `<span class="setup-dot" aria-hidden="true"></span><span>${esc(label)}</span>`
     note.title = t()('setup.incompleteHint')
     note.setAttribute('aria-label', label)
@@ -97,30 +100,39 @@ export function initSetupNote({ t, esc, store, onDialogChange = () => {} }) {
   function paintList() {
     const tr = t()
     const n = (checks ?? []).filter(c => c.level === 'error' || c.level === 'warn').length
+    const failed = loadFailed ? `<p class="setup-sum setup-failed">${esc(tr('setup.loadFailed'))}</p>` : ''
     content.innerHTML = checks
-      ? `<p class="setup-sum">${esc(n ? tr('setup.todo', { n }) : tr('setup.allSet'))}</p>${list()}`
-      : `<p class="setup-sum">${esc(tr('setup.checking'))}</p>`
+      ? `${failed}<p class="setup-sum">${esc(n ? tr('setup.todo', { n }) : tr('setup.allSet'))}</p>${list()}`
+      : failed || `<p class="setup-sum">${esc(tr('setup.checking'))}</p>`
     pop.querySelector('[data-setup="hide"]').hidden = !summary?.todo
     if (open) position()
   }
 
-  async function load(fresh = false) {
+  // Each opening and "Check again" asks the server to check again; only the newest answer counts.
+  let asked = 0
+  let loadFailed = false
+  async function load(busy = false) {
+    const mine = ++asked
     recheck.disabled = true
-    if (fresh) recheck.textContent = t()('setup.checking')
+    if (busy) recheck.textContent = t()('setup.checking')
     try {
-      const res = await fetch(`/api/setup${fresh ? '?fresh=1' : ''}`, { cache: 'no-store' })
+      const res = await fetch('/api/setup', { cache: 'no-store' })
       if (!res.ok) throw new Error(String(res.status))
       const r = await res.json()
+      if (mine !== asked) return
       checks = r.checks
+      loadFailed = false
       loadedLang = t().lang
       summary = { todo: r.todo, sig: r.sig }
       paintNote()
     } catch {
-      checks = checks ?? null
+      if (mine === asked) loadFailed = true
     } finally {
-      recheck.disabled = false
-      recheck.textContent = t()('setup.recheck')
-      paintList()
+      if (mine === asked) {
+        recheck.disabled = false
+        recheck.textContent = t()('setup.recheck')
+        paintList()
+      }
     }
   }
 

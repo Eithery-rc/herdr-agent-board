@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -64,6 +64,9 @@ test('command files: what they run, and which ones are the board’s', () => {
   const found = findCommand('spawn-agent', { env: { PATH: 'C:\\nope;C:\\bin', PATHEXT: '.EXE;.CMD' }, platform: 'win32', exists: f => f in disk, read: f => disk[f] })
   assert.deepEqual(found.ps, { file: 'C:\\bin\\spawn-agent.ps1', target: null })
   assert.equal(found.sh.target, files.spawn.replace(/\\/g, '/'))
+  // claude.exe or node.exe on PATH is hundreds of megabytes: found, never read.
+  const big = findCommand('claude', { env: { PATH: 'C:\\bin', PATHEXT: '.EXE' }, platform: 'win32', exists: f => f === 'C:\\bin\\claude.exe', size: () => 272_000_000, read: () => assert.fail('read a big file') })
+  assert.deepEqual(big.ps, { file: 'C:\\bin\\claude.exe', target: null })
 })
 
 test('herdr’s config: the board’s key, and a value in a section', () => {
@@ -145,6 +148,18 @@ test('doctor: each missing piece, what it costs and how to fix it', () => {
   assert.equal(level(checkSetup(facts({ launcher: { kind: 'command', name: 'spawn-agent', program: { file: 'pwsh', found: true }, script: { file: 'C:\\gone.ps1', found: false } } })), 'launch'), 'warn')
   assert.equal(level(checkSetup(facts({ settings: null, settingsError: 'Unexpected token' })), 'hooks'), 'error')
   assert.equal(level(checkSetup(facts({ node: '18.19.0' })), 'node'), 'error')
+
+  // A notification hook of one's own from before: alone it is fine, beside the board's it doubles them.
+  const theirs = { type: 'command', command: 'powershell -File "C:\\Users\\u\\.claude\\hooks\\claude-toast.ps1"', async: true }
+  const both = patchSettings({ hooks: { Stop: [{ hooks: [theirs] }] } }, { root: ROOT_A, toast: true }).settings
+  const twice = checkSetup(facts({ settings: both })).find(c => c.id === 'toast')
+  assert.equal(twice.level, 'warn')
+  assert.match(twice.detail, /claude-toast\.ps1/)
+  const mine = checkSetup(facts({ settings: patchSettings({ hooks: { Stop: [{ hooks: [theirs] }] } }, { root: ROOT_A }).settings })).find(c => c.id === 'toast')
+  assert.equal(mine.level, 'ok')
+  // The launch check names the program only: arguments can carry a whole prompt.
+  const secret = checkSetup(facts({ launcher: { kind: 'builtin', claude: ['cl', '--append-system-prompt', 'secret words'], error: '', program: { file: 'cl', found: false } } })).find(c => c.id === 'launch')
+  assert.doesNotMatch(`${secret.title} ${secret.detail}`, /secret words/)
 })
 
 test('install in a sandbox: the commands, the hooks once, a backup, and notifications only when asked', { timeout: 30_000 }, async t => {
@@ -182,4 +197,25 @@ test('install in a sandbox: the commands, the hooks once, a backup, and notifica
   writeFileSync(join(box.env.HOME, '.local', 'bin', 'spawn-agent'), '#!/bin/sh\necho mine\n')
   assert.match((await install()).out, /skipped .*spawn-agent: exists and is not ours/)
   assert.equal(readFileSync(join(box.env.HOME, '.local', 'bin', 'spawn-agent'), 'utf8'), '#!/bin/sh\necho mine\n')
+  // Windows PowerShell 5.1 writes UTF-8 with a BOM: still read.
+  writeFileSync(settingsFile, `\uFEFF${JSON.stringify({ model: 'opus' })}`)
+  assert.equal((await install()).code, 0)
+  assert.equal(JSON.parse(readFileSync(settingsFile, 'utf8')).model, 'opus')
+  // A settings.json that does not parse: nothing is touched, it says so.
+  writeFileSync(settingsFile, '{ "hooks": ')
+  const broken = await install()
+  assert.equal(broken.code, 1)
+  assert.match(broken.out, /not valid JSON/)
+  assert.equal(readFileSync(settingsFile, 'utf8'), '{ "hooks": ')
+})
+
+test('toast.ps1 parses in Windows PowerShell, and its link handler takes a pane id only', { skip: process.platform !== 'win32' && 'Windows only' }, () => {
+  const script = join(root, 'src', 'toast.ps1')
+  const parse = spawnSync('powershell', ['-NoProfile', '-Command', `$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile('${script}', [ref]$null, [ref]$e); $e.Count`], { encoding: 'utf8' })
+  assert.equal(parse.stdout.trim(), '0', parse.stderr)
+  const text = readFileSync(script, 'utf8')
+  const rule = /-notmatch '(\^claude-pane:[^']+)'/.exec(text)[1]
+  const re = new RegExp(rule)
+  for (const ok of ['claude-pane:wP:p3G', 'claude-pane:w12:p1/']) assert.match(ok, re)
+  for (const bad of ['claude-pane:w1:p2;calc', 'claude-pane:w1:p2&x', 'claude-pane:../x', 'claude-pane:w1:p2 x', 'other:w1:p2']) assert.doesNotMatch(bad, re)
 })

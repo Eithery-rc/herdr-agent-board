@@ -11,7 +11,7 @@ import { delimiter, isAbsolute, join, resolve } from 'node:path'
 import { translator } from '../web/i18n.js'
 import { launcherLabel } from './launch.mjs'
 import { ROOT } from './paths.mjs'
-import { choosesSession, claudeCommand, shellLine } from './spawn.mjs'
+import { claudeCommand, shellLine } from './spawn.mjs'
 
 export const WAKE_REPO = 'https://github.com/Eithery-rc/tg-mcp/tree/main/herdr-wake'
 const english = translator('en')
@@ -138,11 +138,22 @@ export const KEY_SNIPPET = '[[keys.command]]\nkey = "prefix+a"\ntype = "plugin_a
 
 // ------------------------------------------------------------------ what this computer has
 
-function readText(file) {
+/** A text file as a string (a BOM taken off, as Windows PowerShell writes one), or null. */
+export function readText(file) {
   try {
-    return readFileSync(file, 'utf8')
+    return readFileSync(file, 'utf8').replace(/^\uFEFF/, '')
   } catch {
     return null
+  }
+}
+
+// Our command files are a few hundred bytes; claude.exe or node.exe on PATH is not read.
+const SHIM_MAX = 4096
+const sizeOf = file => {
+  try {
+    return statSync(file).size
+  } catch {
+    return 0
   }
 }
 
@@ -151,7 +162,7 @@ function readText(file) {
  * runs. PowerShell takes a .ps1 before a .cmd in the same folder, Git Bash and Unix shells the
  * file of that very name.
  */
-export function findCommand(name, { env = process.env, platform = process.platform, exists = existsSync, read = readText } = {}) {
+export function findCommand(name, { env = process.env, platform = process.platform, exists = existsSync, read = readText, size = sizeOf } = {}) {
   const dirs = String(env.PATH ?? env.Path ?? '').split(platform === 'win32' ? ';' : delimiter).filter(Boolean)
   const exts = ['.ps1', ...String(env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean).map(e => e.toLowerCase())]
   const hit = list => {
@@ -159,7 +170,7 @@ export function findCommand(name, { env = process.env, platform = process.platfo
       for (const n of list) {
         const file = join(dir, n)
         if (!exists(file) || isFolder(file)) continue
-        const target = shimTarget(read(file))
+        const target = size(file) <= SHIM_MAX ? shimTarget(read(file)) : null
         return { file, target, ...(target && !exists(target) && { gone: true }) }
       }
     }
@@ -204,7 +215,8 @@ export async function gatherFacts(cfg, { root = ROOT, env = process.env, platfor
     try {
       settings = JSON.parse(settingsText)
     } catch (err) {
-      settingsError = err.message
+      // Only where it broke: V8's message quotes the file around it, and this goes to the page.
+      settingsError = `not valid JSON${/position \d+/.exec(err.message) ? ` (${/position \d+/.exec(err.message)[0]})` : ''}`
     }
   }
   const configFile = herdrConfigFile(env, home)
@@ -220,12 +232,12 @@ export async function gatherFacts(cfg, { root = ROOT, env = process.env, platfor
     let claude = null
     let error = ''
     try {
-      claude = claudeCommand(launch.claude)
+      claude = claudeCommand(launch.claude, launch.args)
       shellLine(claude)
     } catch (err) {
       error = err.message
     }
-    launcher = { kind: 'builtin', claude, error, program: claude ? program(claude[0], env, platform) : null, ownSession: claude ? !choosesSession(claude) : false }
+    launcher = { kind: 'builtin', claude, error, program: claude ? program(claude[0], env, platform) : null }
   }
   return {
     platform,
@@ -328,10 +340,10 @@ export function checkSetup(facts, t = english) {
   } else if (l?.kind === 'herdr') {
     add('launch', 'ok', t('setup.launch.herdr', { agent: l.agent }), t('setup.launch.herdrDetail'))
   } else if (l?.kind === 'builtin') {
-    const claude = (l.claude ?? []).join(' ')
+    const program = l.claude?.[0] ?? ''
     if (l.error) add('launch', 'warn', t('setup.launch.claudeBad'), l.error, t('setup.launch.claudeBadFix'))
-    else if (!l.program?.found) add('launch', 'warn', t('setup.launch.notFound', { program: l.claude[0] }), t('setup.launch.notFoundDetail', { claude, program: l.claude[0] }), t('setup.launch.notFoundFix'))
-    else add('launch', 'ok', t('setup.launch.builtin', { claude }), claude === 'claude' ? t('setup.launch.builtinDetail') : '')
+    else if (!l.program?.found) add('launch', 'warn', t('setup.launch.notFound', { program }), t('setup.launch.notFoundDetail', { program }), t('setup.launch.notFoundFix'))
+    else add('launch', 'ok', t('setup.launch.builtin', { claude: program }), l.claude.length === 1 && program === 'claude' ? t('setup.launch.builtinDetail') : '')
   }
 
   // Desktop notifications with the agent's words. Optional too, until they are on.
@@ -342,7 +354,11 @@ export function checkSetup(facts, t = english) {
     const per = TOAST_EVENTS.map(([event]) => commandsOf(facts.settings, event).filter(c => ours.toast(c.command)))
     const here = per.every(list => list.some(c => norm(c.command).includes(norm(f.toast))))
     const delivery = tomlValue(facts.herdrConfig, 'ui.toast', 'delivery') ?? 'off'
-    if (per.every(list => !list.length)) add('toast', 'off', t('setup.toast.off'), t('setup.toast.offDetail'), t('setup.toast.offFix'), NOTIFICATIONS)
+    const theirs = TOAST_EVENTS.flatMap(([event]) => commandsOf(facts.settings, event)).find(c => /toast/i.test(c.command) && !ours.toast(c.command))?.command
+    if (per.every(list => !list.length)) {
+      if (theirs) add('toast', 'ok', t('setup.toast.own'), theirs)
+      else add('toast', 'off', t('setup.toast.off'), t('setup.toast.offDetail'), t('setup.toast.offFix'), NOTIFICATIONS)
+    } else if (theirs) add('toast', 'warn', t('setup.toast.twice'), t('setup.toast.theirs', { command: theirs }), t('setup.toast.theirsFix', { file: facts.settingsFile }))
     else if (!here) add('toast', 'warn', t('setup.toast.stale'), per.flat()[0]?.command ?? '', t('setup.run'), NOTIFICATIONS)
     else if (delivery !== 'off') add('toast', 'warn', t('setup.toast.twice'), t('setup.toast.twiceDetail', { delivery, file: facts.herdrConfigFile }), t('setup.toast.twiceFix'))
     else add('toast', 'ok', t('setup.toast.ok'), t('setup.toast.okDetail'))

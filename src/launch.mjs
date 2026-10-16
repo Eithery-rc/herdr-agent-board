@@ -24,7 +24,7 @@ import { herdr, herdrText } from './herdr.mjs'
 import { inputDraft } from './screen.mjs'
 import { t } from './lang.mjs'
 import { CARDS_DIR, CLAUDE_DIR, ROOT, STATE_DIR } from './paths.mjs'
-import { choosesSession, claudeCommand } from './spawn.mjs'
+import { choosesSession, claudeCommand, stillTyped } from './spawn.mjs'
 import { readCard, writeCard } from './store.mjs'
 import { keyTowardYes, sameFolder, trustDialog } from './trust.mjs'
 
@@ -313,7 +313,7 @@ async function typeLine(pane, text, tries = 3) {
       if (!stalled(err)) throw err
       const screen = await herdrText(['pane', 'read', pane, '--source', 'visible'], 5000).catch(() => '')
       // Its first line (the screen breaks the rest) still in the prompt: it only needs its Enter.
-      if (screen.includes(text.split('\n')[0].slice(0, 30)) || /Pasted text/.test(screen)) {
+      if (stillTyped(screen, text)) {
         await herdr(['pane', 'send-keys', pane, 'enter']).catch(() => {})
         return true
       }
@@ -585,7 +585,7 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
     const template = spec().command
     const vars = { name: l.name, label: l.label, cwd: l.cwd, workspace: l.workspaceId, workspaceLabel: l.workspaceLabel, category: l.category, message: l.message, messageFile: '', sessionId: '' }
     // A launch.claude that picks its own session (--resume) gets no id from the board.
-    if (builtin ? !choosesSession(claudeCommand(spec().claude)) : usesPlaceholder(template, 'sessionId')) {
+    if (builtin ? !choosesSession(claudeCommand(spec().claude, spec().args)) : usesPlaceholder(template, 'sessionId')) {
       ownSessionId(l)
       vars.sessionId = l.sessionId
     }

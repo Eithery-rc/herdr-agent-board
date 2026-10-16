@@ -5,7 +5,8 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { spawnOf, spawnResult } from '../src/claude.mjs'
-import { absoluteDir, choosesSession, claudeCommand, parseArgs, shellLine } from '../src/spawn.mjs'
+import { failureKind } from '../src/launch.mjs'
+import { absoluteDir, choosesSession, claudeCommand, parseArgs, shellLine, stillTyped } from '../src/spawn.mjs'
 import { sandbox } from './fixtures/sandbox.mjs'
 
 test('spawn-agent options: the board’s --names and the PowerShell -Names alike', () => {
@@ -39,6 +40,9 @@ test('spawn-agent: what it types into the tab’s shell', () => {
   assert.deepEqual(claudeCommand(undefined), ['claude'])
   assert.deepEqual(claudeCommand('claude-tg'), ['claude-tg'])
   assert.deepEqual(claudeCommand(['claude', '--model', 'opus']), ['claude', '--model', 'opus'])
+  // launch.args, from before the board had its own launcher, still reach claude; launch.claude wins.
+  assert.deepEqual(claudeCommand(undefined, ['--model', 'opus']), ['claude', '--model', 'opus'])
+  assert.deepEqual(claudeCommand(['claude-tg'], ['--model', 'opus']), ['claude-tg'])
   for (const bad of [[], [''], [3], 'x y'.split(' ').concat(5), {}]) assert.throws(() => claudeCommand(bad), /launch\.claude/, JSON.stringify(bad))
   assert.equal(shellLine(['claude', '--dangerously-skip-permissions', '--session-id', '0f8fad5b-d9cb-469f-a165-70867728950e']), 'claude --dangerously-skip-permissions --session-id 0f8fad5b-d9cb-469f-a165-70867728950e')
   // Anything but a plain word goes in single quotes, which PowerShell, bash, zsh and fish all take literally.
@@ -47,7 +51,18 @@ test('spawn-agent: what it types into the tab’s shell', () => {
   assert.throws(() => shellLine(['C:\\tools\\start-claude.ps1'], false), /program must be a name on PATH/) // a backslash means something to sh
   assert.throws(() => shellLine(['C:\\Program Files\\claude.exe'], true), /program must be a name on PATH/)
   assert.throws(() => shellLine(['-x']), /starts with a dash/)
-  assert.throws(() => shellLine(['claude', "it's"]), /single quote/)
+  assert.throws(() => shellLine(['claude', "it's"]), /a quote/)
+  assert.throws(() => shellLine(['claude', 'Don’t stop'], true), /a quote/) // PowerShell ends a string at it too
+  assert.throws(() => shellLine(['claude', 'a b']), /control character/)
+  // A backslash means something to sh: quoted in an argument, on Windows too (a Git Bash tab).
+  assert.equal(shellLine(['claude', '--mcp-config', 'C:\\a\\b.json'], true), "claude --mcp-config 'C:\\a\\b.json'")
+  // Option names are checked as names: nothing from Object's prototype passes for one.
+  assert.throws(() => parseArgs(['--name', 'x', '--cwd', '.', '--constructor', '1']), /unknown option --constructor/)
+  assert.throws(() => parseArgs(['--name', 'x', '--cwd', '.', '--toString', '1']), /unknown option --toString/)
+  // Typed text still on screen, wrapped by a narrow pane, or as a pasted-text chip.
+  assert.equal(stillTyped('❯ Check the invo\nices in the ledger and rep', 'Check the invoices in the ledger and report'), true)
+  assert.equal(stillTyped('[Pasted text #1 +12 lines]', 'whatever'), true)
+  assert.equal(stillTyped('❯ ', 'Check the invoices'), false)
   assert.throws(() => shellLine(['claude', 'a\nb']), /control character/)
   assert.equal(choosesSession(['claude', '--resume', 'x']), true)
   assert.equal(choosesSession(['claude-tg', '-c']), true)
@@ -148,11 +163,40 @@ test('spawn-agent: a dialog before Claude is ready, a brief herdr calls stalled,
 
 test('spawn-agent --pane starts Claude in a pane that is there, its tab named after the session', { timeout: 30_000 }, async t => {
   const box = sandbox(t)
-  box.state({ ...STATE, 'pane get': READY })
+  box.state({ ...STATE, 'pane get': { seq: [{ result: { pane: { pane_id: 'wA:p9', tab_id: 'wA:t9', agent: null } } }, READY] } })
   const r = await runSpawn(box, ['--name', 'Here', '--cwd', box.dir, '--pane', 'wA:p9'])
   assert.equal(r.code, 0, r.stderr)
   const calls = box.calls().map(a => a.join(' '))
   assert.equal(calls.some(c => c.startsWith('tab create')), false)
   assert.ok(calls.includes('tab rename wA:t9 Here'))
   assert.ok(calls.includes('pane run wA:p9 claude'))
+})
+
+test('spawn-agent: a /rename herdr refuses is a warning; a brief it refuses fails as "did not reach", which the board does not retry', { timeout: 30_000 }, async t => {
+  const box = sandbox(t)
+  box.state({ ...STATE, 'pane get': { seq: [{ result: { pane: { pane_id: 'wA:p9', agent: null } } }, READY] }, 'agent prompt': { code: 'agent_busy', error: 'agent_busy: the agent is busy' } })
+  const r = await runSpawn(box, ['--name', 'Busy', '--cwd', box.dir, '--workspace', 'wA', '--brief', 'Go.'])
+  assert.equal(r.code, 1)
+  assert.match(r.stderr, /spawn-agent: \/rename in wA:p9: .*agent_busy/)
+  const last = r.stderr.trim().split('\n').at(-1)
+  assert.match(last, /^spawn-agent: The brief did not reach Claude in wA:p9: /)
+  assert.equal(failureKind(last), 'message')
+})
+
+test('spawn-agent --pane refuses a pane that runs an agent: the command would be typed into it', { timeout: 30_000 }, async t => {
+  const box = sandbox(t)
+  box.state({ ...STATE, 'pane get': READY })
+  const r = await runSpawn(box, ['--name', 'Here', '--cwd', box.dir, '--pane', 'wA:p9'])
+  assert.equal(r.code, 1)
+  assert.match(r.stderr, /wA:p9 already runs claude/)
+  assert.equal(box.calls().some(a => a[0] === 'pane' && a[1] === 'run'), false)
+})
+
+test('spawn-agent with launch.args and no launch.claude: claude with those arguments', { timeout: 30_000 }, async t => {
+  const box = sandbox(t)
+  box.state(STATE)
+  boardConfig(box, { launch: { args: ['--model', 'opus'] } })
+  const r = await runSpawn(box, ['--name', 'Args', '--cwd', box.dir, '--workspace', 'wA'])
+  assert.equal(r.code, 0, r.stderr)
+  assert.ok(box.calls().some(a => a.join(' ') === 'pane run wA:p9 claude --model opus'))
 })

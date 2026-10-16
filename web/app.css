@@ -1276,6 +1276,7 @@ button.swatch:active { transform: scale(0.88); }
 .setup-pop header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .setup-pop h3 { margin: 0; font-size: 15px; letter-spacing: -0.01em; }
 .setup-sum { margin: 6px 0 2px; color: var(--label-2); }
+.setup-failed { color: var(--orange); }
 .setup-list { margin: 0; padding: 0; list-style: none; }
 .setup-row { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 9px; padding: 10px 0; border-top: 0.5px solid var(--separator); }
 .setup-row:first-child { border-top: 0; }
