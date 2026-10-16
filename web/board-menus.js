@@ -41,7 +41,7 @@ export function initBoardMenus(board) {
         },
       }
     }
-    if (el.closest('.ql, .launch, .rename, .menu')) return null
+    if (el.closest('.ql, .launch, .limits-pop, .rename, .menu')) return null
     const head = el.closest('#sheet .sheet-head')
     if (head) {
       const key = board.state().open

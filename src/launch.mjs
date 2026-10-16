@@ -14,7 +14,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { open, readdir, stat } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { basename, dirname, join, relative, resolve, sep } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { checkBranch, checkName, normDir, sameDir, slugName, uniqueSlug, worktreePath } from '../web/launch-model.js'
 import { resolvePath } from './files.mjs'
 import { raiseTerminal } from './actions.mjs'
@@ -101,7 +101,8 @@ export function failureKind(message, code) {
 export function launcherLabel(command) {
   if (!Array.isArray(command) || !command.length) return ''
   const script = command.flat().find(s => /\.(ps1|sh|cmd|bat|mjs|cjs|js|py)$/i.test(String(s)) && !/\{/.test(s))
-  return basename(String(script ?? command[0])).replace(/\.(ps1|sh|cmd|bat|mjs|cjs|js|py|exe)$/i, '')
+  // Either separator: a config written for Windows still reads right on macOS (path.basename there splits on / only).
+  return String(script ?? command[0]).split(/[\\/]/).pop().replace(/\.(ps1|sh|cmd|bat|mjs|cjs|js|py|exe)$/i, '')
 }
 
 // ------------------------------------------------------------------ folders for the picker

@@ -1,4 +1,6 @@
 import { boardConnection, dialogHistory } from './lifecycle.js'
+import { outsidePanelPress, panelPress } from './click-away.js'
+import { detailResource } from './detail-resource.js'
 // Agent board, web. Live data over Server-Sent Events; every change of place animates with a
 // spring from where the card is on screen (FLIP), drags stay glued to the pointer and land
 // with the pointer's velocity, and the session sheet can be flicked away.
@@ -9,6 +11,7 @@ import { initFiles } from './files.js'
 import { LANGUAGES, translator } from './i18n.js'
 import { initLaunch } from './launch.js'
 import { updateLive } from './live.js'
+import { limitInfo } from './limits-model.js'
 import { markdown } from './markdown.js'
 import { initMenu } from './menu.js'
 import { keepInSight, menuOpen, Panel, panels, roomBelow } from './panel.js'
@@ -120,6 +123,7 @@ function visibleItems() {
 // ---------------------------------------------------------------- data
 let lastDetailStamp = ''
 function onData(data) {
+  const recovered = state.data.stale && !data.stale
   // The page's own files changed (the plugin was updated): load the new page.
   if (state.version && data.version && data.version !== state.version) return location.reload()
   state.version = data.version
@@ -133,8 +137,10 @@ function onData(data) {
   syncAvailability()
   if (state.open) {
     const it = itemOf(state.open)
+    if (it) state.selectedItem = it
+    if (!it && !data.stale) { detail.missing(); return }
     const stamp = it ? `${it.activity}|${it.status}|${it.column}|${it.wait}|${it.doing}|${it.category}` : ''
-    if (stamp !== lastDetailStamp) {
+    if (it && (stamp !== lastDetailStamp || recovered || state.detailState?.status === 'missing')) {
       lastDetailStamp = stamp
       loadDetail(state.open)
     }
@@ -149,10 +155,13 @@ const connection = boardConnection({
   }),
   data: onData,
   connected(value) {
+    const returned = value && !state.connected
     state.connected = value
+    renderLimits()
     updateLive($('#live'), value ? state.data : { stale: true, lastSuccessfulRefreshAt: null }, t)
     if (!value) $('#live').title = t('live.off')
     syncAvailability()
+    if (returned && state.open && itemOf(state.open)) loadDetail(state.open)
   },
 })
 // Two conditions. Edits the board keeps itself (cards, lanes, language, files) need only the
@@ -163,11 +172,12 @@ const canEdit = () => !!state.connected
 const HERDR_ACTIONS = ['focus', 'wake', 'sleep', 'message']
 function syncAvailability() {
   const blocked = !canMutate()
+  const missing = !!state.open && (!itemOf(state.open) || state.detailState?.status === 'missing')
   for (const banner of document.querySelectorAll('#connection-state, #sheet-connection-state')) {
     banner.hidden = !blocked
     banner.textContent = t(canEdit() ? 'mobile.readOnly' : 'live.off')
   }
-  for (const element of document.querySelectorAll('#sheet-focus, #sheet-sleep, #sheet-wake, [data-act="focus"], [data-act="sleep"]')) element.disabled = blocked || (element.id === 'sheet-sleep' && inTurn(itemOf(state.open) ?? {}))
+  for (const element of document.querySelectorAll('#sheet-focus, #sheet-sleep, #sheet-wake, [data-act="focus"], [data-act="sleep"]')) element.disabled = blocked || (missing && !!element.closest('#sheet')) || (element.id === 'sheet-sleep' && inTurn(itemOf(state.open) ?? {}))
   for (const element of document.querySelectorAll('#attach, #lang, #cat-new, #sheet-card button, #sheet-card input, #cats-sheet button:not([data-close]):not([data-layout]), #cats-sheet input, #sched-body .sched-x, #sched-body .sched-mode, [data-act="dismiss"]')) element.disabled = !canEdit()
   // New sessions go through herdr: they wait for fresh data like going to a session does.
   for (const element of document.querySelectorAll('#new-session, #sheet-new, .lane-new')) {
@@ -175,8 +185,11 @@ function syncAvailability() {
     element.title = t(blocked ? 'mobile.readOnly' : element.dataset.hint ?? 'launch.inLane')
   }
   launchUI?.syncAvailability()
+  if (missing) for (const element of document.querySelectorAll('#sheet-card button, #sheet-card input, #sheet [data-act], #sheet-new, #attach, #sheet-changes, #sheet-history')) element.disabled = true
+  else for (const element of document.querySelectorAll('#sheet-changes, #sheet-history')) element.disabled = false
   files.refreshAvailability()
   syncComposer()
+  renderDetailState()
 }
 function resumeBoard() { if (!document.hidden && navigator.onLine !== false) connection.resume() }
 addEventListener('pageshow', resumeBoard)
@@ -185,6 +198,7 @@ addEventListener('offline', () => connection.suspend())
 document.addEventListener('visibilitychange', () => document.hidden ? connection.suspend() : resumeBoard())
 
 async function act(key, action, body = {}) {
+  if (!itemOf(key)) return { ok: false, error: t('detail.missing') }
   if (HERDR_ACTIONS.includes(action) ? !canMutate() : !canEdit()) return { ok: false, error: t(canEdit() ? 'mobile.readOnly' : 'live.off') }
   try {
     const res = await fetch(`/api/session/${encodeURIComponent(key)}/${action}`, {
@@ -304,6 +318,12 @@ function renderToolbar(visible) {
   if (count('ext')) parts.push(`<b>${count('ext')}</b> ${t('sum.waitOthers', { n: count('ext') })}`)
   if (asleep) parts.push(`${asleep} ${t('sum.asleep', { n: asleep })}`)
   $('#summary').innerHTML = parts.join(' · ')
+  const attentionCount = visible.filter(it => !it.launchOnly && laneShown(catOf(it)) && (it.column === 'me' || unseenResult(it, viewed))).length
+  const next = $('#next-attention')
+  next.disabled = !attentionCount
+  next.querySelector('span').textContent = attentionCount ? `${t('attention.next')} · ${attentionCount}` : t('attention.noneShort')
+  next.title = t(attentionCount ? 'attention.nextHint' : 'attention.none')
+  next.setAttribute('aria-label', attentionCount ? t('attention.nextCount', { n: attentionCount }) : t('attention.none'))
   document.title = count('me') ? `(${count('me')}) Agent board` : 'Agent board'
   renderLimits()
 
@@ -338,15 +358,49 @@ function renderToolbar(visible) {
 
 /** Claude's usage windows from the usagebar cache, when there is one: a small pill by the live dot. */
 function renderLimits() {
-  const lim = state.data.limits
+  const lim = limitInfo(state.data.limits, { connected: !!state.connected })
   const pill = $('#limits')
-  pill.hidden = !lim
-  if (!lim) return
+  pill.hidden = false
+  pill.setAttribute('aria-label', t('limits.title'))
   const heat = p => (p >= 90 ? ' class="hot"' : p >= 70 ? ' class="warm"' : '')
-  pill.innerHTML = lim.windows.map(w => `<span${heat(w.usedPercentage)}>${esc(t(w.minutes === 300 ? 'limits.5h' : 'limits.7d'))} <b>${Math.round(w.usedPercentage)}%</b></span>`).join('')
-  pill.classList.toggle('stale', lim.stale)
-  pill.title = t(lim.stale ? 'limits.stale' : lim.source === 'usagebar' ? 'limits.hintUsagebar' : 'limits.hint', { time: new Date(lim.observedAt).toLocaleString(t.lang, { dateStyle: 'medium', timeStyle: 'short' }) })
+  pill.innerHTML = lim.windows.length ? lim.windows.map(w => `<span${heat(w.usedPercentage)}>${esc(t(w.minutes === 300 ? 'limits.5h' : 'limits.7d'))} <b>${Math.round(w.usedPercentage)}%</b></span>`).join('') : esc(t('limits.unknown'))
+  pill.classList.toggle('stale', !!lim.windows.length && lim.stale)
+  pill.title = t('limits.open')
+  const time = lim.observedAt ? new Date(lim.observedAt).toLocaleString(t.lang, { dateStyle: 'medium', timeStyle: 'short' }) : t('limits.unknownTime')
+  const source = t(lim.source === 'usagebar' ? 'limits.hintUsagebar' : lim.source === 'statusline' ? 'limits.hint' : 'limits.unknownSource', { time })
+  $('#limits-content').innerHTML = lim.windows.length
+    ? `<p><b>${esc(t('limits.used'))}</b> ${lim.windows.map(w => `${esc(t(w.minutes === 300 ? 'limits.5h' : 'limits.7d'))}: ${Math.round(w.usedPercentage)}%`).join(' · ')}</p><p>${esc(source)}</p><p class="${lim.stale ? 'limits-warning' : ''}">${esc(t(lim.stale ? 'limits.stale' : 'limits.localReport', { time }))}</p>`
+    : `<p>${esc(t('limits.unavailable'))}</p>`
+  if (limitsOpen()) positionLimits()
 }
+
+const limitsOpen = () => !$('#limits-pop').hidden
+function positionLimits() {
+  const pop = $('#limits-pop'), rect = $('#limits').getBoundingClientRect(), size = pop.getBoundingClientRect()
+  pop.style.left = `${Math.max(8, Math.min(rect.left, innerWidth - size.width - 8))}px`
+  pop.style.top = `${rect.bottom + size.height + 8 <= innerHeight ? rect.bottom + 8 : Math.max(8, rect.top - size.height - 8)}px`
+}
+function closeLimits(refocus = false) {
+  if (!limitsOpen()) return
+  $('#limits-pop').hidden = true
+  $('#limits').setAttribute('aria-expanded', 'false')
+  dialogBack.sync()
+  if (refocus) $('#limits').focus({ preventScroll: true })
+}
+$('#limits').addEventListener('click', () => {
+  if (limitsOpen()) return closeLimits()
+  renderLimits()
+  const pop = $('#limits-pop')
+  pop.hidden = false
+  positionLimits()
+  $('#limits').setAttribute('aria-expanded', 'true')
+  pop.focus({ preventScroll: true })
+  dialogBack.sync()
+})
+$('#limits-close').addEventListener('click', () => closeLimits(true))
+addEventListener('pointerdown', e => { if (limitsOpen() && !e.target.closest('#limits-pop, #limits')) closeLimits() }, true)
+addEventListener('keydown', e => { if (e.key === 'Escape' && limitsOpen()) { e.preventDefault(); e.stopImmediatePropagation(); closeLimits(true) } }, true)
+addEventListener('resize', () => closeLimits())
 
 function placeThumb(jump) {
   const seg = $('#lanes')
@@ -760,30 +814,38 @@ function onCardClick(e) {
 // place menu away.
 {
   let down = null
-  const keeps = '.sheet, .ql, .launch, .menu, .rename, .card, .lane-head, .layout-menu, button, input, textarea, select, label, a, [data-act]'
-  addEventListener('pointerdown', e => (down = e.button === 0 ? { x: e.clientX, y: e.clientY, target: e.target, menu: menuOpen() } : null), true)
+  const keeps = '.sheet, .ql, .launch, .limits-pop, .menu, .rename, .card, .lane-head, .layout-menu, button, input, textarea, select, label, a, [data-act]'
+  addEventListener('pointerdown', e => (down = panelPress(e, keeps, menuOpen())), true)
   addEventListener('click', e => {
     const d = down
     down = null
     const open = panels.find(p => p.isOpen)
-    if (!open || !d || d.menu || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 6) return
-    if (d.target.closest?.(keeps) || e.target.closest?.(keeps)) return
+    if (!open || !outsidePanelPress(d, e, keeps)) return
     open.close()
   })
 }
 
 // ---------------------------------------------------------------- the session sheet
 const sheetBody = $('#sheet-body')
+const sheetQuestion = $('#sheet-question')
+const narrowSheet = matchMedia('(max-width: 760px)')
+let propertiesOpen = false
+function syncSheetProperties() {
+  $('#sheet-card').hidden = narrowSheet.matches && !propertiesOpen
+  $('#sheet-properties-toggle').setAttribute('aria-expanded', String(propertiesOpen))
+}
+$('#sheet-properties-toggle').addEventListener('click', () => { propertiesOpen = !propertiesOpen; syncSheetProperties() })
+narrowSheet.addEventListener('change', syncSheetProperties)
 // Paths in the thread become chips with a quick look; web links open in the default browser.
 const files = initFiles({ t: () => t, token: () => state.data.fsToken, toast, canMutate: canEdit, onDialogChange: () => { dialogBack.sync(); syncAvailability() } })
 // Layers above the board, topmost first: Back on a phone closes them one at a time.
-const menu = initMenu({ onChange: () => dialogBack.sync() })
+const menu = initMenu({ onChange: () => { dialogBack.sync(); if (!menu.isOpen()) $('#sheet-more').setAttribute('aria-expanded', 'false') } })
 const dialogBack = dialogHistory({
   history,
   mobile: () => matchMedia('(max-width: 760px)').matches,
   // Asked at once when a reload finds the Back sentinel: launchUI is set up just below.
-  isOpen: () => menu.isOpen() || !!launchUI?.isOpen() || files.isOpen() || panels.some(panel => panel.isOpen),
-  closeTop: () => menu.isOpen() ? menu.close() : launchUI?.isOpen() ? launchUI.close() : files.isOpen() ? files.close() : panels.find(panel => panel.isOpen)?.close(),
+  isOpen: () => menu.isOpen() || !!launchUI?.isOpen() || files.isOpen() || limitsOpen() || panels.some(panel => panel.isOpen),
+  closeTop: () => menu.isOpen() ? menu.close() : launchUI?.isOpen() ? launchUI.close() : files.isOpen() ? files.back() : limitsOpen() ? closeLimits(true) : panels.find(panel => panel.isOpen)?.close(),
 })
 launchUI = initLaunch({
   t: () => t,
@@ -805,6 +867,7 @@ addEventListener('popstate', () => dialogBack.pop())
 const sessionPanel = new Panel($('#sheet'), {
   onClose: () => {
     saveDraft()
+    detail.cancel()
     state.open = null
     render()
   },
@@ -813,7 +876,27 @@ const sessionPanel = new Panel($('#sheet'), {
 })
 // While the board makes room for a docked panel, the card it shows keeps its place on screen.
 keepInSight({ target: () => (state.open ? cards.get(state.open) : null), top: () => $('.toolbar').getBoundingClientRect().bottom })
-let detailSeq = 0
+const detail = detailResource({
+  async read(key, signal) {
+    const response = await fetch(`/api/session/${encodeURIComponent(key)}`, { signal, cache: 'no-store' })
+    const data = await response.json()
+    if (!response.ok) throw Object.assign(new Error(data.error || t('err.unavailable')), { missing: response.status === 404 })
+    return data
+  },
+  changed(value) {
+    if (state.open !== value.key) return
+    state.detailState = value
+    state.detail = value.data
+    $('#sheet-changes').hidden = !value.data?.checkout
+    if (value.status === 'ready' && !state.data.stale && value.data.item.column === 'done' && resultToken(value.data.item) === resultToken(itemOf(value.key) ?? {})) {
+      viewed = recordView(viewed, value.data.item)
+      store.set('board.viewed', JSON.stringify(viewed))
+      render()
+    }
+    renderSheetHead()
+    renderSheetBody(false)
+  },
+})
 // The text being written to a session stays with that session (this browser only), through a
 // close, a switch to another session or a reload; a session without a Claude id goes by its card.
 const drafts = draftBook({ getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value), removeItem: key => localStorage.removeItem(key) })
@@ -821,8 +904,11 @@ const draftKey = it => it?.session || it?.key
 const sending = new Set() // sessions with a message on its way
 let currentDraft = null
 let draftFor = null // the session the composer's attachments were added for; outlives a close
+let draftIdentity = null
 
 function openSheet(key, { compose = false } = {}) {
+  if (state.open !== key) propertiesOpen = false
+  syncSheetProperties()
   const switching = sessionPanel.isOpen && state.open !== key
   // Attachments belong to the session they were added for, never to the next one. Closing the
   // panel and opening the same session again keeps them.
@@ -833,6 +919,10 @@ function openSheet(key, { compose = false } = {}) {
   if (state.open && state.open !== key) saveDraft()
   draftFor = key
   state.open = key
+  state.selectedItem = itemOf(key)
+  draftIdentity = draftKey(state.selectedItem) || key
+  detail.reset(key)
+  state.detailState = detail.snapshot()
   currentDraft = drafts.read(draftKey(itemOf(key)))
   message.value = currentDraft?.text ?? ''
   syncComposer()
@@ -850,30 +940,31 @@ function openSheet(key, { compose = false } = {}) {
 }
 
 async function loadDetail(key) {
-  const seq = ++detailSeq
-  try {
-    const res = await fetch(`/api/session/${encodeURIComponent(key)}`)
-    const d = await res.json()
-    if (seq !== detailSeq || state.open !== key) return
-    if (!res.ok) return toast(d.error || t('err.unavailable'), true)
-    state.detail = d
-    $('#sheet-changes').hidden = !d.checkout
-    if (!state.data.stale && d.item.column === 'done' && resultToken(d.item) === resultToken(itemOf(key) ?? {})) {
-      viewed = recordView(viewed, d.item)
-      store.set('board.viewed', JSON.stringify(viewed))
-      render()
-    }
-    renderSheetBody(false)
-  } catch {}
+  if (state.open === key && itemOf(key)) return detail.load(key)
 }
 
+function renderDetailState() {
+  const box = $('#sheet-detail-state'), value = state.detailState
+  if (!box || !state.open || !value) return
+  const missing = !itemOf(state.open) || value.status === 'missing'
+  const outdated = !state.connected || state.data.stale
+  const text = missing ? t('detail.missing') : value.status === 'error' ? t('detail.error', { error: value.error }) : outdated && value.data ? t('detail.stale') : value.status === 'loading' && value.data ? t('detail.refreshing') : ''
+  box.hidden = !text
+  sheetBody.classList.toggle('has-detail-state', !!text)
+  const stamp = value.at ? t('detail.readAt', { time: new Date(value.at).toLocaleTimeString(t.lang, { hour: '2-digit', minute: '2-digit' }) }) : ''
+  const html = `<span>${esc(text)}${stamp ? `<small>${esc(stamp)}</small>` : ''}</span><button class="button" data-detail-retry${!canEdit() || !itemOf(state.open) || value.status === 'loading' ? ' disabled' : ''}>${esc(t('detail.retry'))}</button>`
+  if (box._html !== html) { box.innerHTML = html; box._html = html }
+}
+sheetBody.addEventListener('click', e => e.target.closest('[data-detail-retry]') && state.open && loadDetail(state.open))
+
 function renderSheetHead() {
-  const it = itemOf(state.open)
+  const it = itemOf(state.open) ?? state.selectedItem
   if (!it) return
   const pill = $('#sheet-status')
   pill.style.setProperty('--c', COLORS[it.column])
-  pill.innerHTML = it.sleeping ? `${ICON.moon}${esc(t('sheet.asleep'))}` : `<span class="dot ${it.column}" style="--c:${COLORS[it.column]}"></span>${esc(colTitle(it.column))}`
+  pill.innerHTML = !itemOf(state.open) || state.detailState?.status === 'missing' ? esc(t('detail.missingShort')) : it.sleeping ? `${ICON.moon}${esc(t('sheet.asleep'))}` : `<span class="dot ${it.column}" style="--c:${COLORS[it.column]}"></span>${esc(colTitle(it.column))}`
   $('#sheet-name').textContent = it.name
+  $('#sheet-name').title = it.name
   const tokens = it.context >= 1000 ? `${Math.round(it.context / 1000)}k` : it.context
   const context = it.contextPct != null ? t('meta.contextPct', { pct: Math.round(it.contextPct), tokens }) : it.context ? t('meta.context', { tokens }) : ''
   $('#sheet-meta').textContent = [catInfo(catOf(it)).title, it.workspace && t('meta.workspace', { name: it.workspace }), it.activity && (ago(it.activity) === t('ago.now') ? t('meta.activeNow') : t('meta.active', { ago: ago(it.activity) })), context].filter(Boolean).join(' · ')
@@ -931,22 +1022,24 @@ function scheduleRow(it) {
 }
 
 function renderSheetBody(reset) {
-  const it = itemOf(state.open)
+  const it = itemOf(state.open) ?? state.selectedItem
   if (!it) return
   renderSheetCard(it)
   const atBottom = sheetBody.scrollHeight - sheetBody.scrollTop - sheetBody.clientHeight < 40
-  let html = ''
+  let html = '<div class="detail-status" id="sheet-detail-state" role="status" hidden></div>', question = ''
   if (it.column === 'me') {
     const later = it.attention === 'later'
     const why = t(it.attention ? `why.${it.attention}` : 'why.default')
     const wave = dismissable(it) ? `<button class="button asked-dismiss" data-act="dismiss">${ICON.check}<span>${esc(t(later ? 'asked.seen' : 'asked.noReply'))}</span></button>` : ''
     const text = later ? t('asked.later') : it.question || t('asked.terminal')
-    html += `<div class="asked"><b>${esc(why)}</b>${esc(text)}${wave}</div>`
+    question = `<div class="asked"><b>${esc(why)}</b>${esc(text)}${wave}</div>`
     if (state.detail?.screen) html += `<pre class="screen">${esc(state.detail.screen)}</pre>`
   }
+  if (sheetQuestion._html !== question) { sheetQuestion.innerHTML = question; sheetQuestion._html = question }
+  sheetQuestion.hidden = !question
   html += `<div class="section-title">${esc(t('thread.title'))}</div><div class="thread">`
   const conv = state.detail?.conversation
-  if (!conv) html += `<p class="row-value muted">${esc(t('loading'))}</p>`
+  if (!conv) html += `<p class="row-value muted">${esc(t(['error', 'missing'].includes(state.detailState?.status) ? 'detail.noTranscript' : 'loading'))}</p>`
   else if (!conv.length) html += `<p class="row-value muted">${esc(t('thread.empty'))}</p>`
   else html += thread(conv, it)
   html += '</div>'
@@ -1015,7 +1108,7 @@ sheetCard.addEventListener('keydown', async e => {
   toast(r.ok ? t(input.id === 'wait' ? (input.value.trim() ? 'toast.waitSet' : 'toast.waitCleared') : 'saved') : r.error, !r.ok)
 })
 
-sheetBody.addEventListener('click', e => {
+sheetQuestion.addEventListener('click', e => {
   if (e.target.closest('[data-act="dismiss"]') && state.open) dismissAsk(state.open)
 })
 $('#sheet-focus').addEventListener('click', () => state.open && focusSession(state.open))
@@ -1028,6 +1121,22 @@ $('#sheet-wake').addEventListener('click', async () => {
   toast(r.ok ? t('toast.woke') : r.error, !r.ok)
 })
 $('#sheet-sleep').addEventListener('click', () => state.open && sleepSession(state.open))
+$('#sheet-more').addEventListener('click', e => {
+  const button = e.currentTarget, rect = button.getBoundingClientRect()
+  const items = ['sheet-wake', 'sheet-sleep', 'sheet-changes', 'sheet-history', 'sheet-new']
+    .map(id => document.getElementById(id)).filter(el => el && !el.hidden)
+    .map(el => ({ id: el.id, label: el.textContent.trim(), disabled: el.disabled, reason: el.disabled ? (!canMutate() && ['sheet-wake', 'sheet-sleep', 'sheet-new'].includes(el.id) ? t('mobile.readOnly') : el.title || t('mobile.readOnly')) : '' }))
+  menu.open(items, { x: rect.right, y: rect.top, source: e.detail === 0 ? 'keyboard' : matchMedia('(pointer: coarse)').matches ? 'touch' : 'mouse', origin: button, label: t('sheet.more'), onPick: id => {
+    const action = document.getElementById(id)
+    if (!action || action.disabled || action.hidden) return
+    // Dialogs must return focus to this visible opener, not the hidden toolbar button.
+    if (id === 'sheet-history') return state.open && files.lookHistory(state.open, itemOf(state.open)?.cwd ?? '', button)
+    if (id === 'sheet-changes') return state.open && files.lookChanges(state.open, button)
+    if (id === 'sheet-new') return state.open && newSession({ item: itemOf(state.open) }, button)
+    action.click()
+  } })
+  button.setAttribute('aria-expanded', 'true')
+})
 
 // Composer: Enter sends, Shift+Enter breaks the line; the box grows with the text. Files come
 // in through the clip, Ctrl+V (a screenshot) or a drop on the panel; each uploads at once and
@@ -1042,7 +1151,7 @@ const syncComposer = () => {
   message.style.height = `${Math.min(180, message.scrollHeight)}px`
   const uploading = attachments.some(a => a.status === 'uploading')
   const ready = attachments.some(a => a.status === 'done')
-  sendBtn.disabled = sending.has(state.open) || !canMutate() || uploading || !(message.value.trim() || ready)
+  sendBtn.disabled = !itemOf(state.open) || state.detailState?.status === 'missing' || sending.has(state.open) || !canMutate() || uploading || !(message.value.trim() || ready)
   const discard = $('#draft-cancel')
   discard.hidden = !(message.value || attachments.length)
   discard.disabled = sending.has(state.open)
@@ -1157,7 +1266,7 @@ message.addEventListener('paste', e => {
 }
 
 function saveDraft() {
-  const key = draftKey(itemOf(state.open))
+  const key = state.open && draftIdentity
   if (!key) return
   if (currentDraft?.text === message.value) return
   currentDraft = drafts.save(key, message.value)
@@ -1165,7 +1274,7 @@ function saveDraft() {
 message.addEventListener('input', () => { saveDraft(); syncComposer() })
 $('#draft-cancel').addEventListener('click', () => {
   if (sending.has(state.open)) return
-  drafts.clear(draftKey(itemOf(state.open)))
+  drafts.clear(draftIdentity)
   currentDraft = null
   message.value = ''
   clearAttachments()
@@ -1827,6 +1936,7 @@ $('#sleepers').setAttribute('aria-pressed', String(state.sleepers))
 function openNextAttention() {
   const key = nextAttention(visibleItems().filter(it => !it.launchOnly && laneShown(catOf(it))), state.open, viewed)
   if (key) openSheet(key)
+  else toast(t('attention.none'))
 }
 $('#next-attention').addEventListener('click', openNextAttention)
 

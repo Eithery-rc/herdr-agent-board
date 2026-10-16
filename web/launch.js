@@ -8,6 +8,8 @@
 // to browse, Finder style. The browser offers no picker that gives an absolute path, so this is ours.
 import { baseName, categoryForDir, checkBranch, checkName, completions, defaultWorkspace, folderSuggestions, NAME_MAX, slugName, splitPathInput, suggestName, worktreePath } from './launch-model.js'
 import { reducedMotion, Spring } from './spring.js'
+import { launchContext, launchDraftBook } from './launch-drafts.js'
+import { modalFocus } from './modal-focus.js'
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
 const svg = body => `<svg viewBox="0 0 20 20" aria-hidden="true">${body}</svg>`
@@ -103,6 +105,7 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
   document.body.append(root)
   const $ = sel => root.querySelector(sel)
   const win = $('.launch-win')
+  const focus = modalFocus(root, win)
   const scrim = $('.launch-scrim')
   const form = $('form')
   const f = {
@@ -119,7 +122,7 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
   let s = null
   let options = { launcher: { kind: 'herdr', agent: 'claude' }, workspaces: [], recent: [], board: '' }
   const local = new Map() // launch id -> launch, until the server's board has it
-  let draft = null // { text, at }: the first message of a window closed without starting
+  const drafts = launchDraftBook()
 
   function labels() {
     for (const el of root.querySelectorAll('[data-t]')) el.textContent = tr(el.dataset.t)
@@ -173,8 +176,9 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
   async function open(ctx = {}, fromEl = null) {
     if (!canMutate()) return toast(tr('mobile.readOnly'), true)
     origin = fromEl
-    s = { ctx, set: {}, check: null, git: null, cache: new Map(), retry: ctx.retry ?? null }
+    s = { ctx, draftKey: launchContext(ctx, d().filter), set: {}, check: null, git: null, cache: new Map(), retry: ctx.retry ?? null }
     root.hidden = false
+    focus.open(fromEl instanceof Element ? fromEl : document.activeElement)
     labels()
     fill(ctx)
     from = measure(rectOf(fromEl))
@@ -195,10 +199,10 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
     if (!s.set.cwd && !f.cwd.value) applyFolder(suggestions()[0]?.path ?? '', false)
   }
 
-  /** Fold the window away; a first message written but not sent waits for the next window. */
+  /** Keep the whole form for this opening context, never just a prompt for another project. */
   function close(to = null, started = false) {
     if (root.hidden || motion.target === 0) return
-    if (!started && f.message.value.trim()) draft = { text: f.message.value, at: Date.now() }
+    if (!started) drafts.write(s.draftKey, draftForm())
     closePop()
     from = measure(rectOf(to) ?? rectOf(origin))
     motion.to(0, { damping: 1, response: 0.28 })
@@ -208,7 +212,7 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
   function finishClose() {
     root.hidden = true
     s = null
-    if (origin instanceof Element && origin.isConnected) origin.focus?.({ preventScroll: true })
+    focus.close()
     origin = null
   }
 
@@ -216,8 +220,14 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
   const d = () => data()
   const catTitle = id => d().categories.find(c => c.id === id)?.title ?? id
 
+  function draftForm() {
+    return { name: f.name.value, cwd: f.cwd.value, category: s.category, message: f.message.value,
+      workspace: f.workspace.value ? f.workspace.selectedOptions[0]?.textContent ?? '' : f.newWorkspace.value,
+      newWorkspace: !f.workspace.value, worktree: f.wt.checked ? { branch: f.branch.value } : null }
+  }
+
   function fill(ctx) {
-    const r = ctx.retry
+    const r = ctx.retry ?? drafts.read(s.draftKey)
     const items = d().items ?? []
     const card = ctx.item
     s.category = r?.category ?? card?.category ?? ctx.category ?? (d().filter && d().filter !== 'all' ? d().filter : null)
@@ -229,8 +239,7 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
     s.set.cwd = !!cwd
     f.name.value = r?.name ?? (cwd ? suggestName(cwd, items) : '')
     s.set.name = !!r
-    // A first message from a window closed unsent comes back (for ten minutes).
-    f.message.value = r?.message ?? (draft && Date.now() - draft.at < 600_000 ? draft.text : '')
+    f.message.value = r?.message ?? ''
     f.wt.checked = !!r?.worktree
     f.branch.value = r?.worktree?.branch ?? ''
     s.set.branch = !!r?.worktree
@@ -628,6 +637,7 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
       ...(s.git && f.wt.checked ? { worktree: { branch: f.branch.value.trim() } } : {}),
     }
     const st = s
+    const draftVersion = drafts.write(st.draftKey, draftForm())
     st.sending = true
     syncGo()
     const r = await post('/api/launch', body)
@@ -648,7 +658,7 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
     }
     if (ws.id) store.set('board.launch.workspace', ws.id)
     if (st.retry) post(`/api/launch/${encodeURIComponent(st.retry.id)}/dismiss`, {})
-    draft = null
+    drafts.clear(st.draftKey, draftVersion)
     const launch = { id: r.id, name: body.name, cwd: body.cwd, category: body.category, workspace: ws.label ?? ws.create, newWorkspace: !ws.id, message: body.message, worktree: body.worktree ?? null, state: 'starting', step: 'prepare', startedAt: Date.now(), pane: null, key: null }
     local.set(r.id, launch)
     onStarted(launch)
@@ -671,7 +681,7 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
   addEventListener(
     'keydown',
     e => {
-      if (root.hidden || motion.target === 0) return
+      if (root.hidden || motion.target === 0 || !focus.isTop()) return
       if (e.key === 'Escape') {
         e.preventDefault()
         e.stopImmediatePropagation()
@@ -687,16 +697,6 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
       } else if (e.key === 'Enter' && e.target.matches?.('input[name="name"], input[name="newWorkspace"], input[name="branch"]')) {
         e.preventDefault()
         submit()
-      } else if (e.key === 'Tab' && !(e.target === f.cwd && pop.open)) {
-        const all = [...win.querySelectorAll('button, input, select, textarea')].filter(el => !el.disabled && !el.hidden && el.offsetParent)
-        const i = all.indexOf(document.activeElement)
-        if (e.shiftKey && i <= 0) {
-          e.preventDefault()
-          all.at(-1)?.focus()
-        } else if (!e.shiftKey && i === all.length - 1) {
-          e.preventDefault()
-          all[0]?.focus()
-        }
       }
     },
     true,

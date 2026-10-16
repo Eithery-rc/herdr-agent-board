@@ -68,8 +68,13 @@ test('rectangles per dock, and the way in and out along the same edge', () => {
   assert.deepEqual(offRect('float', right), right)
 })
 
-test('the board makes room for a docked panel only', () => {
-  assert.deepEqual(roomFor(fresh, vp), { left: 0, right: 572, bottom: 0 })
+test('the board makes room without collapsing columns at modest desktop widths', () => {
+  assert.deepEqual(roomFor(fresh, { ...vp, w: 1440 }), { left: 0, right: 0, bottom: 0 })
+  assert.deepEqual(roomFor(fresh, { ...vp, w: 1800 }), { left: 0, right: 572, bottom: 0 })
+  assert.deepEqual(roomFor({ ...fresh, dock: 'left' }, { ...vp, w: 1440 }), { left: 0, right: 0, bottom: 0 })
+  assert.deepEqual(roomFor({ ...fresh, dock: 'left' }, { ...vp, w: 1800 }), { left: 572, right: 0, bottom: 0 })
+  assert.deepEqual(roomFor(fresh, { ...vp, w: 1532 }), { left: 0, right: 0, bottom: 0 })
+  assert.deepEqual(roomFor(fresh, { ...vp, w: 1533 }), { left: 0, right: 572, bottom: 0 })
   assert.deepEqual(roomFor({ ...fresh, dock: 'bottom', bottom: 400 }, vp), { left: 0, right: 0, bottom: 412 })
   assert.deepEqual(roomFor({ ...fresh, dock: 'float' }, vp), { left: 0, right: 0, bottom: 0 })
 })

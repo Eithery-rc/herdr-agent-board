@@ -9,6 +9,7 @@
 import { changedFiles } from './diff.js'
 import { markdown } from './markdown.js'
 import { reducedMotion, Spring } from './spring.js'
+import { modalFocus } from './modal-focus.js'
 
 const $ = (root, sel) => root.querySelector(sel)
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
@@ -167,14 +168,15 @@ export function initFiles({ t, token, toast, canMutate = () => true, onDialogCha
           <button class="icon-button ql-refresh" hidden>${ICONS.refresh}</button>
           <button class="icon-button ql-reveal">${ICONS.reveal}</button>
           <button class="icon-button ql-copy">${ICONS.copy}</button>
-          <button class="icon-button ql-close">${ICONS.close}</button>
         </div>
+        <button class="icon-button ql-close">${ICONS.close}</button>
       </header>
       <div class="ql-body"></div>
       <footer class="ql-foot"></footer>
     </section>`
   document.body.append(root)
   const win = $(root, '.ql-win')
+  const focus = modalFocus(root, win)
   const scrim = $(root, '.ql-scrim')
   const body = $(root, '.ql-body')
 
@@ -237,7 +239,7 @@ export function initFiles({ t, token, toast, canMutate = () => true, onDialogCha
     from = measureFrom(el)
     if (motion.value <= 0.001) paint(0)
     motion.to(1, { damping: 1, response: 0.34 })
-    win.focus({ preventScroll: true })
+    focus.open(ql.origin ?? document.activeElement)
     onDialogChange()
   }
 
@@ -252,7 +254,7 @@ export function initFiles({ t, token, toast, canMutate = () => true, onDialogCha
     root.hidden = true
     body.innerHTML = ''
     ql.data = null
-    if (ql.origin?.isConnected) ql.origin.focus({ preventScroll: true })
+    focus.close()
   }
   const back = () => {
     if (ql.stack.length < 2) return close()
@@ -569,7 +571,7 @@ export function initFiles({ t, token, toast, canMutate = () => true, onDialogCha
   addEventListener(
     'keydown',
     e => {
-      if (root.hidden || motion.target === 0) return
+      if (root.hidden || motion.target === 0 || !focus.isTop()) return
       const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName)
       if (e.key === 'Escape') {
         e.preventDefault()
@@ -584,5 +586,5 @@ export function initFiles({ t, token, toast, canMutate = () => true, onDialogCha
     true,
   )
 
-  return { upgrade, look, refreshAvailability: syncActions, lookChanges: (key, el) => look({ changes: key }, el), lookHistory: (key, cwd, el) => look({ history: key, cwd }, el), close, isOpen: () => !root.hidden && motion.target === 1, relabel: () => !root.hidden && (labels(), ql.data && render()) }
+  return { upgrade, look, back, refreshAvailability: syncActions, lookChanges: (key, el) => look({ changes: key }, el), lookHistory: (key, cwd, el) => look({ history: key, cwd }, el), close, isOpen: () => !root.hidden && motion.target === 1, relabel: () => !root.hidden && (labels(), ql.data && render()) }
 }
