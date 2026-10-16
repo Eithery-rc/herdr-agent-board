@@ -485,6 +485,16 @@ export function startServer({ cfg, log = () => {} } = {}) {
         })
         return res.end(body)
       }
+      // A session to show (web-open.mjs, when a notification is clicked): open pages open its
+      // sheet. { ok, key, pages } or 404 when the board has no session in that pane.
+      if (req.method === 'POST' && path === '/api/reveal') {
+        if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })
+        const body = await readBody(req)
+        const item = body.key ? find(String(body.key)) : body.pane ? items.find(i => i.pane === String(body.pane)) : null
+        if (!item) return json(404, { ok: false, error: t('err.gone') })
+        for (const page of clients) page.write(`event: reveal\ndata: ${JSON.stringify({ key: item.key })}\n\n`)
+        return json(200, { ok: true, key: item.key, pages: clients.size })
+      }
       if (req.method === 'POST' && path === '/api/settings') {
         if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })
         // Written to config.json; the config watcher switches the language and pushes the new board.

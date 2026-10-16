@@ -129,6 +129,9 @@ function visibleItems() {
 
 // ---------------------------------------------------------------- data
 let lastDetailStamp = ''
+// The session a page opened for (web-open.mjs, a notification clicked while no board was open):
+// #session=<key>, shown once the board is in.
+let revealOnLoad = new URLSearchParams(location.hash.slice(1)).get('session')
 function onData(data) {
   const recovered = state.data.stale && !data.stale
   // The page's own files changed (the plugin was updated): load the new page.
@@ -142,6 +145,12 @@ function onData(data) {
   for (const [key, m] of state.movedCol) if (itemOf(key)?.column === m.col || Date.now() - m.at > 8000) state.movedCol.delete(key)
   render()
   syncAvailability()
+  if (revealOnLoad) {
+    const key = revealOnLoad
+    revealOnLoad = null
+    history.replaceState(history.state, '', location.pathname + location.search)
+    if (itemOf(key)) return reveal(key)
+  }
   if (state.open) {
     const it = itemOf(state.open)
     if (it) state.selectedItem = it
@@ -154,8 +163,24 @@ function onData(data) {
   }
 }
 
+/** Show a session a notification was about: its sheet, and its card in view. */
+function reveal(key) {
+  if (!itemOf(key)) return
+  if (state.open !== key || !sessionPanel.isOpen) openSheet(key)
+  document.querySelector(`.card[data-key="${CSS.escape(key)}"]`)?.scrollIntoView({ block: 'nearest', behavior: reducedMotion.matches ? 'auto' : 'smooth' })
+}
+
 const connection = boardConnection({
-  source: () => new EventSource('/api/events'),
+  source: () => {
+    const stream = new EventSource('/api/events')
+    // A notification clicked while this page is open (web-open.mjs through /api/reveal).
+    stream.addEventListener('reveal', event => {
+      try {
+        reveal(JSON.parse(event.data).key)
+      } catch {}
+    })
+    return stream
+  },
   snapshot: signal => fetch('/api/board', { cache: 'no-store', signal }).then(response => {
     if (!response.ok) throw new Error('Snapshot unavailable')
     return response.json()
