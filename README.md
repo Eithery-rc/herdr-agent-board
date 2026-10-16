@@ -14,7 +14,7 @@ current with the `board` command; a SessionStart / UserPromptSubmit hook tells e
 ## Install
 
 ```sh
-herdr plugin install Eithery-rc/herdr-agent-board   # or clone it and: herdr plugin link <folder>
+herdr plugin install MokuTeam/herdr-agent-board   # or clone it and: herdr plugin link <folder>
 herdr plugin action invoke agent-board.install      # board command in ~/.local/bin; hooks and status line in ~/.claude/settings.json
 ```
 
