@@ -129,11 +129,13 @@ test('transcript tail: title, last prompt, last words, pending tool; sidechains 
   assert.deepEqual(info.tool, { id: 't2', name: 'AskUserQuestion', label: 'AskUserQuestion', detail: 'Import 10/23?', pending: true, questions: null })
 
   const conv = conversation(file)
-  assert.deepEqual(conv.map(c => c.role), ['user', 'assistant', 'tool', 'assistant', 'tool', 'user'])
+  // Another session's message is its own line, with who sent it, not the user's bubble.
+  assert.deepEqual(conv.map(c => c.role), ['user', 'assistant', 'tool', 'assistant', 'tool', 'user', 'peer'])
   assert.equal(conv[2].done, true)
   assert.equal(conv[4].done, false)
   assert.equal(conv[5].text, 'also the 10/24 file')
   assert.equal(conv[5].at, Date.parse('2026-10-15T21:50:13.839Z'))
+  assert.equal(conv[6].text, 'hi')
   assert.ok(!conv.some(c => c.text === 'subagent noise'))
 })
 

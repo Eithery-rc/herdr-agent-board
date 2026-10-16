@@ -8,6 +8,8 @@ import { attentionTime, nextAttention, recordView, resultToken, unseenResult } f
 import { initBoardMenus } from './board-menus.js'
 import { draftBook } from './drafts.js'
 import { initFiles } from './files.js'
+import { findHelper, helperTitle, liveCount, relatedKeys, sessionByName, took } from './helper-model.js'
+import { helperRowHTML, HELPER_ICONS, initHelpers, kindIcon, redraw, runRowHTML, statusMark, tickClocks, timeHTML } from './helpers.js'
 import { LANGUAGES, translator } from './i18n.js'
 import { initLaunch } from './launch.js'
 import { updateLive } from './live.js'
@@ -46,6 +48,11 @@ const ICON = {
   trash: '<svg viewBox="0 0 20 20"><path d="M4.5 6h11M8 6V4.5h4V6m-6 0 .7 9.5h6.6L14 6"/></svg>',
   bolt: '<svg viewBox="0 0 20 20"><path d="M11 2.5 4.5 11H10l-1 6.5L15.5 9H10Z"/></svg>',
   hourglass: '<svg viewBox="0 0 20 20"><path d="M6 3h8M6 17h8M7 3v2.6c0 1.2.6 2.1 1.6 2.8L10 9.4l1.4-1c1-.7 1.6-1.6 1.6-2.8V3M7 17v-2.6c0-1.2.6-2.1 1.6-2.8l1.4-1 1.4 1c1 .7 1.6 1.6 1.6 2.8V17"/></svg>',
+  // Sessions working together: who started it, whom it started, a message out and in.
+  from: '<svg viewBox="0 0 20 20"><path d="M8 4.5 4.5 8 8 11.5"/><path d="M4.5 8H12a3.5 3.5 0 0 1 3.5 3.5v4"/></svg>',
+  spawned: '<svg viewBox="0 0 20 20"><path d="M4.5 4v5.5A3.5 3.5 0 0 0 8 13h7.5"/><path d="M12 9.5 15.5 13 12 16.5"/></svg>',
+  out: '<svg viewBox="0 0 20 20"><path d="M3.5 10.5 16.5 4l-4 12.5-2.6-5.3Z"/><path d="m9.9 11.2 2.6-2.6"/></svg>',
+  peer: '<svg viewBox="0 0 20 20"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h9A1.5 1.5 0 0 1 16 5.5v6a1.5 1.5 0 0 1-1.5 1.5H9.2L6 16v-3h-.5A1.5 1.5 0 0 1 4 11.5Z"/></svg>',
 }
 
 // ---------------------------------------------------------------- small helpers
@@ -110,6 +117,7 @@ const itemOf = key => state.data.items.find(i => i.key === key)
 let launchUI = null // new sessions (launch.js), set up with the sheet below
 let questionsUI = null // questions asked in a terminal (questions.js), set up with the sheet below
 let termUI = null // the terminal window (terminal.js), set up with the sheet below
+let helpersUI = null // a session's helpers in a window (helpers.js), set up with the sheet below
 const catOf = it => state.moved.get(it.key) ?? it.category
 const colOf = it => state.movedCol.get(it.key)?.col ?? it.column
 /** A turn is on: it works, or a dialog stopped it midway. */
@@ -122,7 +130,7 @@ function visibleItems() {
   return state.data.items.filter(it => {
     if (!state.sleepers && it.sleeping && it.column === 'idle') return false
     if (!q) return true
-    return [it.name, it.autoName, it.doing, it.wait, it.title, it.lastText, it.prompt, it.workspace, catInfo(catOf(it)).title]
+    return [it.name, it.autoName, it.doing, it.wait, it.title, it.lastText, it.prompt, it.workspace, catInfo(catOf(it)).title, ...(it.helpers?.live ?? []).map(h => h.label)]
       .some(v => v && String(v).toLowerCase().includes(q))
   }).concat(launchUI?.placeholders() ?? []) // sessions on their way show whatever the search
 }
@@ -155,7 +163,8 @@ function onData(data) {
     const it = itemOf(state.open)
     if (it) state.selectedItem = it
     if (!it && !data.stale) { detail.missing(); return }
-    const stamp = it ? `${it.activity}|${it.status}|${it.column}|${it.wait}|${it.doing}|${it.category}` : ''
+    // A helper at work changes the sheet too, while the session itself may wait for it.
+    const stamp = it ? `${it.activity}|${it.status}|${it.column}|${it.wait}|${it.doing}|${it.category}|${it.helpers?.at ?? ''}|${it.helpers?.running ?? ''}` : ''
     if (it && (stamp !== lastDetailStamp || recovered || state.detailState?.status === 'missing')) {
       lastDetailStamp = stamp
       loadDetail(state.open)
@@ -210,7 +219,7 @@ function syncAvailability() {
     banner.textContent = t(canEdit() ? 'mobile.readOnly' : 'live.off')
   }
   for (const element of document.querySelectorAll('#sheet-focus, #sheet-sleep, #sheet-wake, [data-act="focus"], [data-act="sleep"]')) element.disabled = blocked || (missing && !!element.closest('#sheet')) || (element.id === 'sheet-sleep' && inTurn(itemOf(state.open) ?? {}))
-  for (const element of document.querySelectorAll('#attach, #lang, #cat-new, #sheet-card button, #sheet-card input, #cats-sheet button:not([data-close]):not([data-layout]), #cats-sheet input, #sched-body .sched-x, #sched-body .sched-mode, [data-act="dismiss"]')) element.disabled = !canEdit()
+  for (const element of document.querySelectorAll('#attach, #lang, #cat-new, #sheet-card button:not(.rel-chip):not(.rel-more), #sheet-card input, #cats-sheet button:not([data-close]):not([data-layout]), #cats-sheet input, #sched-body .sched-x, #sched-body .sched-mode, [data-act="dismiss"]')) element.disabled = !canEdit()
   // New sessions go through herdr: they wait for fresh data like going to a session does.
   for (const element of document.querySelectorAll('#new-session, #sheet-new, .lane-new')) {
     element.disabled = blocked
@@ -327,6 +336,7 @@ function setLanguage(lang) {
   syncComposer()
   files.relabel()
   termUI?.relabel()
+  helpersUI?.relabel()
 }
 
 function applyTexts() {
@@ -351,6 +361,8 @@ function renderToolbar(visible) {
   if (count('work')) parts.push(`<b>${count('work')}</b> ${t('sum.working', { n: count('work') })}`)
   if (count('me')) parts.push(`<b>${count('me')}</b> ${t('sum.needYou', { n: count('me') })}`)
   if (count('ext')) parts.push(`<b>${count('ext')}</b> ${t('sum.waitOthers', { n: count('ext') })}`)
+  const helping = all.reduce((n, i) => n + liveCount(i), 0)
+  if (helping) parts.push(`<b>${helping}</b> ${t('sum.helpers', { n: helping })}`)
   if (asleep) parts.push(`${asleep} ${t('sum.asleep', { n: asleep })}`)
   $('#summary').innerHTML = parts.join(' · ')
   const attentionCount = visible.filter(it => !it.launchOnly && laneShown(catOf(it)) && (it.column === 'me' || unseenResult(it, viewed))).length
@@ -526,9 +538,35 @@ function cardHTML(it) {
       ? `<div class="now">${ICON.spin}<span class="tool">${esc(tool.label)}</span><span class="detail">${esc(tool.detail)}</span></div>`
       : `<div class="now idle">${ICON.spin}<span class="tool">${esc(t('card.thinking'))}</span><span class="detail">${tool ? esc(t('card.after', { tool: tool.label })) : ''}</span></div>`
   }
+  body += helpersChip(it) + relationsLine(it)
   // Started from the board and not done starting: how it goes, or why it failed.
   if (it.launch) body += launchUI.note(it.launch)
   return top + body + actions
+}
+
+/**
+ * Helpers at work, on the card: a dot for each (its kind's color, a teammate's own), how many,
+ * and what the newest one does. Only while they work: a finished helper is the sheet's to show.
+ */
+function helpersChip(it) {
+  const n = liveCount(it)
+  if (!n) return ''
+  const live = it.helpers.live ?? []
+  const dots = live.slice(0, 3).map(h => `<i class="hd k-${esc(h.kind)}"${h.color ? ` data-color="${esc(h.color)}"` : ''}></i>`).join('') || '<i class="hd k-workflow"></i>'
+  const label = live[0]?.label ?? ''
+  return `<div class="helpers-row"><button class="helpers-chip" data-act="helpers" title="${esc(t('helpers.chipHint'))}"><span class="hdots">${dots}</span><span class="n">${esc(t('helpers.chip', { n }))}</span>${label ? `<span class="d">${esc(label)}</span>` : ''}</button></div>`
+}
+
+/** Who started this session and how many it started, quietly at the card's foot. */
+function relationsLine(it) {
+  const l = it.links
+  if (!l) return ''
+  const parts = []
+  const from = l.from && itemOf(l.from.key)
+  if (from) parts.push(`<button class="rel" data-act="rel" data-key="${esc(from.key)}" title="${esc(t('rel.fromHint', { name: from.name }))}">${ICON.from}<span>${esc(from.name)}</span></button>`)
+  const started = (l.started ?? []).map(x => itemOf(x.key)).filter(Boolean)
+  if (started.length) parts.push(`<span class="rel" title="${esc(t('rel.startedHint', { names: started.map(x => x.name).join(', ') }))}">${ICON.spawned}<span>${esc(t('rel.started', { n: started.length }))}</span></span>`)
+  return parts.length ? `<div class="rels">${parts.join('')}</div>` : ''
 }
 
 function updateCard(card, it) {
@@ -559,9 +597,21 @@ function cardOf(key) {
   card.addEventListener('keydown', e => {
     if (e.key === 'Enter' && e.target === card && itemOf(card.dataset.key)) openSheet(card.dataset.key)
   })
+  // Pointing at a card, or tabbing to it, marks the sessions it works with.
+  card.addEventListener('pointerenter', e => e.pointerType === 'mouse' && showRelated(card.dataset.key))
+  card.addEventListener('pointerleave', () => showRelated(null))
+  card.addEventListener('focusin', () => showRelated(card.dataset.key))
+  card.addEventListener('focusout', e => !card.contains(e.relatedTarget) && showRelated(null))
   cards.set(key, card)
   appear(card)
   return card
+}
+
+let relatedTo = null // the card whose sessions are marked
+function showRelated(key) {
+  relatedTo = key
+  const keys = key ? relatedKeys(itemOf(key)) : new Set()
+  for (const [k, el] of cards) el.classList.toggle('related', keys.has(k))
 }
 
 function render() {
@@ -628,6 +678,7 @@ function render() {
     }
     empty.textContent = t(state.data.items.length ? 'empty.none' : 'empty.noSessions')
   } else empty?.remove()
+  if (relatedTo) showRelated(cards.has(relatedTo) ? relatedTo : null)
   flip(first)
   if (state.open) {
     renderSheetHead()
@@ -837,7 +888,18 @@ function onCardClick(e) {
   if (btn?.dataset.act === 'write') return openSheet(key, { compose: true })
   if (btn?.dataset.act === 'dismiss') return dismissAsk(key)
   if (btn?.dataset.act === 'sleep') return sleepSession(key)
+  if (btn?.dataset.act === 'rel') return goToSession(btn.dataset.key)
   openSheet(key)
+}
+
+/** Another session, from a link to it: its sheet, and its card brought into sight with a glint. */
+function goToSession(key) {
+  if (!itemOf(key)) return toast(t('rel.notOnBoard'), true)
+  openSheet(key)
+  const card = cards.get(key)
+  if (!card?.offsetParent) return
+  card.scrollIntoView({ block: 'nearest', behavior: reducedMotion.matches ? 'auto' : 'smooth' })
+  if (!reducedMotion.matches) card.animate([{ boxShadow: 'var(--shadow-card), 0 0 0 4px color-mix(in srgb, var(--accent) 45%, transparent)' }, { boxShadow: 'var(--shadow-card), 0 0 0 2px var(--accent)' }], { duration: 900, easing: 'ease-out' })
 }
 
 // ---------------------------------------------------------------- side panels
@@ -880,8 +942,8 @@ const dialogBack = dialogHistory({
   history,
   mobile: () => matchMedia('(max-width: 760px)').matches,
   // Asked at once when a reload finds the Back sentinel: launchUI is set up just below.
-  isOpen: () => menu.isOpen() || !!launchUI?.isOpen() || files.isOpen() || !!termUI?.isOpen() || limitsOpen() || panels.some(panel => panel.isOpen),
-  closeTop: () => menu.isOpen() ? menu.close() : launchUI?.isOpen() ? launchUI.close() : files.isOpen() ? files.back() : termUI?.isOpen() ? termUI.close() : limitsOpen() ? closeLimits(true) : panels.find(panel => panel.isOpen)?.close(),
+  isOpen: () => menu.isOpen() || !!launchUI?.isOpen() || files.isOpen() || !!termUI?.isOpen() || !!helpersUI?.isOpen() || limitsOpen() || panels.some(panel => panel.isOpen),
+  closeTop: () => menu.isOpen() ? menu.close() : launchUI?.isOpen() ? launchUI.close() : files.isOpen() ? files.back() : termUI?.isOpen() ? termUI.close() : helpersUI?.isOpen() ? helpersUI.back() : limitsOpen() ? closeLimits(true) : panels.find(panel => panel.isOpen)?.close(),
 })
 launchUI = initLaunch({
   t: () => t,
@@ -921,6 +983,21 @@ termUI = initTerminal({
 function openTerminal(key, from) {
   if (state.data.terminal === false || !itemOf(key)) return
   termUI.open(key, from)
+}
+// Subagents, forks, workflow agents and teammates of the session in the sheet (helpers.js): the
+// list, and one helper's conversation drawn as the session's is.
+helpersUI = initHelpers({
+  t: () => t,
+  item: itemOf,
+  detail: key => (key === state.open ? state.detail : null),
+  renderThread: (conv, ctx) => thread(conv, itemOf(ctx.key) ?? {}, ctx),
+  upgrade: (el, cwd) => files.upgrade(el, cwd),
+  openSession: key => goToSession(key),
+  onDialogChange: () => dialogBack.sync(),
+})
+/** A helper of the session in the sheet ({ id }) or the list of them ({ run }), grown from `el`. */
+function openHelpers(ref, el) {
+  if (state.open && itemOf(state.open)) helpersUI.open(state.open, ref, el)
 }
 questionsUI = initQuestions({
   box: sheetQuestion,
@@ -962,6 +1039,7 @@ const detail = detailResource({
     }
     renderSheetHead()
     renderSheetBody(false)
+    helpersUI.sync()
   },
 })
 // The text being written to a session stays with that session (this browser only), through a
@@ -1023,6 +1101,16 @@ function renderDetailState() {
   if (box._html !== html) { box.innerHTML = html; box._html = html }
 }
 sheetBody.addEventListener('click', e => e.target.closest('[data-detail-retry]') && state.open && loadDetail(state.open))
+// The thread's links: a helper's conversation, a workflow's agents, another session.
+sheetBody.addEventListener('click', e => {
+  const link = e.target.closest('[data-helper], [data-run-open], [data-session]')
+  if (!link) return
+  // Inside a line that folds open (a message sent, a report), the link opens, not the fold.
+  e.preventDefault()
+  if (link.dataset.helper) return openHelpers({ id: link.dataset.helper }, link)
+  if (link.dataset.runOpen) return openHelpers({ list: true, run: link.dataset.runOpen }, link)
+  goToSession(link.dataset.session)
+})
 
 function renderSheetHead() {
   const it = itemOf(state.open) ?? state.selectedItem
@@ -1069,6 +1157,7 @@ function renderSheetCard(it) {
       <div class="row"><span class="row-label">${esc(t('row.doing'))}</span><input class="row-value" id="doing" value="${esc(it.doing)}" placeholder="${esc(plain(it.title && it.title !== it.name ? it.title : '') || t('row.doingNone'))}"></div>
       <div class="row"><span class="row-label">${esc(t('row.wait'))}</span><input class="row-value" id="wait" value="${esc(it.wait)}" placeholder="${esc(t('row.waitNone'))}"></div>
       ${scheduleRow(it)}
+      ${relationsRow(it)}
     </div>`
   if (sheetCard._html === html) return
   if (sheetCard.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') {
@@ -1078,6 +1167,38 @@ function renderSheetCard(it) {
   }
   sheetCard.innerHTML = html
   sheetCard._html = html
+}
+
+/**
+ * The sessions this one works with, in its sheet: who started it, whom it started, whom it wrote
+ * with and how often each way. A name opens that session.
+ */
+const relAll = new Set() // sessions whose sheet shows every linked session, not the first few
+function relationsRow(it) {
+  const peers = linkedSessions(it)
+  if (!peers.length) return ''
+  const all = relAll.has(it.key) || peers.length <= 6
+  const chips = (all ? peers : peers.slice(0, 5)).map(p => {
+    const other = itemOf(p.key)
+    const marks = `${p.from ? ICON.from : ''}${p.started ? ICON.spawned : ''}`
+    const io = p.in || p.out ? `<span class="rel-io">${p.in ? `<i>↓${p.in}</i>` : ''}${p.out ? `<i>↑${p.out}</i>` : ''}</span>` : ''
+    const title = [p.from && t('rel.fromHint', { name: other.name }), p.started && t('rel.startedThis'), (p.in || p.out) && t('rel.talkHint', { name: other.name, in: p.in, out: p.out, when: ago(p.at) })].filter(Boolean).join('\n')
+    return `<button class="rel-chip" data-session="${esc(p.key)}" style="--lane:${catInfo(catOf(other)).color}" title="${esc(title)}">${marks ? `<span class="rel-marks">${marks}</span>` : ''}<span class="rel-name">${esc(other.name)}</span>${io}</button>`
+  })
+  if (!all) chips.push(`<button class="rel-more" data-rel-all>${esc(t('rel.more', { n: peers.length - 5 }))}</button>`)
+  return `<div class="row rel-row"><span class="row-label">${esc(t('rel.row'))}</span><div class="row-value rel-chips">${chips.join('')}</div></div>`
+}
+
+/** Each session this one is linked with, once: who started it first, then by the latest contact. */
+function linkedSessions(it) {
+  const l = it.links
+  if (!l) return []
+  const by = new Map()
+  const get = key => by.get(key) ?? by.set(key, { key, from: false, started: false, in: 0, out: 0, at: 0 }).get(key)
+  if (l.from) Object.assign(get(l.from.key), { from: true, at: l.from.at })
+  for (const s of l.started ?? []) Object.assign(get(s.key), { started: true, at: Math.max(get(s.key).at, s.at) })
+  for (const x of l.talks ?? []) Object.assign(get(x.key), { in: x.in, out: x.out, at: Math.max(get(x.key).at, x.at) })
+  return [...by.values()].filter(p => itemOf(p.key)).sort((a, b) => b.from - a.from || b.at - a.at)
 }
 
 /** The session's reminders in its sheet: the first three, the rest in the schedule panel. */
@@ -1111,32 +1232,76 @@ function renderSheetBody(reset) {
   }
   if (!form && sheetQuestion._html !== question) { sheetQuestion.innerHTML = question; sheetQuestion._html = question }
   sheetQuestion.hidden = !question && !form
+  renderHelpersStrip()
   html += `<div class="section-title">${esc(t('thread.title'))}</div><div class="thread">`
   const conv = state.detail?.conversation
   if (!conv) html += `<p class="row-value muted">${esc(t(['error', 'missing'].includes(state.detailState?.status) ? 'detail.noTranscript' : 'loading'))}</p>`
   else if (!conv.length) html += `<p class="row-value muted">${esc(t('thread.empty'))}</p>`
   else html += thread(conv, it)
   html += '</div>'
-  const open = new Set([...sheetBody.querySelectorAll('details[open]')].map(d => d.dataset.i))
-  if (sheetBody._html !== html) {
-    sheetBody.innerHTML = html
-    sheetBody._html = html
-    for (const d of sheetBody.querySelectorAll('details')) if (open.has(d.dataset.i)) d.open = true
-  }
+  // The same thread draws the same markup (running clocks are filled in after): a redraw keeps the focus and the open folds.
+  redraw(sheetBody, html)
   files.upgrade(sheetBody, it.cwd)
   syncAvailability()
   if (reset || atBottom) sheetBody.scrollTop = sheetBody.scrollHeight
 }
 
-/** Messages as bubbles; runs of tool calls fold into one line that opens to show them. */
-function thread(conv, it) {
+/**
+ * The session's helpers above its conversation: the ones at work with what each does now and a
+ * running clock, else the newest one in a line. A row opens the helper's conversation, "All" the
+ * whole list (helpers.js).
+ */
+const sheetHelpers = $('#sheet-helpers')
+function renderHelpersStrip() {
+  const list = state.detail?.helpers ?? []
+  const runs = state.detail?.workflows ?? []
+  let html = ''
+  if (list.length || runs.length) {
+    const running = list.filter(h => h.status === 'running')
+    const liveRuns = runs.filter(w => w.status === 'running')
+    const sum = [running.length && t('helpers.running', { n: running.length }), list.length - running.length && t('helpers.done', { n: list.length - running.length })].filter(Boolean).join(' · ')
+    let rows = liveRuns.map(w => runRowHTML(w, t)).join('') + running.filter(h => !h.workflow).slice(0, 4).map(h => helperRowHTML(h, t)).join('')
+    const more = running.filter(h => !h.workflow).length - 4
+    if (more > 0) rows += `<button class="helper-more" data-helpers-all>${esc(t('helpers.more', { n: more }))}</button>`
+    if (!rows) {
+      // The newest of the session's own helpers or workflow runs (not an agent inside a run).
+      const last = [...list.filter(h => !h.workflow), ...runs].sort((a, b) => (b.endedAt ?? b.activity ?? 0) - (a.endedAt ?? a.activity ?? 0))[0]
+      const when = last.endedAt ?? last.activity
+      rows = `<button class="helper-last" ${last.kind ? `data-helper="${esc(last.id)}"` : `data-run-open="${esc(last.id)}"`}>${kindIcon(last.kind ? last : { kind: 'workflow' })}<span>${esc(t('helpers.last', { title: last.kind ? helperTitle(last) : last.name || last.id, when: ago(when) }))}</span>${statusMark(last.status)}</button>`
+    }
+    html = `<header class="helpers-head"><h3 id="sheet-helpers-title">${esc(t('helpers.title'))}</h3><span class="helpers-sum">${esc(sum)}</span><button class="helpers-all" data-helpers-all title="${esc(t('helpers.allHint'))}">${esc(t('helpers.all'))}${ICON.chev}</button></header><div class="helper-rows">${rows}</div>`
+  }
+  sheetHelpers.hidden = !html
+  redraw(sheetHelpers, html)
+}
+sheetHelpers.addEventListener('click', e => {
+  const row = e.target.closest('[data-helper]')
+  if (row) return openHelpers({ id: row.dataset.helper }, row)
+  const run = e.target.closest('[data-run-open]')
+  if (run) return openHelpers({ list: true, run: run.dataset.runOpen }, run)
+  const all = e.target.closest('[data-helpers-all]')
+  if (all) openHelpers({ list: true }, all)
+})
+
+// The clocks of what works now move on every second, wherever they are on show.
+setInterval(() => tickClocks(), 1000)
+
+/**
+ * Messages as bubbles; runs of tool calls fold into one line that opens to show them. A call that
+ * works with others is a line of its own: a helper it started (opens its conversation), a
+ * workflow, a message to another session, a session it started. Another session's or a
+ * teammate's message is a bubble with their name. `ctx.helper` draws a helper's own
+ * conversation (helpers.js): what the session asked it is the other side there.
+ */
+function thread(conv, it, ctx = {}) {
   let html = ''
   let run = []
   let i = 0
+  const helpers = state.detail?.helpers ?? []
   const flush = () => {
     if (!run.length) return
     const lastTool = run.at(-1)
-    const live = !lastTool.done && it.column === 'work'
+    const live = !lastTool.done && (ctx.helper ? ctx.helper.status === 'running' : it.column === 'work')
     const summary = live ? t('run.now', { tool: lastTool.label }) : `${t('run.actions', { n: run.length })} · ${lastTool.label}`
     html += `<details class="tools" data-i="${i++}"><summary>${live ? ICON.spin : ICON.chev}<span>${esc(summary)}</span></summary>${run
       .map(x => `<div class="tool-line${x.done ? '' : ' pending'}"><span class="t">${esc(x.label)}</span><span class="d${x.path ? ' fs-inline' : ''}"${x.path ? ` data-path="${esc(x.path)}"` : ''}>${esc(x.detail)}</span></div>`)
@@ -1150,13 +1315,21 @@ function thread(conv, it) {
       html += questionsUI.threadHTML(m, it.status === 'blocked', clock(m.at))
       continue
     }
-    if (m.role === 'tool') {
+    if (m.role === 'tool' && !(m.helper || m.workflow || m.send || m.spawn)) {
       run.push(m)
       continue
     }
     flush()
+    if (m.role === 'tool') {
+      html += linkLine(m, it, ctx, helpers)
+      continue
+    }
     if (m.role === 'notice') {
-      html += notice(m)
+      html += notice(m, helpers)
+      continue
+    }
+    if (m.role === 'peer' || (ctx.helper && m.role === 'user')) {
+      html += peerBubble(m, it, ctx, helpers)
       continue
     }
     html += `<div class="msg ${m.role}"><div class="md">${markdown(m.text)}</div>${thumbs(m.text)}<span class="when">${clock(m.at)}</span></div>`
@@ -1165,16 +1338,74 @@ function thread(conv, it) {
   return html
 }
 
+/** A name in the thread that leads somewhere: a session on the board, a teammate, or just the name. */
+function whoHTML(name, it, ctx, helpers, key = null) {
+  // In a helper's own conversation, its session goes by "main" or "team-lead".
+  if (ctx.helper && ['main', 'team-lead'].includes(name)) return `<b>${esc(it.name ?? name)}</b>`
+  // A reply to a message pipe whose session is gone: no name to give.
+  if (!name && !key) return `<b>${esc(t('thread.anotherSession'))}</b>`
+  // The session's own helper goes by that name first (a teammate, a named agent), then a session.
+  const mate = !key && findHelper(helpers, { name })
+  if (mate) return `<button class="who" data-helper="${esc(mate.id)}" title="${esc(t('helpers.open'))}">${esc(mate.name || helperTitle(mate))}</button>`
+  const session = (key && itemOf(key)) || sessionByName(state.data.items, name, it.key)
+  if (session) return `<button class="who" data-session="${esc(session.key)}" title="${esc(t('rel.open', { name: session.name }))}">${esc(session.name)}</button>`
+  return `<b>${esc(name)}</b>`
+}
+
+/** A call that works with others, as a line of its own (see thread). */
+function linkLine(m, it, ctx, helpers) {
+  const when = `<span class="when">${clock(m.at)}</span>`
+  if (m.helper) {
+    const h = findHelper(helpers, { id: m.helper.id, tool: m.id })
+    const kind = h?.kind ?? m.helper.kind
+    const title = h ? helperTitle(h) : m.detail || m.helper.name || m.helper.type
+    const sub = [h?.type ?? m.helper.type, (h?.name ?? m.helper.name) !== title ? (h?.name ?? m.helper.name) : '', t((h ? h.background : m.helper.background) ? 'helpers.background' : 'helpers.foreground')].filter(Boolean).join(' · ')
+    const mark = h ? `${timeHTML(h.startedAt, h.status, took(h))}${statusMark(h.status)}` : !m.done ? statusMark('running') : ''
+    const line = `${kindIcon({ kind, color: h?.color })}<span class="link-text"><span class="link-title">${esc(t('thread.helper', { kind: t(`helpers.kind.${kind}`), title }))}</span>${sub ? ` <small>${esc(sub)}</small>` : ''}</span>${mark}`
+    return h ? `<button class="link-line" data-helper="${esc(h.id)}" title="${esc(t('helpers.open'))}">${line}</button>` : `<div class="link-line">${line}${when}</div>`
+  }
+  if (m.workflow) {
+    const w = (state.detail?.workflows ?? []).find(x => x.id === m.workflow.run)
+    const line = `${kindIcon({ kind: 'workflow' })}<span class="link-text"><span class="link-title">${esc(t('thread.workflow', { name: w?.name || m.workflow.name || m.workflow.run }))}</span>${w?.agents ? ` <small>${esc(t('helpers.agents', { n: w.agents }))}</small>` : ''}</span>${w ? statusMark(w.status) : !m.done ? statusMark('running') : ''}`
+    return w ? `<button class="link-line" data-run-open="${esc(w.id)}" title="${esc(t('helpers.open'))}">${line}</button>` : `<div class="link-line">${line}${when}</div>`
+  }
+  if (m.spawn) {
+    const target = state.data.items.find(x => x.pane && x.pane === m.spawn.pane && [x.name, x.autoName].includes(m.spawn.name)) ?? null
+    const name = target ? `<button class="who" data-session="${esc(target.key)}" title="${esc(t('rel.open', { name: target.name }))}">${esc(target.name)}</button>` : `<b>${esc(m.spawn.name || '…')}</b>`
+    const text = t(m.spawn.failed ? 'thread.spawnFailed' : 'thread.spawn', { name: '\u0000' }).split('\u0000')
+    return `<div class="link-line${m.spawn.failed ? ' failed' : ''}"><span class="h-icon k-session">${ICON.spawned}</span><span class="link-text">${esc(text[0])}${name}${esc(text[1] ?? '')}</span>${!m.done ? statusMark('running') : ''}${when}</div>`
+  }
+  // A message to another session or a teammate: its first words in the line, the whole of it inside.
+  const text = t('thread.sent', { name: '\u0000' }).split('\u0000')
+  const line = `<span class="h-icon k-session">${ICON.out}</span><span class="link-text">${esc(text[0])}${whoHTML(m.send.to, it, ctx, helpers, m.send.key)}${esc(text[1] ?? '')}${m.send.summary ? ` <small>${esc(m.send.summary)}</small>` : ''}</span>${when}`
+  if (!m.send.text) return `<div class="link-line">${line}</div>`
+  return `<details class="link-line sent" data-i="sent-${esc(m.id)}"><summary>${line}${ICON.chev}</summary><div class="notice-body"><div class="md">${markdown(m.send.text)}</div></div></details>`
+}
+
+/** Another session's or a teammate's message; in a helper's conversation, what its session asked. */
+function peerBubble(m, it, ctx, helpers) {
+  const from = ctx.helper && m.role === 'user' ? `<b>${esc(it.name ?? '')}</b>` : whoHTML(m.from, it, ctx, helpers, m.key)
+  const label = t(ctx.helper && m.role === 'user' ? 'thread.task' : 'thread.peer', { name: '\u0000' }).split('\u0000')
+  const head = `<div class="peer-from">${m.team ? HELPER_ICONS.teammate : ICON.peer}<span>${esc(label[0])}${from}${esc(label[1] ?? '')}</span>${m.summary ? `<small>${esc(m.summary)}</small>` : ''}</div>`
+  return `<div class="msg peer${m.team ? ' team' : ''}">${head}<div class="md">${markdown(m.text)}</div><span class="when">${clock(m.at)}</span></div>`
+}
+
 /**
  * A background task reporting back or a board reminder: a quiet line in the thread, not the
  * user's bubble. An agent's report or a monitor's lines open from it; a command's output file is
  * a click away.
  */
-function notice(m) {
+function notice(m, helpers = []) {
   const { text, sub, tone } = noticeLine(m, t)
   const mark = { ok: ICON.check, fail: ICON.cross, stop: ICON.stop }[tone] ?? (m.kind === 'reminder' || m.kind === 'schedule' ? ICON.alarm : ICON.bolt)
   const file = m.file && !m.detail ? `<span class="notice-file fs-inline" data-path="${esc(m.file)}">${esc(t('notice.output'))}</span>` : ''
-  const line = `<span class="notice-mark">${mark}</span><span class="notice-text"${m.summary ? ` title="${esc(m.summary)}"` : ''}>${esc(text)}${sub ? ` <small>${esc(sub)}</small>` : ''}</span>${file}<span class="when">${clock(m.at)}</span>`
+  // An agent that reported back: its whole conversation is a click away.
+  const agent = m.kind === 'agent' && m.id ? findHelper(helpers, { id: m.id }) : null
+  // A workflow reports under its task id, which its run file keeps.
+  const run = m.kind === 'workflow' && m.id ? (state.detail?.workflows ?? []).find(w => w.taskId === m.id) : null
+  const open = agent ? `<button class="notice-open" data-helper="${esc(agent.id)}" title="${esc(t('helpers.open'))}">${esc(t('notice.open'))}</button>`
+    : run ? `<button class="notice-open" data-run-open="${esc(run.id)}" title="${esc(t('helpers.open'))}">${esc(t('notice.open'))}</button>` : ''
+  const line = `<span class="notice-mark">${mark}</span><span class="notice-text"${m.summary ? ` title="${esc(m.summary)}"` : ''}>${esc(text)}${sub ? ` <small>${esc(sub)}</small>` : ''}</span>${file}${open}<span class="when">${clock(m.at)}</span>`
   if (!m.detail) return `<div class="notice ${tone}">${line}</div>`
   // An agent's report is markdown; a monitor's lines and a tool's result are kept as they came.
   const body = ['agent', 'workflow'].includes(m.kind) ? `<div class="md">${markdown(m.detail)}</div>` : `<pre>${esc(m.detail)}</pre>`
@@ -1188,6 +1419,12 @@ sheetCard.addEventListener('click', e => {
   const mode = e.target.closest('[data-sched-mode]')
   if (mode) return toggleMode(mode)
   if (e.target.closest('[data-sched-more]')) return openSchedule(state.open)
+  const other = e.target.closest('[data-session]')
+  if (other) return goToSession(other.dataset.session)
+  if (e.target.closest('[data-rel-all]') && state.open) {
+    relAll.add(state.open)
+    return renderSheetCard(itemOf(state.open))
+  }
   const b = e.target.closest('#cats button, #cols button')
   if (!b || !state.open) return
   moveCard(state.open, b.dataset.cat ? { cat: b.dataset.cat } : { column: b.dataset.col })
@@ -2045,7 +2282,7 @@ $('#next-attention').addEventListener('click', openNextAttention)
 
 addEventListener('keydown', e => {
   // They take their keys first; the terminal window too, even while its screen has not the keys.
-  if (menu.isOpen() || launchUI.isOpen() || termUI.isOpen()) return
+  if (menu.isOpen() || launchUI.isOpen() || termUI.isOpen() || helpersUI.isOpen()) return
   const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName)
   if (e.key === 'Escape') {
     if (typing) return document.activeElement.blur()

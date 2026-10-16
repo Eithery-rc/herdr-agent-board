@@ -272,18 +272,120 @@ function parse(line) {
  * texts and its tool calls in a line each (done = the call has a result). A question form
  * (AskUserQuestion) carries its questions and, once done, the answers: { ask, answers }, answers
  * null when it was closed without one. Background tasks reporting back and board reminders come
- * as { role: 'notice', ...taskNotice() or reminderNotice() } (notices.mjs).
+ * as { role: 'notice', ...taskNotice() or reminderNotice() } (notices.mjs). A call that works
+ * with others carries what it is about, for a line of its own: `helper` (Agent: a subagent or a
+ * fork, `id` once it started), `workflow`, `send` (SendMessage), `spawn` (spawn-agent started a
+ * session). Another session's or a teammate's message is { role: 'peer', from, text }.
+ * `sidechain` reads a helper's own transcript (helpers.mjs), whose lines are all sidechain lines.
  */
-export function conversation(path, limit = 40) {
+export function conversation(path, limit = 40, { sidechain = false } = {}) {
   const st = path && statSync(path, { throwIfNoEntry: false })
   if (!st) return []
   // Screenshots and big tool results can fill megabytes: read further back when the window held few turns.
   let items = []
   for (const bytes of [2 << 20, 8 << 20]) {
-    items = turns(readTail(path, st.size, bytes))
+    items = turns(readTail(path, st.size, bytes), { sidechain })
     if (items.filter(i => i.role !== 'tool').length >= limit / 3 || bytes >= st.size) break
   }
   return items.slice(-limit)
+}
+
+const attr = (attrs, name) => new RegExp(`\\b${name}="([^"]*)"`).exec(attrs)?.[1] ?? ''
+
+/**
+ * What a helper was asked to do, from a user line of its transcript, without the frames Claude
+ * Code puts around it: a fork's boilerplate (its directive follows), a workflow harness header,
+ * a teammate message's tag. { prompt, from } (from: the teammate who asked), or null for the
+ * harness's relay of the user's own request, which the helper only reads.
+ */
+export function promptOf(text) {
+  const t = String(text ?? '')
+  const fork = /^\s*<fork-boilerplate>[\s\S]*?<\/fork-boilerplate>\s*([\s\S]*)$/.exec(t)
+  if (fork) return { prompt: fork[1].replace(/^Your directive:\s*/, '').trim(), from: '' }
+  const mate = /<teammate-message\b([^>]*)>\s*([\s\S]*?)\s*(?:<\/teammate-message>|$)/.exec(t)
+  if (mate && t.trimStart().startsWith('<teammate-message')) return { prompt: mate[2], from: attr(mate[1], 'teammate_id') }
+  if (/^\[Workflow harness — user request\]/.test(t)) return null
+  const wf = /^\[Workflow harness[^\]]*\][^\n]*\n([\s\S]*)$/.exec(t)
+  if (wf) return { prompt: wf[1].replace(/^ {2}/gm, '').trim(), from: '' }
+  return { prompt: t.trim(), from: '' }
+}
+
+/**
+ * Messages from teammates in a user line: [{ from, summary, text }]. Only a line that is one: a
+ * prompt that mentions the tag stays the user's.
+ */
+export function teammateMessages(text) {
+  if (!String(text ?? '').trimStart().startsWith('<teammate-message')) return []
+  return [...String(text ?? '').matchAll(/<teammate-message\b([^>]*)>\s*([\s\S]*?)\s*<\/teammate-message>/g)].map(m => ({
+    from: attr(m[1], 'teammate_id'),
+    summary: clip(attr(m[1], 'summary'), 200),
+    text: clip(m[2], 4000),
+    team: true,
+  }))
+}
+
+/** Another session's message, from the origin Claude Code records with it. */
+function peerOf(origin, text) {
+  const tag = /<cross-session-message\b([^>]*)>\s*([\s\S]*?)\s*(?:<\/cross-session-message>|$)/.exec(String(text ?? ''))
+  const body = typeof origin?.body === 'string' ? origin.body : (tag?.[2] ?? '')
+  const from = String(origin?.name || attr(tag?.[1] ?? '', 'from-name') || '')
+  if (!body.trim() && !from) return null
+  return { from: from.slice(0, 120), pipe: String(origin?.from ?? ''), text: clip(body.trim(), 4000), id: String(origin?.msg_id ?? '') }
+}
+
+/**
+ * A Bash or PowerShell call that starts a session with spawn-agent: { name } as it gave -Name
+ * ('' when that is a variable). Null for anything else, a spawn-agent without -Name included.
+ */
+export function spawnOf(tool, input) {
+  if (tool !== 'Bash' && tool !== 'PowerShell') return null
+  const cmd = String(input?.command ?? '')
+  if (!/(?:^|[\s;&|(=])spawn-agent(?:\.ps1)?\s/.test(cmd)) return null
+  const m = /\s-Name\s+(?:"([^"]+)"|'([^']+)'|([^\s"';|&)]+))/.exec(cmd)
+  if (!m) return null
+  const name = (m[1] ?? m[2] ?? m[3]).trim()
+  return { name: name.startsWith('$') ? '' : name.slice(0, 120) }
+}
+
+/** What spawn-agent printed for the session it started: "pane=<id> name=<name> agent=<id>". */
+export function spawnResult(text) {
+  const m = /\bpane=([\w:.-]+)\s+name=(.+?)\s+agent=\S+/.exec(String(text ?? ''))
+  return m ? { pane: m[1], name: m[2].trim().slice(0, 120) } : null
+}
+
+/** A Workflow call's name: its script's meta name, or the saved workflow it ran. */
+function workflowName(input) {
+  const m = /\bname\s*:\s*(['"`])([^'"`\n]{1,120})\1/.exec(String(input?.script ?? ''))
+  return m ? m[2] : String(input?.name ?? '').slice(0, 120)
+}
+
+/** What a call that works with others is about, for a line of its own in the thread. */
+function linkOf(b) {
+  const input = b.input ?? {}
+  if (b.name === 'Agent' || b.name === 'Task') {
+    const type = String(input.subagent_type ?? '')
+    return { helper: { kind: type === 'fork' ? 'fork' : 'agent', type: type === 'fork' ? '' : type.slice(0, 80), name: String(input.name ?? '').slice(0, 80), background: !!input.run_in_background, id: '' } }
+  }
+  if (b.name === 'Workflow') return { workflow: { name: workflowName(input), run: '' } }
+  if (b.name === 'SendMessage' && typeof input.to === 'string') {
+    // The [ref] a listing adds to a name is not part of it.
+    const to = input.to.replace(/\s*\[[^\]]*\]\s*$/, '').trim().slice(0, 300)
+    return { send: { to, summary: clip(String(input.summary ?? ''), 200), text: typeof input.message === 'string' ? clip(input.message, 4000) : '' } }
+  }
+  const spawn = spawnOf(b.name, input)
+  return spawn ? { spawn: { ...spawn, pane: '' } } : null
+}
+
+/** A result fills in what the call could not know: the helper's id, the run, the new session. */
+function linkResult(tool, block, result) {
+  const text = typeof block.content === 'string' ? block.content : Array.isArray(block.content) ? block.content.map(c => c?.text ?? '').join('\n') : ''
+  if (tool.helper) tool.helper.id = String(result?.agentId ?? /\bagentId:\s*([A-Za-z0-9-]+)/.exec(text)?.[1] ?? '')
+  if (tool.workflow) tool.workflow.run = String(result?.runId ?? /[\\/](wf_[A-Za-z0-9-]+)/.exec(text)?.[1] ?? '')
+  if (tool.spawn) {
+    const r = !block.is_error && spawnResult(typeof result?.stdout === 'string' ? result.stdout : text)
+    if (r) Object.assign(tool.spawn, r)
+    else tool.spawn.failed = true
+  }
 }
 
 /** The answers Claude Code recorded for a question form, in the order of its questions. */
@@ -294,9 +396,20 @@ function askAnswers(ask, result) {
   return ask.map(q => (typeof answers[q.question] === 'string' ? clip(answers[q.question], 2000) : ''))
 }
 
-function turns(text) {
+function turns(text, { sidechain = false } = {}) {
   const items = []
   const tools = new Map() // tool_use id -> item
+  // Another session's message can be queued into a turn and come again as a line of its own.
+  const peers = new Set()
+  const pipes = new Map() // a sender's message pipe -> its name: a reply goes to the pipe
+  const peer = (p, at) => {
+    // Without an id, the same words twice are two messages unless they come at the same moment.
+    const key = p.id || JSON.stringify([p.from, p.text, at])
+    if (peers.has(key)) return
+    peers.add(key)
+    if (p.pipe && p.from) pipes.set(p.pipe, p.from)
+    items.push({ role: 'peer', ...p, at })
+  }
   // A background task reporting back or a board reminder: a line of its own (notices.mjs). One
   // can be queued into a running turn and then sent again as a turn of its own: shown once. A
   // task id alone is not enough, a monitor or a resumed agent reports again under the same one.
@@ -315,16 +428,23 @@ function turns(text) {
   for (const line of text.split('\n')) {
     if (!line || !(line.includes('"type":"user"') || line.includes('"type":"assistant"') || line.includes('"type":"queued_command"'))) continue
     const o = parse(line)
-    if (!o || o.isSidechain || o.isMeta || o.isCompactSummary) continue
+    // Claude Code keeps another session's message, and in a helper's transcript a task reporting
+    // back, as a meta line: they are shown all the same.
+    if (!o || (o.isSidechain && !sidechain) || (o.isMeta && !['peer', 'task-notification'].includes(o.origin?.kind)) || o.isCompactSummary) continue
     const content = o.message?.content
     const at = Date.parse(o.timestamp) || 0
     // A prompt sent while the session worked goes into the running turn, and the transcript
     // keeps it as a queued command, not a user line. Other sessions' messages and task
-    // notifications arrive the same way; other sessions' messages are not shown.
+    // notifications arrive the same way.
     if (o.type === 'attachment') {
       const a = o.attachment
       if (a?.type !== 'queued_command') continue
       const when = Date.parse(a.timestamp) || at
+      if (a.origin?.kind === 'peer') {
+        const p = peerOf(a.origin, a.prompt)
+        if (p) peer(p, when)
+        continue
+      }
       const task = a.commandMode === 'task-notification' ? taskNotice(a.prompt) : null
       if (task) notice(task, when)
       const text = a.commandMode === 'prompt' && a.origin?.kind !== 'peer' ? userText(a.prompt) : ''
@@ -340,10 +460,31 @@ function turns(text) {
           const tool = tools.get(b.tool_use_id)
           tool.done = true
           if (tool.ask) tool.answers = askAnswers(tool.ask, o.toolUseResult)
+          linkResult(tool, b, o.toolUseResult)
         }
         if (content.every(b => b.type === 'tool_result')) continue
       }
-      const text = userText(content)
+      if (o.origin?.kind === 'peer') {
+        const p = peerOf(o.origin, userText(content))
+        if (p) peer(p, at)
+        continue
+      }
+      let text = userText(content)
+      // A task reporting back can come after a banner that says it is not the user.
+      if (o.origin?.kind === 'task-notification' && text.indexOf('<task-notification>') > 0) text = text.slice(text.indexOf('<task-notification>'))
+      const mates = teammateMessages(text)
+      if (mates.length) {
+        for (const m of mates) peer(m, at)
+        continue
+      }
+      if (sidechain) {
+        // A fork's transcript starts with its parent's call that made it: its own work begins
+        // with its directive.
+        if (text.trimStart().startsWith('<fork-boilerplate>')) items.length = 0
+        const p = promptOf(text)
+        if (!p) continue
+        text = p.prompt
+      }
       const n = taskNotice(text) ?? reminderNotice(text)
       if (n) notice(n, at)
       else if (text) items.push({ role: 'user', text: clip(text, 3000), at })
@@ -355,6 +496,10 @@ function turns(text) {
           const t = { role: 'tool', label: toolLabel(b.name), detail: toolDetail(b.name, b.input), path: toolPath(b.name, b.input), done: false, at }
           const ask = b.name === 'AskUserQuestion' ? questionsOf(b.input) : null
           if (ask) Object.assign(t, { id: b.id, ask: ask.map(({ question, header, multiSelect }) => ({ question, header, multiSelect })), answers: null })
+          const link = linkOf(b)
+          if (link) Object.assign(t, { id: b.id }, link)
+          // A reply to the pipe a message came from goes to whoever sent that message.
+          if (link?.send?.to.startsWith('uds:')) link.send.name = pipes.get(link.send.to) ?? ''
           tools.set(b.id, t)
           items.push(t)
         }

@@ -17,6 +17,8 @@ import { checkoutChanges, isCheckout } from './changes.mjs'
 import { searchHistory } from './history.mjs'
 import { localUsage } from './usage.mjs'
 import { conversation } from './claude.mjs'
+import { helperDetail, helpersOf, publicHelper } from './helpers.mjs'
+import { createLinks } from './links.mjs'
 import { describe, FILE_TOKEN, MEDIA_TYPES, openWith, preview, resolvePath } from './files.mjs'
 import { categoryInfo, colorHex, editCategories, editSettings, laneRank, liveConfig, PALETTE } from './config.mjs'
 import { lang, t } from './lang.mjs'
@@ -154,7 +156,8 @@ export function startServer({ cfg, log = () => {} } = {}) {
         const configured = cfg.categories.some(x => x.id === id)
         return { id, title: c.title, color: colorHex(c.color), colorName: c.color, paths: c.paths ?? [], configured, fallback: id === 'other' }
       })
-    const list = items.map(({ transcript, ...rest }) => launches.decorate(rest))
+    // What the page has no use for stays here: file paths, the Claude process and its pipe.
+    const list = items.map(({ transcript, alive, since, pipe, ...rest }) => launches.decorate(rest))
     // The schedule without the scheduler's bookkeeping; the log is what was sent or missed lately.
     const schedules = listEntries().map(({ claim, tried, waited, ...entry }) => entry)
     // terminal: whether the board offers one (config `terminal`); shells: sessions it opened one for.
@@ -189,13 +192,17 @@ export function startServer({ cfg, log = () => {} } = {}) {
   }
   publish()
 
+  // Who started whom and who wrote to whom, read from the transcripts in the background
+  // (links.mjs); a read that found something new refreshes the board.
+  const links = createLinks({ onChange: () => refresh() })
+
   let refreshing = false
   let again = false
   async function refresh() {
     if (refreshing) return void (again = true)
     refreshing = true
     try {
-      items = await collect(cfg)
+      items = await collect(cfg, { helpers: true, links })
       launches.observe(items)
       stale = false
       lastSuccessfulRefreshAt = Date.now()
@@ -222,9 +229,31 @@ export function startServer({ cfg, log = () => {} } = {}) {
   const REVEAL_MS = 15_000
   const revealEvent = key => `event: reveal\ndata: ${JSON.stringify({ key })}\n\n`
 
+  /**
+   * Messages between sessions in a thread: the other session's card key, found by the pipe it
+   * writes from (exact while it runs), and no pipes for the page.
+   */
+  function withSessions(conv) {
+    const byPipe = new Map(items.filter(i => i.pipe).map(i => [i.pipe, i]))
+    const at = pipe => byPipe.get(String(pipe ?? '').replace(/^uds:/, ''))
+    return conv.map(m => {
+      if (m.role === 'peer') {
+        const { pipe, ...rest } = m
+        const other = at(pipe)
+        return other ? { ...rest, key: other.key } : rest
+      }
+      if (!m.send?.to.startsWith('uds:')) return m
+      const other = at(m.send.to)
+      return { ...m, send: { ...m.send, to: other?.autoName || other?.name || m.send.name || '', key: other?.key ?? null } }
+    })
+  }
+
   async function detail(item) {
     // checkout: whether its folder is in git, for the sheet's Changes button.
-    const out = { item: { ...item, transcript: undefined }, conversation: conversation(item.transcript, 60), screen: '', dialog: null, checkout: await isCheckout(item.cwd) }
+    const { transcript, alive, since, pipe, ...shown } = item
+    // helpers: every subagent, fork, workflow agent and teammate, newest first (helpers.mjs).
+    const own = helpersOf(transcript, { alive, since })
+    const out = { item: shown, conversation: withSessions(conversation(transcript, 60)), helpers: own.helpers.map(publicHelper), workflows: own.workflows, screen: '', dialog: null, checkout: await isCheckout(item.cwd) }
     if (item.status === 'blocked' && item.pane) {
       try {
         const text = await herdrText(['agent', 'read', item.pane, '--source', 'visible'], 5000)
@@ -574,6 +603,20 @@ export function startServer({ cfg, log = () => {} } = {}) {
         const body = await readBody(req)
         const r = await termAction(item, target, op, body)
         return json(r.ok ? 200 : 409, r)
+      }
+      // One helper of a session, for its window: the id only picks among the session's own.
+      const hm = /^\/api\/session\/([^/]+)\/helper\/([A-Za-z0-9-]{1,120})$/.exec(path)
+      if (hm && req.method === 'GET') {
+        const item = find(hm[1])
+        if (!item) return json(404, { error: t('err.gone') })
+        let d
+        try {
+          d = await helperDetail(item.transcript, hm[2], { alive: item.alive, since: item.since })
+        } catch {
+          // Its files could not be read: no paths in the answer.
+          return json(500, { error: t('helpers.unreadable') })
+        }
+        return d ? json(200, { ...d, conversation: withSessions(d.conversation) }) : json(404, { error: t('helpers.gone') })
       }
       const m = /^\/api\/session\/([^/]+)(?:\/(\w+))?$/.exec(path)
       if (m) {

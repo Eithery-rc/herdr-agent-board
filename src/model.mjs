@@ -2,7 +2,9 @@
 // merged with its card and with what Claude recorded about it, and sorted into a column.
 import { categoryFor } from './config.mjs'
 import { liveSessions, transcriptInfo, transcriptPath } from './claude.mjs'
+import { helpersOf, summarize } from './helpers.mjs'
 import { snapshot } from './herdr.mjs'
+import { relate } from './links.mjs'
 import { readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { t } from './lang.mjs'
@@ -134,8 +136,11 @@ function contextOf(session, info) {
   return { context: (fresh && d.tokens) || own.context, contextPct: fresh ? (d.usedPercentage ?? null) : null, contextSize: d.size ?? null }
 }
 
-/** All board items, newest activity first. */
-export async function collect(cfg) {
+/**
+ * All board items, newest activity first. The web board also asks for each session's helpers
+ * (`helpers`: helpers.mjs) and how sessions work with each other (`links`: a links.mjs index).
+ */
+export async function collect(cfg, { helpers = false, links = null } = {}) {
   const [snap, asleep] = await Promise.all([snapshot(), sleepers(cfg.wakeUrl)])
   const live = liveSessions()
   const cards = allCards()
@@ -152,6 +157,12 @@ export async function collect(cfg) {
     const guess = categoryFor(cfg, base.cwd)
     const tool = info.tool ?? null
     const attention = attentionOf(base.status, card, info)
+    let own = null
+    if (helpers && path) {
+      try {
+        own = summarize(helpersOf(path, { alive: base.alive, since: base.since }))
+      } catch {} // helpers that cannot be read leave the session's card as it was
+    }
     items.push({
       ...base,
       // A name given on the board beats the one herdr and Claude know it by; autoName is theirs.
@@ -175,6 +186,7 @@ export async function collect(cfg) {
       column: columnOf(base.status, card, info),
       pin, // the column the user dragged it to, or ''
       auto: columnOf(base.status, { ...card, pin: '' }, info), // where it would be without the pin
+      helpers: own, // its subagents, forks, workflow agents and teammates in short, or null
       transcript: path,
     })
   }
@@ -198,6 +210,10 @@ export async function collect(cfg) {
       sleeping: false,
       focused: p.pane_id === snap.focused_pane_id,
       activity: reg?.statusUpdatedAt ?? 0,
+      // Its Claude process: whether it runs, since when, and the pipe other sessions write to.
+      alive: !!reg,
+      since: reg?.startedAt ?? null,
+      pipe: reg?.messagingSocketPath ?? '',
     })
   }
 
@@ -221,6 +237,14 @@ export async function collect(cfg) {
   }
 
   items.sort((a, b) => b.activity - a.activity)
+  if (links) {
+    links.update(items.map(i => i.transcript))
+    const rel = relate(items, it => links.events(it.transcript))
+    for (const it of items) {
+      const l = rel.get(it.key)
+      it.links = l.from || l.started.length || l.talks.length ? l : null
+    }
+  }
   return items
 }
 
