@@ -17,6 +17,8 @@ import { checkoutChanges, isCheckout } from './changes.mjs'
 import { searchHistory } from './history.mjs'
 import { localUsage } from './usage.mjs'
 import { conversation } from './claude.mjs'
+import { helperDetail, helpersOf, publicHelper } from './helpers.mjs'
+import { createLinks } from './links.mjs'
 import { describe, FILE_TOKEN, MEDIA_TYPES, openWith, preview, resolvePath } from './files.mjs'
 import { categoryInfo, colorHex, editCategories, editSettings, laneRank, liveConfig, PALETTE } from './config.mjs'
 import { lang, t } from './lang.mjs'
@@ -154,7 +156,8 @@ export function startServer({ cfg, log = () => {} } = {}) {
         const configured = cfg.categories.some(x => x.id === id)
         return { id, title: c.title, color: colorHex(c.color), colorName: c.color, paths: c.paths ?? [], configured, fallback: id === 'other' }
       })
-    const list = items.map(({ transcript, ...rest }) => launches.decorate(rest))
+    // What the page has no use for stays here: file paths, the Claude process and its pipe.
+    const list = items.map(({ transcript, alive, since, pipe, ...rest }) => launches.decorate(rest))
     // The schedule without the scheduler's bookkeeping; the log is what was sent or missed lately.
     const schedules = listEntries().map(({ claim, tried, waited, ...entry }) => entry)
     // terminal: whether the board offers one (config `terminal`); shells: sessions it opened one for.
@@ -189,13 +192,17 @@ export function startServer({ cfg, log = () => {} } = {}) {
   }
   publish()
 
+  // Who started whom and who wrote to whom, read from the transcripts in the background
+  // (links.mjs); a read that found something new refreshes the board.
+  const links = createLinks({ onChange: () => refresh() })
+
   let refreshing = false
   let again = false
   async function refresh() {
     if (refreshing) return void (again = true)
     refreshing = true
     try {
-      items = await collect(cfg)
+      items = await collect(cfg, { helpers: true, links })
       launches.observe(items)
       stale = false
       lastSuccessfulRefreshAt = Date.now()
@@ -219,7 +226,10 @@ export function startServer({ cfg, log = () => {} } = {}) {
 
   async function detail(item) {
     // checkout: whether its folder is in git, for the sheet's Changes button.
-    const out = { item: { ...item, transcript: undefined }, conversation: conversation(item.transcript, 60), screen: '', dialog: null, checkout: await isCheckout(item.cwd) }
+    const { transcript, alive, since, pipe, ...shown } = item
+    // helpers: every subagent, fork, workflow agent and teammate, newest first (helpers.mjs).
+    const own = helpersOf(transcript, { alive, since })
+    const out = { item: shown, conversation: conversation(transcript, 60), helpers: own.helpers.map(publicHelper), workflows: own.workflows, screen: '', dialog: null, checkout: await isCheckout(item.cwd) }
     if (item.status === 'blocked' && item.pane) {
       try {
         const text = await herdrText(['agent', 'read', item.pane, '--source', 'visible'], 5000)
@@ -554,6 +564,14 @@ export function startServer({ cfg, log = () => {} } = {}) {
         const body = await readBody(req)
         const r = await termAction(item, target, op, body)
         return json(r.ok ? 200 : 409, r)
+      }
+      // One helper of a session, for its window: the id only picks among the session's own.
+      const hm = /^\/api\/session\/([^/]+)\/helper\/([A-Za-z0-9-]{1,120})$/.exec(path)
+      if (hm && req.method === 'GET') {
+        const item = find(hm[1])
+        if (!item) return json(404, { error: t('err.gone') })
+        const d = helperDetail(item.transcript, hm[2], { alive: item.alive, since: item.since })
+        return d ? json(200, d) : json(404, { error: t('helpers.gone') })
       }
       const m = /^\/api\/session\/([^/]+)(?:\/(\w+))?$/.exec(path)
       if (m) {
