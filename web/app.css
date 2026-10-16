@@ -481,6 +481,9 @@ body.panel-resizing, body.panel-resizing * { cursor: var(--grab-cursor) !importa
 .sheet-title { flex: 1; min-width: 0; }
 .sheet-title h2 { margin: 6px 0 0; font: 700 22px/1.15 var(--font-display); letter-spacing: -0.018em; overflow-wrap: anywhere; }
 .sheet-meta { margin: 4px 0 0; font-size: 12.5px; color: var(--label-2); }
+.sheet-properties-toggle, #sheet-more { display: none; }
+.sheet-question { flex: 0 1 auto; min-height: 0; max-height: 24vh; overflow: auto; padding: 0 18px 10px 22px; }
+.sheet-question .asked { margin: 0; }
 .status-pill {
   display: inline-flex;
   align-items: center;
@@ -1232,17 +1235,35 @@ button.swatch:active { transform: scale(0.88); }
 /* A wide, low panel (at the bottom, or a window made so) reads side by side: the card's fields
    on the left, the conversation and the composer on the right. */
 @container sheet (min-width: 680px) and (min-aspect-ratio: 5 / 4) {
-  .sheet-inner { display: grid; grid-template-columns: minmax(350px, 32%) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; }
+  .sheet-inner { display: grid; grid-template-columns: minmax(350px, 32%) minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; }
   .sheet-head { grid-column: 1 / -1; padding-bottom: 8px; }
-  .sheet-card { grid-column: 1; grid-row: 2 / 4; padding-bottom: 16px; }
-  .sheet-body { grid-column: 2; grid-row: 2; min-height: 0; padding-left: 8px; }
-  .composer { grid-column: 2; grid-row: 3; padding-left: 8px; }
+  .sheet-card { grid-column: 1; grid-row: 2 / 5; padding-bottom: 16px; }
+  .sheet-question { grid-column: 2; grid-row: 2; padding-left: 8px; }
+  .sheet-body { grid-column: 2; grid-row: 3; min-height: 0; padding-left: 8px; }
+  .composer { grid-column: 2; grid-row: 4; padding-left: 8px; }
   .cats-body, .cats-body ~ .composer { grid-column: 1 / -1; padding-left: 22px; }
   .cats-list, #cat-draft { max-width: 760px; }
 }
 
 /* ---------------------------------------------------------------- narrow windows */
 @media (max-width: 760px) {
+  #sheet .sheet-head { padding: 14px 16px 8px; }
+  #sheet .sheet-title h2 { font-size: 19px; line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  #sheet .sheet-meta { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .sheet-properties-toggle { display: block; align-self: flex-start; margin: 0 16px 8px; padding: 5px 10px; border: 0; border-radius: 8px; background: var(--fill); color: var(--label-2); font-size: 12.5px; }
+  .sheet-properties-toggle::after { content: '⌄'; margin-left: 8px; }
+  .sheet-properties-toggle[aria-expanded="true"]::after { content: '⌃'; }
+  #sheet .sheet-card { max-height: 28vh; }
+  #sheet .chips button { height: auto; min-height: 30px; max-width: 100%; padding-top: 4px; padding-bottom: 4px; text-align: left; }
+  #sheet .sheet-question { padding: 0 16px 8px; max-height: 24vh; }
+  #sheet .asked { padding: 8px 10px; font-size: 12.5px; }
+  #sheet .asked b { display: inline; margin-right: 5px; font-size: 11px; }
+  #sheet .asked-dismiss { display: inline-flex; height: 26px; margin: 5px 0 0 6px; font-size: 12px; }
+  #sheet .composer-actions { margin-bottom: 8px; flex-wrap: nowrap; }
+  #sheet .composer-actions > button:not(#sheet-focus):not(#sheet-more) { display: none; }
+  #sheet .sheet-more { display: inline-flex; order: 1; }
+  #sheet .composer-actions .button { min-height: 36px; }
+  #sheet .composer { padding: 8px 16px 12px; }
   .ql-win { width: calc(100vw - 16px); height: calc(100vh - 16px); border-radius: 14px; }
   .ql-row { grid-template-columns: 18px minmax(0, 1fr) 64px; }
   .ql-row .m { display: none; }

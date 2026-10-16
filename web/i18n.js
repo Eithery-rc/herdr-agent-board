@@ -22,6 +22,8 @@ const PLURAL = {
 
 const STRINGS = {
   en: {
+    'sheet.properties': 'Card details',
+    'sheet.more': 'More actions',
     'history.open': 'History',
     'history.hint': 'Search the past Claude sessions of this project',
     'history.title': 'Project history',
@@ -390,6 +392,8 @@ const STRINGS = {
   },
 
   ru: {
+    'sheet.properties': 'Сведения о карточке',
+    'sheet.more': 'Ещё действия',
     'history.open': 'История',
     'history.hint': 'Поиск по прошлым сессиям Claude этого проекта',
     'history.title': 'История проекта',

@@ -72,11 +72,14 @@
         </button>
       </div>
     </header>
+    <button class="sheet-properties-toggle" id="sheet-properties-toggle" aria-expanded="false" aria-controls="sheet-card" data-i18n="sheet.properties">Card details</button>
     <div class="sheet-card" id="sheet-card"></div>
+    <div class="sheet-question" id="sheet-question" hidden></div>
     <div class="sheet-body" id="sheet-body"></div>
     <footer class="composer">
       <p id="sheet-connection-state" role="status" hidden></p>
       <div class="composer-actions">
+        <button class="button sheet-more" id="sheet-more" aria-haspopup="menu" aria-expanded="false" data-i18n="sheet.more">More actions</button>
         <button class="button" id="sheet-focus">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 4.5h8.5V13M15 5 5 15"/></svg>
           <span data-i18n="sheet.focus">Go to herdr</span>
