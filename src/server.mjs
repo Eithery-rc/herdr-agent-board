@@ -425,14 +425,15 @@ export function startServer({ cfg, log = () => {} } = {}) {
           const r = await launches.start(body, items)
           return json(r.ok ? 200 : 400, r)
         }
-        const d = /^\/api\/launch\/([\w-]+)\/(dismiss|focus)$/.exec(path)
+        const d = /^\/api\/launch\/([\w-]+)\/(dismiss|focus|trust|close)$/.exec(path)
         if (d?.[2] === 'dismiss') {
           const r = launches.dismiss(d[1])
           return json(r.ok ? 200 : 404, r)
         }
-        if (d?.[2] === 'focus') {
+        // Going to its tab, trusting its folder, closing its tab: all through herdr.
+        if (d) {
           if (refuseStale()) return json(409, { ok: false, error: t('mobile.readOnly') })
-          const r = await launches.focus(d[1])
+          const r = await { focus: launches.focus, trust: launches.trust, close: launches.closeTab }[d[2]](d[1])
           return json(r.ok ? 200 : 409, r)
         }
         return json(404, { error: 'not found' })

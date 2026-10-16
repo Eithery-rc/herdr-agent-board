@@ -118,6 +118,15 @@ made already. One that failed only at its first message has no retry: the sessio
 the message from its card. Dismissing a launch that still runs only takes it off the board: it
 goes on, and its session still gets its lane.
 
+In a folder Claude has not seen, it first asks whether to trust it. The launch then waits on its
+card, under "Needs me", with the folder: "Trust and continue" reads the dialog off the screen,
+checks it is for that folder, moves the cursor to "Yes" as the screen shows it and confirms; the
+board then names the session and sends the first message, each only into an empty input box.
+"Close the tab" closes it instead. The same holds when a launcher gives up there (spawn-agent
+says "waits for a dialog (folder trust?)"): the session is in its tab, so the board takes it from
+there rather than retry. A dialog Claude asks next (a project's MCP servers) is answered in
+herdr; the card says it waits there.
+
 How it starts, by `launch` in config.json:
 
 - Nothing set (the default): through herdr. A tab in the chosen workspace (or a new workspace),

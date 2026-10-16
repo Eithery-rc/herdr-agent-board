@@ -189,6 +189,9 @@
 .ln-why svg { width: 14px; height: 14px; margin-top: 1px; color: var(--red); }
 .waiting .ln-why svg { color: var(--orange); }
 .ln-hint { margin: 3px 0 0 20px; font-size: 12px; line-height: 1.35; color: var(--label-2); }
+.ln-folder { margin: 4px 0 0 20px; font: 11.5px/1.4 var(--mono); color: var(--label); overflow-wrap: anywhere; }
+.ln-actions .button.primary { background: var(--accent); color: #fff; }
+.ln-actions .button:disabled { opacity: 0.55; }
 .ln-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0 20px; }
 .ln-actions:empty { display: none; }
 .ln-actions .button { height: 26px; padding: 0 10px; font-size: 12px; background: color-mix(in srgb, var(--surface) 80%, transparent); }
