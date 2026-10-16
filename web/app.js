@@ -1119,11 +1119,12 @@ function notice(m) {
   const { text, sub, tone } = noticeLine(m, t)
   const mark = { ok: ICON.check, fail: ICON.cross, stop: ICON.stop }[tone] ?? (m.kind === 'reminder' || m.kind === 'schedule' ? ICON.alarm : ICON.bolt)
   const file = m.file && !m.detail ? `<span class="notice-file fs-inline" data-path="${esc(m.file)}">${esc(t('notice.output'))}</span>` : ''
-  const line = `<span class="notice-mark">${mark}</span><span class="notice-text">${esc(text)}${sub ? ` <small>${esc(sub)}</small>` : ''}</span>${file}<span class="when">${clock(m.at)}</span>`
+  const line = `<span class="notice-mark">${mark}</span><span class="notice-text"${m.summary ? ` title="${esc(m.summary)}"` : ''}>${esc(text)}${sub ? ` <small>${esc(sub)}</small>` : ''}</span>${file}<span class="when">${clock(m.at)}</span>`
   if (!m.detail) return `<div class="notice ${tone}">${line}</div>`
   // An agent's report is markdown; a monitor's lines and a tool's result are kept as they came.
   const body = ['agent', 'workflow'].includes(m.kind) ? `<div class="md">${markdown(m.detail)}</div>` : `<pre>${esc(m.detail)}</pre>`
-  return `<details class="notice ${tone}" data-i="notice-${esc(m.id || String(m.at))}"><summary>${line}${ICON.chev}</summary><div class="notice-body">${body}</div></details>`
+  // Kept open across refreshes by this key: a task can report several times under one id.
+  return `<details class="notice ${tone}" data-i="notice-${esc(`${m.id}-${m.at}`)}"><summary>${line}${ICON.chev}</summary><div class="notice-body">${body}</div></details>`
 }
 
 sheetCard.addEventListener('click', e => {

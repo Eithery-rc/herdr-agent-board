@@ -286,14 +286,20 @@ function askAnswers(ask, result) {
 function turns(text) {
   const items = []
   const tools = new Map() // tool_use id -> item
-  const tasks = new Set() // task ids already shown: a notice can be queued and then sent as a turn
-  // A background task reporting back or a board reminder: a line of its own (notices.mjs).
+  // A background task reporting back or a board reminder: a line of its own (notices.mjs). One
+  // can be queued into a running turn and then sent again as a turn of its own: shown once. A
+  // task id alone is not enough, a monitor or a resumed agent reports again under the same one.
+  const shown = new Set()
+  const keys = new WeakMap() // notice item -> its key
   const notice = (n, at) => {
-    if (n.id && tasks.has(n.id)) return
-    if (n.id) tasks.add(n.id)
-    const prev = items.at(-1)
-    if (!n.id && prev?.role === 'notice' && prev.kind === n.kind && prev.name === n.name) return
-    items.push({ role: 'notice', ...n, at })
+    const key = JSON.stringify([n.kind, n.id, n.status, n.name, n.summary, n.detail, n.from, n.note])
+    // With an id the copy can come later in the turn; a reminder (no id) only right after itself,
+    // since the same reminder text can come every hour.
+    if (n.id ? shown.has(key) : keys.get(items.at(-1)) === key) return
+    shown.add(key)
+    const item = { role: 'notice', ...n, at }
+    keys.set(item, key)
+    items.push(item)
   }
   for (const line of text.split('\n')) {
     if (!line || !(line.includes('"type":"user"') || line.includes('"type":"assistant"') || line.includes('"type":"queued_command"'))) continue

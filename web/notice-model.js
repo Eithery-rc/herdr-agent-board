@@ -15,7 +15,8 @@ export function noticeLine(n, t) {
   const status = failed
     ? n.exit ? t('notice.status.failedCode', { code: n.exit }) : t('notice.status.failed')
     : t(`notice.status.${['completed', 'event'].includes(n.status) ? n.status : 'stopped'}`)
-  // Without a name of its own the summary says it best, as Claude Code wrote it.
-  const text = n.name ? t('notice.line', { kind: t(`notice.kind.${n.kind}`), name: n.name, status }) : n.summary || t(`notice.kind.${n.kind}`)
-  return { text, sub: '', tone }
+  // Without a name of its own the summary says it best, as Claude Code wrote it; with one, what
+  // the summary adds (why it failed, a turn limit) goes second.
+  if (!n.name) return { text: n.summary || t(`notice.kind.${n.kind}`), sub: '', tone }
+  return { text: t('notice.line', { kind: t(`notice.kind.${n.kind}`), name: n.name, status }), sub: n.note || '', tone }
 }

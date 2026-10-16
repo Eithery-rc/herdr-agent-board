@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { root, sandbox } from './fixtures/sandbox.mjs'
 import { conversation, transcriptInfo } from '../src/claude.mjs'
 import { useLanguage } from '../src/lang.mjs'
 import { isNotice, reminderNotice, taskNotice } from '../src/notices.mjs'
@@ -34,6 +36,7 @@ test('task notifications: what reported back, how it ended, its name, report and
     name: 'Wait for the second change event',
     exit: 0,
     summary: 'Background command "Wait for the second change event" completed (exit code 0)',
+    note: '',
     detail: '',
     file: 'C:\\Temp\\tasks\\b5wcamkuh.output',
     id: 'b5wcamkuh',
@@ -57,6 +60,18 @@ test('task notifications: what reported back, how it ended, its name, report and
   assert.equal(unnamed.kind, 'command')
   assert.equal(unnamed.name, '')
   assert.equal(taskNotice(notification('Something new "X" happened')).kind, 'task')
+  // What the summary adds beyond the usual ending, and names with quotes of their own.
+  const broke = taskNotice(notification('Agent "Log in" failed: Agent terminated early due to an API error', { status: 'failed' }))
+  assert.deepEqual([broke.name, broke.note], ['Log in', 'Agent terminated early due to an API error'])
+  assert.equal(taskNotice(notification('Agent "Fix the "foo" bug" stopped at its 200-turn limit (partial result)')).note, 'stopped at its 200-turn limit (partial result)')
+  assert.equal(taskNotice(notification('Agent "Fix the "foo" bug" finished')).name, 'Fix the "foo" bug')
+  assert.equal(taskNotice(notification('Monitor "tail" stream ended')).note, '')
+  assert.equal(taskNotice(notification('2 background agents didn\'t finish before the previous session ended: "A" (a1), "B" (b2)', { status: 'stopped' })).name, '')
+  assert.equal(taskNotice(notification('No completion record was found for background agent "Scan" from the previous session.', { status: 'stopped' })).kind, 'agent')
+  // Claude Code escapes <, > and & inside the tags.
+  const escaped = taskNotice(notification('Background command "cd x &amp;&amp; npm test 2&gt;&amp;1" completed (exit code 0)', { tail: '<result>Use `board remind --session &lt;other&gt;`, not &amp;lt;b&amp;gt;.</result>' }))
+  assert.equal(escaped.name, 'cd x && npm test 2>&1')
+  assert.equal(escaped.detail, 'Use `board remind --session <other>`, not &lt;b&gt;.')
   // Not one, or one that says nothing.
   assert.equal(taskNotice('please check <task-notification> handling'), null)
   assert.equal(taskNotice('<task-notification>done</task-notification>'), null)
@@ -73,6 +88,11 @@ test('board reminders: the text, who set it, the schedule and the notes, as the 
   const every = reminderNotice(promptOf({ ...base, id: '42', cron: '0 9 * * 1-5', from: { key: 'k2', name: 'Master' } }, now))
   assert.deepEqual([every.kind, every.from, every.cron, every.name], ['schedule', 'Master', '0 9 * * 1-5', 'check the CI run'])
   assert.equal(reminderNotice(promptOf({ ...base, id: '7', cron: '*/30 * * * *' }, now)).cron, '*/30 * * * *')
+  // Names with brackets or ": " of their own.
+  const bracketed = reminderNotice('[board reminder from Master [prod]] check CI')
+  assert.deepEqual([bracketed.name, bracketed.from], ['check CI', 'Master [prod]'])
+  const named = reminderNotice(promptOf({ ...base, id: '4', cron: '0 9 * * *', from: { key: 'k2', name: 'Centium: Alafair' } }, now))
+  assert.deepEqual([named.from, named.cron], ['Centium: Alafair', '0 9 * * *'])
   assert.equal(reminderNotice('remind me about [board reminder] later'), null)
   assert.ok(isNotice('  [board reminder] x'))
   assert.ok(isNotice(notification('Agent "A" finished')))
@@ -89,6 +109,8 @@ test('a notice line: its words and the tone of its mark, in the board\'s languag
   assert.deepEqual(noticeLine(failed, ru), { text: 'Фоновая команда «Run tests»: ошибка, код 2', sub: '', tone: 'fail' })
   assert.equal(noticeLine(taskNotice(notification('Background command "Build" was stopped because the system is running low on memory', { status: 'killed' })), en).tone, 'stop')
   assert.equal(noticeLine(taskNotice(notification('Monitor event: "log"', { status: null, tail: '<event>x</event>' })), en).text, 'Monitor “log”: new event')
+  const broke = taskNotice(notification('Agent "Log in" failed: Agent terminated early due to an API error', { status: 'failed' }))
+  assert.deepEqual(noticeLine(broke, ru), { text: 'Агент «Log in»: ошибка', sub: 'Agent terminated early due to an API error', tone: 'fail' })
   // No name of its own: the summary as Claude Code wrote it.
   assert.equal(noticeLine(taskNotice(notification('Background shell command didn\'t finish before the previous session ended', { status: 'stopped' })), en).text, 'Background shell command didn\'t finish before the previous session ended')
   const reminder = reminderNotice('[board schedule 42 from Master: 0 9 * * 1-5; 3 runs since 9:00, sent once] stand-up notes')
@@ -123,4 +145,31 @@ test('the conversation shows notices apart from what the user typed; they are no
   const info = transcriptInfo(file)
   assert.equal(info.question, 'The job is done. Restore the rest?')
   assert.equal(info.replied, false)
+})
+
+test('a task that reports again under the same id shows every report; an hourly reminder every time', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agent-board-'))
+  const file = join(dir, 's.jsonl')
+  const line = o => JSON.stringify(o)
+  const said = text => line({ type: 'assistant', message: { content: [{ type: 'text', text }] } })
+  const from = content => line({ type: 'user', origin: { kind: 'task-notification' }, message: { content } })
+  const event = text => notification('Monitor event: "log"', { id: 'm1', status: null, file: null, tail: `<event>${text}</event>` })
+  const report = text => notification('Agent "Log in" finished', { id: 'a1', tail: `<result>${text}</result>` })
+  const reminder = line({ type: 'user', message: { content: '[board reminder] check the queue' } })
+  writeFileSync(file, [from(event('line one')), said('Noted.'), from(event('line two')), said('Noted.'), from(report('LOGIN failure')), said('Retrying.'), from(report('LOGIN ok')), reminder, said('Empty.'), reminder].join('\n'))
+  const notices = conversation(file).filter(c => c.role === 'notice')
+  assert.deepEqual(notices.map(n => n.detail || n.name), ['line one', 'line two', 'LOGIN failure', 'LOGIN ok', 'check the queue', 'check the queue'])
+})
+
+test('a task reporting back does not count as the user answering the session (hook)', { timeout: 15_000 }, async t => {
+  const box = sandbox(t)
+  const cards = join(box.env.LOCALAPPDATA, 'herdr', 'plugins', 'agent-board', 'cards')
+  mkdirSync(cards, { recursive: true })
+  writeFileSync(join(cards, 's1.json'), JSON.stringify({ key: 's1', ask: 'Send it?', askSince: 1, briefV: 99 }))
+  await new Promise(resolve => {
+    const proc = spawn(process.execPath, [join(root, 'src/hook.mjs')], { cwd: root, env: { ...box.env, HERDR_PANE_ID: 'p1' } })
+    proc.on('close', resolve)
+    proc.stdin.end(JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 's1', cwd: box.dir, prompt: notification('Agent "Review" finished') }))
+  })
+  assert.equal(JSON.parse(readFileSync(join(cards, 's1.json'), 'utf8')).ask, 'Send it?')
 })

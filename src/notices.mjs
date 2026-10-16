@@ -7,29 +7,38 @@ const DETAIL_LIMIT = 4000
 
 const clip = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
 
+// Claude Code escapes <, > and & inside the tags; &amp; last, so "&amp;lt;" stays "&lt;".
+const ENTITIES = { lt: '<', gt: '>', quot: '"', apos: "'", '#39': "'" }
+const unescape = s => s.replace(/&(lt|gt|quot|apos|#39);/g, (m, e) => ENTITIES[e]).replace(/&amp;/g, '&')
+
 function tag(text, name) {
   const m = new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(text)
-  return m ? m[1].trim() : ''
+  return m ? unescape(m[1].trim()) : ''
 }
 
-// What reported back, by the start of the notification's summary.
+// What reported back, by its summary.
 const KINDS = [
   ['command', /^Background (?:shell )?command\b/],
-  ['agent', /^(?:Background )?agents?\b|^\d+ background agents\b/i],
+  ['agent', /^(?:Background )?agents?\b|^\d+ background agents\b|\bbackground agent "/i],
   ['monitor', /^Monitor\b/],
   ['workflow', /^(?:Dynamic )?workflow\b/i],
   ['mcp', /^MCP task\b/],
 ]
 
+// How a summary usually ends after the task's name; anything else is worth showing (a reason, a limit).
+const PLAIN_END = /^(?:finished|completed(?: \(exit code -?\d+\))?|failed(?: with exit code -?\d+)?|stream ended|was stopped)\.?$/
+
 /**
- * A task notification as { kind, status, name, exit, summary, detail, file, id }, or null when
- * the text is not one.
+ * A task notification as { kind, status, name, exit, summary, note, detail, file, id }, or null
+ * when the text is not one or says nothing.
  *   kind     command | agent | monitor | workflow | mcp | task
  *   status   completed | failed | killed | stopped | event (a monitor's new lines)
  *   name     the task's own description, as quoted in the summary ('' when it has none)
  *   exit     a command's exit code, or null
+ *   note     what the summary says beyond the usual ending: why it failed, a turn limit
  *   detail   an agent's final report or a monitor's event lines, clipped
  *   file     the task's output file
+ *   id       the task's id: a monitor or a resumed agent reports again under the same one
  */
 export function taskNotice(text) {
   const t = String(text ?? '').trim()
@@ -39,7 +48,17 @@ export function taskNotice(text) {
   const kind = KINDS.find(([, re]) => re.test(summary))?.[0] ?? 'task'
   const event = tag(t, 'event')
   const status = tag(t, 'status') || (event ? 'event' : 'completed')
-  const name = kind === 'mcp' ? (/\(([^)]+)\)/.exec(summary)?.[1] ?? '') : (/"([^"]+)"/.exec(summary)?.[1] ?? '')
+  let name = ''
+  let rest = ''
+  if (kind === 'mcp') {
+    const m = /\(([^)]+)\)\s*(.*)$/.exec(summary)
+    if (m) [name, rest] = [m[1], m[2]]
+  } else if (!/^\d+ background agents\b/i.test(summary)) {
+    // From the first quote to the last: a name can hold quotes of its own.
+    const m = /^[^"]*"(.*)"([^"]*)$/.exec(summary)
+    if (m) [name, rest] = [m[1], m[2]]
+  }
+  rest = rest.trim().replace(/^failed:\s*/, '')
   const exit = /exit code (-?\d+)/.exec(summary)
   return {
     kind,
@@ -47,6 +66,7 @@ export function taskNotice(text) {
     name: clip(name, 200),
     exit: exit ? Number(exit[1]) : null,
     summary: clip(summary, 300),
+    note: name && rest && !PLAIN_END.test(rest) ? clip(rest, 300) : '',
     detail: clip(tag(t, 'result') || event, DETAIL_LIMIT),
     file: tag(t, 'output-file'),
     id: tag(t, 'task-id'),
@@ -60,15 +80,24 @@ export function taskNotice(text) {
  * anything else.
  */
 export function reminderNotice(text) {
-  const m = /^\[board (reminder|schedule)\b([^\]]*)\]\s*([\s\S]*)$/.exec(String(text ?? '').trim())
+  // A session name may hold brackets of its own: one level of them is fine.
+  const m = /^\[board (reminder|schedule)\b((?:[^[\]]|\[[^\]]*\])*)\]\s*([\s\S]*)$/.exec(String(text ?? '').trim())
   if (!m) return null
   const [head, ...notes] = m[2].split(';')
+  let rest = head
+  let cron = ''
+  if (m[1] === 'schedule') {
+    rest = rest.replace(/^\s*[^\s:]+/, '') // the entry's id
+    // The cron is the last five fields; a name may hold ": " too.
+    const c = /:\s*((?:\S+\s+){4}\S+)\s*$/.exec(rest)
+    if (c) [cron, rest] = [c[1], rest.slice(0, c.index)]
+  }
   return {
     kind: m[1],
     status: 'event',
     name: clip(m[3].trim(), 1000),
-    from: /\bfrom (.+?)(?::|$)/.exec(head)?.[1].trim() ?? '',
-    cron: m[1] === 'schedule' ? (/:\s*(.+)$/.exec(head)?.[1].trim() ?? '') : '',
+    from: /^\s*from (.+)$/.exec(rest)?.[1].trim() ?? '',
+    cron,
     note: clip(notes.join(';').trim(), 300),
   }
 }
