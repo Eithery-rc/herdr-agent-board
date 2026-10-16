@@ -379,7 +379,8 @@ Where it comes from, all read, nothing written:
   background command of its own, or an agent it started, is still out is at work: Claude Code
   wakes it when that reports back (after an hour without a word, it counts as done). Only a
   session whose Claude process runs has helpers at work, and only those that process wrote to:
-  what a process left half done before the session slept or restarted is stopped.
+  what a process left half done before the session slept or restarted is stopped, and so is one
+  that has not written for six hours.
 - Who started whom: the `pane=<id> name=<name>` line spawn-agent prints, matched to the card in
   that pane under that name (a pane id comes back once its tab is gone). Messages: the session's
   SendMessage calls, and the messages that came in (Claude Code records the sender's name and the
