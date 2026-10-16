@@ -10,7 +10,8 @@
 import { open, stat } from 'node:fs/promises'
 import { spawnOf, spawnResult } from './claude.mjs'
 
-const MARKERS = ['spawn-agent', '"SendMessage"', '"kind":"peer"', 'pane='].map(m => Buffer.from(m))
+// The lines worth parsing; Agent and Task calls name the agents a message to whom is no session's.
+const MARKERS = ['spawn-agent', '"SendMessage"', '"kind":"peer"', 'pane=', '"name":"Agent"', '"name":"Task"'].map(m => Buffer.from(m))
 const CHUNK = 4 << 20
 const MAX_LINE = 64 << 20 // a line longer than this (a pasted screenshot) is skipped, not held
 const clip = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s)

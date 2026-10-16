@@ -300,7 +300,7 @@ const attr = (attrs, name) => new RegExp(`\\b${name}="([^"]*)"`).exec(attrs)?.[1
  */
 export function promptOf(text) {
   const t = String(text ?? '')
-  const fork = /<\/fork-boilerplate>\s*([\s\S]*)$/.exec(t)
+  const fork = /^\s*<fork-boilerplate>[\s\S]*?<\/fork-boilerplate>\s*([\s\S]*)$/.exec(t)
   if (fork) return { prompt: fork[1].replace(/^Your directive:\s*/, '').trim(), from: '' }
   const mate = /<teammate-message\b([^>]*)>\s*([\s\S]*?)\s*(?:<\/teammate-message>|$)/.exec(t)
   if (mate && t.trimStart().startsWith('<teammate-message')) return { prompt: mate[2], from: attr(mate[1], 'teammate_id') }
@@ -428,8 +428,9 @@ function turns(text, { sidechain = false } = {}) {
   for (const line of text.split('\n')) {
     if (!line || !(line.includes('"type":"user"') || line.includes('"type":"assistant"') || line.includes('"type":"queued_command"'))) continue
     const o = parse(line)
-    // Claude Code keeps another session's message as a meta line: it is shown all the same.
-    if (!o || (o.isSidechain && !sidechain) || (o.isMeta && o.origin?.kind !== 'peer') || o.isCompactSummary) continue
+    // Claude Code keeps another session's message, and in a helper's transcript a task reporting
+    // back, as a meta line: they are shown all the same.
+    if (!o || (o.isSidechain && !sidechain) || (o.isMeta && !['peer', 'task-notification'].includes(o.origin?.kind)) || o.isCompactSummary) continue
     const content = o.message?.content
     const at = Date.parse(o.timestamp) || 0
     // A prompt sent while the session worked goes into the running turn, and the transcript
@@ -469,6 +470,8 @@ function turns(text, { sidechain = false } = {}) {
         continue
       }
       let text = userText(content)
+      // A task reporting back can come after a banner that says it is not the user.
+      if (o.origin?.kind === 'task-notification' && text.indexOf('<task-notification>') > 0) text = text.slice(text.indexOf('<task-notification>'))
       const mates = teammateMessages(text)
       if (mates.length) {
         for (const m of mates) peer(m, at)

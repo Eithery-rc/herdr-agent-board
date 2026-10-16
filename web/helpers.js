@@ -57,11 +57,17 @@ export function redraw(el, html) {
   if (el._html !== html) {
     const active = el.contains(document.activeElement) ? document.activeElement.closest(KEYS.map(k => `[${attr(k)}]`).join(', ')) : null
     const key = active && KEYS.find(k => k in active.dataset)
+    // Several lines can open the same thing: the focus goes back to the same one of them.
+    const same = key ? `[${attr(key)}="${CSS.escape(active.dataset[key])}"]` : ''
+    const nth = same ? [...el.querySelectorAll(same)].indexOf(active) : -1
     const open = new Set([...el.querySelectorAll('details[open]')].map(d => d.dataset.i))
     el.innerHTML = html
     el._html = html
     for (const d of el.querySelectorAll('details')) if (open.has(d.dataset.i)) d.open = true
-    if (key) el.querySelector(`[${attr(key)}="${CSS.escape(active.dataset[key])}"]`)?.focus({ preventScroll: true })
+    if (same) {
+      const all = el.querySelectorAll(same)
+      ;(all[nth] ?? all[0])?.focus({ preventScroll: true })
+    }
   }
   tickClocks(el)
 }
@@ -191,6 +197,11 @@ export function initHelpers({ t, item, detail, renderThread, upgrade, openSessio
     body.innerHTML = html
     body._html = null
   }
+  /** The foot as plain text; likewise. */
+  function setFoot(text) {
+    $('.helper-foot').textContent = text
+    $('.helper-foot')._html = null
+  }
 
   function finishClose() {
     root.hidden = true
@@ -233,7 +244,7 @@ export function initHelpers({ t, item, detail, renderThread, upgrade, openSessio
     head(h ?? { id: ref.id, kind: 'agent', status: '' })
     body.className = 'ql-body helper-body'
     setBody(`<div class="ql-wait">${esc(tr('loading'))}</div>`)
-    $('.helper-foot').textContent = ''
+    setFoot('')
     load(s.seq, true)
   }
 
@@ -271,7 +282,7 @@ export function initHelpers({ t, item, detail, renderThread, upgrade, openSessio
     redraw(body, html || `<div class="ql-empty">${HELPER_ICONS.stack}<p>${esc(tr('helpers.none'))}</p></div>`)
     const all = d.helpers.length
     const running = d.helpers.filter(h => h.status === 'running').length
-    $('.helper-foot').textContent = [tr('helpers.count', { n: all }), running && tr('helpers.running', { n: running }), d.workflows.length && tr('helpers.runs', { n: d.workflows.length })].filter(Boolean).join(' · ')
+    setFoot([tr('helpers.count', { n: all }), running && tr('helpers.running', { n: running }), d.workflows.length && tr('helpers.runs', { n: d.workflows.length })].filter(Boolean).join(' · '))
     if (ref.run) {
       const sec = body.querySelector(`[data-run="${CSS.escape(ref.run)}"]`)
       ref.run = null // once: a later redraw keeps the reader's place

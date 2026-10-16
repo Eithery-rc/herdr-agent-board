@@ -52,6 +52,11 @@ test('the index reads each transcript once, then only what it gained', async t =
   await settle()
   assert.deepEqual(links.events(file).map(e => e.to), ['a'])
   assert.equal(changes, 1)
+  // An agent the session named: the scan reads its call too, so a message to it is no session's.
+  appendFileSync(file, [main(line.call(1.5, 'ag', 'Agent', { name: 'reviewer', prompt: 'x' })), main(line.call(1.6, 'sm9', 'SendMessage', { to: 'reviewer', message: 'more' })), ''].join('\n'))
+  links.update([file])
+  await settle()
+  assert.deepEqual(links.events(file).map(e => e.to), ['a'])
   // A line still being written is not read until it is whole.
   appendFileSync(file, main(line.call(2, 'sm2', 'SendMessage', { to: 'b', message: 'two' })).slice(0, 40))
   links.update([file])

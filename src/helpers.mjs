@@ -158,8 +158,13 @@ export function backgroundTasks(text) {
   const started = new Set()
   const back = []
   for (const line of String(text ?? '').split('\n')) {
-    if (!line.includes('Command running in background') && !line.includes('<task-id>')) continue
+    if (!line.includes('Command running in background') && !line.includes('<task-id>') && !line.includes('"TaskStop"')) continue
     const o = parse(line)
+    // A task stopped on purpose (TaskStop) does not report back.
+    if (o?.type === 'assistant') {
+      for (const b of Array.isArray(o.message?.content) ? o.message.content : []) if (b?.type === 'tool_use' && b.name === 'TaskStop' && b.input?.task_id) back.push(`<task-id>${b.input.task_id}</task-id>`)
+      continue
+    }
     if (o?.type === 'attachment' && o.attachment?.commandMode === 'task-notification') {
       back.push(String(o.attachment.prompt ?? ''))
       continue
@@ -173,9 +178,10 @@ export function backgroundTasks(text) {
       const m = /^Command running in background with ID: ([\w-]+)/.exec(said.trim())
       if (m) started.add(m[1])
     }
-    // A notification is a turn of its own, never a tool's result.
+    // A notification is a turn of its own, never a tool's result: a meta line marked as one (a
+    // banner comes before its tag), or a turn that is nothing else.
     const said = textOf(content).trim()
-    if (said.startsWith('<task-notification>')) back.push(said)
+    if (o.origin?.kind === 'task-notification' || said.startsWith('<task-notification>')) back.push(said)
   }
   for (const text of back) for (const m of text.matchAll(/<task-id>([\w-]+)<\/task-id>/g)) started.delete(m[1])
   return started.size

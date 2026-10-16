@@ -10,6 +10,8 @@ useLanguage('en')
 
 test('what a helper was asked: the prompt without the frames around it', () => {
   assert.deepEqual(promptOf('Review the diff.'), { prompt: 'Review the diff.', from: '' })
+  // A prompt that only quotes the boilerplate's closing tag is not a fork's.
+  assert.equal(promptOf('Explain what </fork-boilerplate> ends.').prompt, 'Explain what </fork-boilerplate> ends.')
   // A fork: the parent's history is inherited; its directive follows the boilerplate.
   assert.deepEqual(promptOf('<fork-boilerplate>\nYou are a worker fork.\n</fork-boilerplate>\n\nYour directive: Audit slice `a`.'), { prompt: 'Audit slice `a`.', from: '' })
   assert.deepEqual(promptOf('<teammate-message teammate_id="team-lead" summary="Check the design">\nIs the design sound?\n</teammate-message>'), { prompt: 'Is the design sound?', from: 'team-lead' })
@@ -60,6 +62,21 @@ test('a helper whose turn ended with a background command still out is not done'
   // The same words in a file it read are no background command.
   const read = jsonl([line.call(1, 'r1', 'Read', { file_path: 'test.mjs' }), line.result(2, 'r1', "assert(x, 'Command running in background with ID: bg42')"), line.said(3, 'Read it.')])
   assert.deepEqual([backgroundTasks(read), tailInfo(read).last], [0, 'end'])
+  // One it stopped itself never reports back: no longer out.
+  const stopped = text + jsonl([line.call(4, 'ts', 'TaskStop', { task_id: 'bg42' }), line.result(5, 'ts', 'Stopped'), line.said(6, 'Stopped the wait.')])
+  assert.deepEqual([backgroundTasks(stopped), tailInfo(stopped).last], [0, 'end'])
+  // In a helper's transcript the notification is a meta line, a banner before its tag.
+  const banner = line.user(4, '[SYSTEM NOTIFICATION - NOT USER INPUT]\nThis is an automated background-task event.\n\n<task-notification>\n<task-id>bg42</task-id>\n<status>completed</status>\n<summary>Background command "sleep" completed (exit code 0)</summary>\n</task-notification>', { isMeta: true, origin: { kind: 'task-notification' } })
+  const woke = text + jsonl([banner, line.said(5, 'ok')])
+  assert.deepEqual([backgroundTasks(woke), tailInfo(woke).last], [0, 'end'])
+  // ...and the helper's conversation shows it as a notice.
+  const s = sessionDir()
+  try {
+    const path = s.helper('abg', { agentType: 'general-purpose' }, [line.user(0, 'Wait.'), ...JSON.parse(`[${woke.trim().split('\n').join(',')}]`)])
+    assert.deepEqual(conversation(path, 40, { sidechain: true }).filter(m => m.role === 'notice').map(m => [m.kind, m.id]), [['command', 'bg42']])
+  } finally {
+    rmSync(s.root, { recursive: true, force: true })
+  }
   // Its notification came back: done once it has said its last word.
   const back = text + jsonl([line.user(4, '<task-notification>\n<task-id>bg42</task-id>\n<status>completed</status>\n</task-notification>'), line.said(5, 'ok')])
   assert.equal(tailInfo(back).last, 'end')
