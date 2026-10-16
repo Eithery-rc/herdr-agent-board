@@ -77,6 +77,7 @@ export function renameInPlace(target, { value, auto, claude = null, t, onCommit,
   }
   field.addEventListener('keydown', e => {
     e.stopPropagation()
+    if (e.isComposing || e.keyCode === 229) return // an input method's own Enter and Esc
     if (e.key === 'Enter') {
       e.preventDefault()
       commit()

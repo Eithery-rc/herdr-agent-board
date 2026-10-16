@@ -92,6 +92,8 @@ export const LAUNCH_STRINGS = {
     'launch.err.placeholder': 'launch.command has an unknown placeholder {name}',
     'launch.err.command': 'launch.command in config.json must be a list: the program, then its arguments',
     'launch.err.commandValue': 'launch.command: the program itself takes no {placeholders}',
+    'launch.err.commandShell': 'launch.command: cmd, .bat and .cmd are not run as launchers (cmd.exe would read the values as commands); use a program, or a script run by one such as pwsh -File',
+    'launch.err.category': 'The board has no lane {id}',
     'launch.err.gone': 'That start is no longer on the board',
 
     // menus
@@ -135,7 +137,9 @@ export const LAUNCH_STRINGS = {
     'rename.err.asleep': '{name} is asleep: wake it to rename it in Claude',
     'rename.err.notClaude': '{name} is not a Claude session',
     'rename.err.busy': '{name} is working: rename it in Claude once it is idle',
-    'rename.err.claude': 'Renamed on the board, not in Claude: {why}',
+    'rename.err.claude': 'Not renamed: {why}',
+    'rename.err.screen': '{name} shows no input box now (a dialog or a picker): rename it once it waits for you',
+    'rename.unconfirmed': 'Renamed on the board; /rename went to Claude but it did not confirm: {name}',
   },
 
   ru: {
@@ -224,6 +228,8 @@ export const LAUNCH_STRINGS = {
     'launch.err.placeholder': 'В launch.command неизвестная подстановка {name}',
     'launch.err.command': 'launch.command в config.json должен быть списком: программа, потом её аргументы',
     'launch.err.commandValue': 'launch.command: в самой программе подстановок {…} быть не может',
+    'launch.err.commandShell': 'launch.command: cmd, .bat и .cmd запускателями не бывают (cmd.exe прочтёт значения как команды); нужна программа или скрипт, который она запускает, например pwsh -File',
+    'launch.err.category': 'На доске нет дорожки {id}',
     'launch.err.gone': 'Этого запуска на доске уже нет',
 
     'menu.open': 'Открыть',
@@ -265,6 +271,8 @@ export const LAUNCH_STRINGS = {
     'rename.err.asleep': '{name} спит: разбуди, чтобы переименовать в Claude',
     'rename.err.notClaude': '{name}: не сессия Claude',
     'rename.err.busy': '{name} работает: переименовать в Claude можно, когда освободится',
-    'rename.err.claude': 'На доске переименована, в Claude нет: {why}',
+    'rename.err.claude': 'Не переименована: {why}',
+    'rename.err.screen': '{name}: поля ввода сейчас не видно (диалог или выбор), переименуй, когда она будет ждать тебя',
+    'rename.unconfirmed': 'На доске переименована; /rename ушёл в Claude, но он не подтвердил: {name}',
   },
 }

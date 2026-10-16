@@ -246,9 +246,11 @@ export function startServer({ cfg, log = () => {} } = {}) {
         const name = String(body.name ?? '').trim()
         const bad = name && checkName(name)
         if (bad) return { ok: false, error: t(bad) }
-        writeCard(item.key, { name })
         // Claude and herdr only when the user asked for it: /rename is typed into the session.
-        return body.claude && name ? renameSession(item, name) : { ok: true }
+        // The board keeps the name only once that went through, so a refusal changes nothing.
+        const claude = body.claude && name ? await renameSession(item, name) : { ok: true }
+        if (claude.ok) writeCard(item.key, { name })
+        return claude
       }
       case 'card': {
         const patch = {}

@@ -207,7 +207,7 @@ async function act(key, action, body = {}) {
       body: JSON.stringify(body),
     })
     const r = await res.json().catch(() => ({}))
-    return res.ok && r.ok !== false ? { ok: true } : { ok: false, error: r.error || t('err.status', { code: res.status }) }
+    return res.ok && r.ok !== false ? { ...r, ok: true } : { ok: false, error: r.error || t('err.status', { code: res.status }) }
   } catch (err) {
     return { ok: false, error: t('err.offline', { why: err.message }) }
   }
@@ -2040,7 +2040,8 @@ function startRename(key, el) {
     onCommit: async (name, { claude }) => {
       const r = await act(key, 'rename', { name, claude })
       if (!r.ok) toast(r.error, true)
-      else toast(name ? t(claude ? 'rename.doneClaude' : 'rename.done', { name }) : t('rename.cleared', { name: it.autoName || it.name }))
+      // Claude says "Session renamed" when it took the name; without that, the toast says so.
+      else toast(name ? t(claude ? (r.confirmed ? 'rename.doneClaude' : 'rename.unconfirmed') : 'rename.done', { name }) : t('rename.cleared', { name: it.autoName || it.name }))
       return r
     },
   })

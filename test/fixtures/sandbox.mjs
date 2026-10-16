@@ -27,8 +27,9 @@ export function sandbox(t) {
     await Promise.all(children.map(child => child.exited))
     rmSync(dir, { recursive: true, force: true })
   })
-  function child(args, input) {
-    const proc = spawn(process.execPath, args, { cwd: root, env: { ...env, TEST_INPUT: JSON.stringify(input) }, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] })
+  // `extra`: environment a test needs on top (git on PATH for a worktree, say).
+  function child(args, input, extra = {}) {
+    const proc = spawn(process.execPath, args, { cwd: root, env: { ...env, ...extra, TEST_INPUT: JSON.stringify(input) }, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] })
     children.push(proc)
     proc.messages = []
     proc.on('message', message => proc.messages.push(message))
@@ -45,7 +46,7 @@ export function sandbox(t) {
     dir, env,
     state(value) { writeFileSync(env.FAKE_HERDR_STATE, JSON.stringify(value)) },
     calls() { return readFileSync(env.FAKE_HERDR_LOG, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)) },
-    run(mode, input) { return child([runner, mode], input) },
+    run(mode, input, extra) { return child([runner, mode], input, extra) },
     open(background = false) { return child([runner, 'open', ...(background ? ['--background'] : [])]) },
     cards: join(env.LOCALAPPDATA, 'herdr/plugins/agent-board/cards'),
   }
