@@ -481,7 +481,8 @@ function cardHTML(it) {
   const what = own || asked
   const said = plain(it.column === 'done' || it.column === 'idle' ? it.result || it.lastText : it.lastText)
   let body = own ? `<div class="what">${esc(own)}</div>` : asked ? `<div class="what"><span class="you">${esc(t('card.you'))}</span> ${esc(asked)}</div>` : ''
-  if (it.column === 'me') body += `<div class="ask"><b>${esc(t(it.attention ? `att.${it.attention}` : 'att.default'))}:</b> ${esc(plain(it.question) || t(it.attention === 'later' ? 'card.lookLater' : 'card.needsDecision'))}</div>`
+  // A launch held at the trust dialog says what it asks itself (launch.js), with its buttons.
+  if (it.column === 'me' && it.launch?.state !== 'trust') body += `<div class="ask"><b>${esc(t(it.attention ? `att.${it.attention}` : 'att.default'))}:</b> ${esc(plain(it.question) || t(it.attention === 'later' ? 'card.lookLater' : 'card.needsDecision'))}</div>`
   if (it.column === 'ext') body += `<div class="chip">${ICON.clock}<span>${esc(it.wait || t('note.parked'))}</span></div>`
   if (it.column !== 'me' && said && said !== what) body += `<div class="said">${esc(said)}</div>`
   if (it.column === 'work') {

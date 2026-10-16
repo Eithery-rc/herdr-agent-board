@@ -8,6 +8,7 @@ import { useLanguage } from '../src/lang.mjs'
 import { checkRequest, commandArgs, failureKind, launcherError, launcherLabel, parseLauncherOutput, usesPlaceholder } from '../src/launch.mjs'
 import { baseName, categoryForDir, checkBranch, checkName, completions, defaultWorkspace, folderSuggestions, isAbsolutePath, sameDir, slugName, splitPathInput, suggestName, uniqueSlug, worktreePath } from '../web/launch-model.js'
 import { sandbox, until } from './fixtures/sandbox.mjs'
+import { trustScreen } from './fixtures/trust-screen.mjs'
 
 useLanguage('en')
 
@@ -176,6 +177,7 @@ const HERDR = {
   'agent read': { text: SCREEN('') },
   'pane list': { result: { panes: [{ pane_id: 'wN:p1', agent: null, tab_id: 'wN:t1' }, { pane_id: 'wN:p2', agent: null, tab_id: 'wN:t1' }] } },
   'tab close': { result: null },
+  'pane send-keys': { result: null },
 }
 
 async function boardServer(t, cfg = {}, env = {}) {
@@ -406,4 +408,92 @@ test('the folder picker lists folders only, and the drives to start from', { tim
   const roots = await (await post('/api/fs/dirs', { path: '' })).json()
   assert.ok(roots.roots.length >= 2)
   assert.equal((await fetch(`${url}/api/fs/dirs`, { method: 'POST', body: '{}' })).status, 403)
+})
+
+// ---------------------------------------------------------------- Claude's folder-trust dialog
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+const blocked = { result: { agent: { agent_session: { value: null }, agent_status: 'blocked', name: 'x' } } }
+const idle = { result: { agent: { agent_session: { value: null }, agent_status: 'idle', name: 'x' } } }
+const keysSent = box => box.calls().filter(a => a[0] === 'pane' && a[1] === 'send-keys').map(a => a.slice(2).join(' '))
+const promptsSent = box => box.calls().filter(a => a[0] === 'agent' && a[1] === 'prompt').map(a => a.slice(2).join(' '))
+async function launchState(board, id, pred, what) {
+  const end = Date.now() + 10_000
+  for (;;) {
+    const l = (await board()).launches.find(x => x.id === id)
+    if (pred(l)) return l
+    if (Date.now() > end) throw new Error(`${what}: ${JSON.stringify(l)}`)
+    await sleep(30)
+  }
+}
+
+test('Claude asks to trust a new folder: the launch waits on its card, and on request moves the cursor it sees to "Yes", then names and briefs it', { timeout: 40_000 }, async t => {
+  const { box, post, board, launched } = await boardServer(t)
+  const dir = join(box.dir, 'a fresh project') // a space: Claude may break the line there
+  mkdirSync(dir)
+  const dialog = selected => ({ text: trustScreen(dir, { selected, width: 30 }) })
+  const state = { ...HERDR, 'agent start': { code: 'agent_not_ready', error: 'agent_not_ready: blocked during startup' }, 'agent get': blocked, 'pane read': { seq: [dialog('no'), dialog('no'), dialog('yes'), { text: 'Session renamed to: Fresh one' }] } }
+  box.state(state)
+  const { id } = await (await post('/api/launch', { name: 'Fresh one', cwd: dir, category: 'acme', workspace: { id: 'wA' }, message: 'Say hello.' })).json()
+  const held = await launchState(board, id, l => l?.state === 'trust', 'never asked to trust')
+  assert.equal(held.pane, 'wA:p9')
+  assert.deepEqual(keysSent(box), []) // not a key before the user says so
+  assert.equal((await post(`/api/launch/${id}/trust`, {})).status, 200)
+  // The cursor was on "No, exit": one step down, read again, then Enter.
+  assert.deepEqual(keysSent(box), ['wA:p9 down', 'wA:p9 enter'])
+  // Trusted, Claude asks something else next (a project's MCP servers): the card says it waits in herdr.
+  const asked = await launchState(board, id, l => l?.state === 'waiting', 'a dialog after the trust went unnoticed')
+  assert.equal(asked.step, 'dialog')
+  assert.deepEqual(keysSent(box), ['wA:p9 down', 'wA:p9 enter']) // and no key for that one
+  box.state({ ...state, 'agent get': idle })
+  const l = await launched(id)
+  assert.equal(l.state, 'done', l.error)
+  assert.deepEqual(promptsSent(box), ['wA:p9 /rename Fresh one', 'wA:p9 Say hello.'])
+})
+
+test('"Close the tab" closes it and drops the launch; "Trust" refuses a screen without the dialog for that folder', { timeout: 30_000 }, async t => {
+  const { box, post, board } = await boardServer(t)
+  const dir = join(box.dir, 'unsure')
+  mkdirSync(dir)
+  const state = { ...HERDR, 'agent start': { code: 'agent_not_ready', error: 'agent_not_ready: blocked' }, 'agent get': blocked, 'pane read': { text: trustScreen(dir) }, 'pane get': { result: { pane: { pane_id: 'wA:p9', tab_id: 'wA:t9', agent: 'claude' } } } }
+  box.state(state)
+  const { id } = await (await post('/api/launch', { name: 'Unsure', cwd: dir, category: 'acme', workspace: { id: 'wA' } })).json()
+  await launchState(board, id, l => l?.state === 'trust', 'never asked to trust')
+  const sid = box.calls().find(a => a[0] === 'agent' && a[1] === 'start').at(-1)
+  assert.ok(existsSync(join(box.cards, `${sid}.json`)))
+  // The screen moved on (answered in herdr, or another folder): no key goes.
+  box.state({ ...state, 'pane read': { text: trustScreen(join(box.dir, 'elsewhere')) } })
+  const refused = await post(`/api/launch/${id}/trust`, {})
+  assert.equal(refused.status, 409)
+  assert.match((await refused.json()).error, /trust dialog|доверии/)
+  box.state({ ...state, 'pane read': { text: 'PS C:\\> ' } })
+  assert.equal((await post(`/api/launch/${id}/trust`, {})).status, 409)
+  assert.deepEqual(keysSent(box), [])
+  assert.equal((await post(`/api/launch/${id}/close`, {})).status, 200)
+  assert.ok(box.calls().some(a => a.join(' ') === 'tab close wA:t9'))
+  assert.equal((await board()).launches.some(l => l.id === id), false)
+  // The card the board made for it held nothing but the lane: it goes with the tab.
+  assert.equal(existsSync(join(box.cards, `${sid}.json`)), false)
+})
+
+test('a launcher that gives up at the trust dialog: the launch is kept, and once trusted the board does what the launcher did not', { timeout: 40_000 }, async t => {
+  const launcher = fileURLToPath(new URL('./fixtures/fake-launcher.mjs', import.meta.url))
+  const box0 = sandbox(t)
+  const record = join(box0.dir, 'launcher.json')
+  const { box, post, board, launched } = await boardServer(t, { launch: { command: [process.execPath, launcher, record, '-Name', '{name}', '-Cwd', '{cwd}', '-Workspace', '{workspace}'] } })
+  const dir = join(box.dir, 'Will fail here')
+  mkdirSync(dir)
+  // The stand-in fails like spawn-agent: "Claude in wT:p9 waits for a dialog (folder trust?)".
+  const state = { ...HERDR, 'agent get': blocked, 'agent list': { result: { agents: [] } }, 'pane read': { seq: [{ text: trustScreen(dir, { selected: 'yes' }) }, { text: trustScreen(dir, { selected: 'yes' }) }, { text: 'Session renamed to: Will fail' }] } }
+  box.state(state)
+  const { id } = await (await post('/api/launch', { name: 'Will fail', cwd: dir, category: 'acme', workspace: { id: 'wA' }, message: 'First task.' })).json()
+  const held = await launchState(board, id, l => l?.state === 'trust' || l?.state === 'failed', 'neither held nor failed')
+  assert.equal(held.state, 'trust', held.error)
+  assert.equal(held.pane, 'wT:p9')
+  assert.equal((await post(`/api/launch/${id}/trust`, {})).status, 200)
+  assert.deepEqual(keysSent(box), ['wT:p9 enter']) // already on "Yes": only Enter
+  box.state({ ...state, 'agent get': idle })
+  const l = await launched(id)
+  assert.equal(l.state, 'done', l.error)
+  assert.deepEqual(promptsSent(box), ['wT:p9 /rename Will fail', 'wT:p9 First task.'])
+  assert.ok(box.calls().some(a => a.join(' ') === 'agent rename wT:p9 will-fail'))
 })

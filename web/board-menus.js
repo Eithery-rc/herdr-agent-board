@@ -96,6 +96,8 @@ export function initBoardMenus(board) {
       items: launchMenu(l, ctx()),
       pick: what => {
         if (what === 'focus') board.do.focusLaunch(id)
+        else if (what === 'trust') board.launch.trust(id)
+        else if (what === 'closeTab') board.launch.closeTab(id)
         else if (what === 'retry') board.launch.retry(l, el)
         else if (what === 'copyError') board.do.copy(l.error, t('menu.copied'))
         else if (what === 'copy:cwd') board.do.copy(l.cwd, t('menu.copied'))
