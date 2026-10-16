@@ -25,7 +25,8 @@ export function modalFocusManager(doc) {
   }, true)
   doc.addEventListener('keydown', e => {
     const scope = top()
-    if (!scope || e.key !== 'Tab' || auxiliary(e.target)) return
+    // A field that takes its own keys (the terminal's) keeps Tab: it goes to the terminal.
+    if (!scope || e.key !== 'Tab' || auxiliary(e.target) || e.target.closest?.('[data-own-keys]')) return
     const all = controls(scope)
     const at = all.indexOf(doc.activeElement)
     if (!all.length || (e.shiftKey ? at <= 0 : at < 0 || at === all.length - 1)) {

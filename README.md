@@ -86,6 +86,9 @@ raised when it is already open.
   an entry (two clicks). See [Schedule](#schedule).
 - "New session" (the toolbar, a lane's +, "New session here" in the sheet, the menus, Shift+N):
   a window for a new Claude session in herdr. See [New sessions](#new-sessions).
+- "Terminal" in the sheet (a card's menu, Ctrl+` with the sheet open): a live shell in the
+  session's folder, or the session's own terminal, to type into from the board. See
+  [Terminal](#terminal).
 - Right click (or a long press on a touch screen, or the menu key / Shift+F10 on a focused card)
   opens the board's own menu: on a card (open, go to herdr, message, wake or sleep, rename, move
   to a category, status, "No reply needed", open its folder, Changes, History, a new session in
@@ -259,6 +262,72 @@ fingerprint comes with the sheet's data); both need the `X-Board` header. Code:
 `src/questions.mjs` (the questions, the screen, the keys), `src/answer.mjs` (the steps through
 herdr), `web/questions.js` and `web/question-model.js` (the form).
 
+## Terminal
+
+"Terminal" opens a window over the board with a live terminal of the session, one of two (the
+switch in its head; the window opens on the one used last):
+
+- **Shell**: a shell in the session's folder, to run something there: `gh auth login`,
+  `bw unlock`, the tests. The board opens it the first time as a tab of its own in the session's
+  workspace in herdr, named after the session, so it is in herdr too ("Open in herdr" goes
+  there). It stays when the window closes; a dot on the sheet's Terminal button says it is open.
+  "Close the shell" (two clicks) ends it and closes its tab, unless something else was put in
+  that tab since. `exit` in it, or closing it in herdr, does the same, and the board offers a new
+  one.
+- **Claude** (the session's agent): the session's own pane, for what its terminal asks and the
+  board has no form for: `/login`, `/mcp`, a menu, a dialog too big for the sheet. It opens
+  without the keys, so an Esc meant for the window never stops a turn. A sleeping session shows
+  "Wake" instead.
+
+A click or a tap on the screen gives it the keys; its ring and the line under it say so. From
+then on keys go to the terminal: text, Enter, Tab, Esc, the arrows, Home, End, Page Up and Down,
+Delete, F1 to F10, and Ctrl or Alt with a key (by the key's place: Ctrl+C on a Russian layout is
+Ctrl+C). Ctrl+C with text selected on the screen copies it, Ctrl+V pastes; a paste of several
+lines asks first, since every line runs as typed, and its last line break is left off. Ctrl+]
+gives the keys back to the board; then Esc closes the window (Ctrl+` closes it from anywhere in
+it). On a phone a tap on the screen brings up the keyboard, and a row under the screen has the
+keys it lacks: Esc, Tab, Ctrl+C and the arrows. Web links in the output open in the default
+browser.
+
+What it shows: herdr has no output stream, so the board reads the pane (`pane read --source
+recent-unwrapped --ansi`, its last 400 lines) right after every key, every 120 ms while
+something changes, then every 0.4 to 1 s, and sends the page only the lines that changed (a line
+longer than 4000 characters is cut there). A board page out of sight reads nothing until it is
+back. Typed text shows in about a quarter of a second. Colors as the programs draw them (16, 256 and true
+colors; bold, dim, italic, underline, inverse) on a screen that stays dark in both themes, which
+is what the programs draw for. The text is sized for the pane's columns to fit, and lines wrap at
+the window's edge. herdr does not say where the cursor is: the caret goes after a shell's prompt
+or into Claude Code's input box, and only once the screen has been still for a moment.
+
+It runs commands on this computer, so:
+
+- Loopback only, as the whole board, and every request that types, opens or closes needs the
+  `X-Board` header, the page's own `Origin` and fresh herdr data. Without fresh data the window
+  keeps showing the screen and takes no keys. The stream (Server-Sent Events, which send no
+  headers) needs the per-run token of the board payload, as raw files do.
+- Keys go only to the shell the board opened for that session (kept in `terminals.json` in the
+  state folder, and checked to be still that pane, in its tab, with the terminal it was opened
+  with), or to the session's own pane once herdr says the same session still runs there, as for
+  a message. A shell moved elsewhere in herdr is no longer the board's: it is neither typed into
+  nor closed. The server takes only keys from its list, text without control characters, at most
+  16 KB a request; a request with anything else types nothing.
+- The board logs nothing typed or shown and keeps none of it. But typed text reaches herdr as a
+  command-line argument of `herdr pane send-text` (its CLI takes text no other way), so for the
+  moment that call runs it is visible to other processes of the same user and to process
+  auditing that records command lines (Windows event 4688, when it is on). A password is better
+  typed in herdr itself.
+- Keys never land late: a request herdr is slow with shows "Waiting for herdr", the page gives
+  it up after 8 s and drops what was typed meanwhile (and says so), and the server starts no
+  herdr call for a request older than 4 s. The first call that fails stops the rest of it.
+- `"terminal": false` in config.json turns it off: no button, and every terminal route answers
+  404 (for a board opened from a phone through a tunnel, say).
+
+`GET /api/term/<key>/<agent|shell>/stream?t=<fsToken>` (the screen, then line diffs),
+`POST /api/term/<key>/shell/open`, `/shell/close`, `/shell/focus`, and
+`POST /api/term/<key>/<agent|shell>/input` with `{ session, steps: [{ text } | { key }] }`.
+Code: `src/terminal.mjs` (the shell, the reads, the input), `web/terminal.js` (the window),
+`web/term-model.js` (ANSI, line diffs, links, the caret), `web/term-keys.js` (keys, both ends).
+
 ## Moving a card by hand
 
 A card dragged to another column (or set with the "Status" chips) stays there, marked with a
@@ -424,7 +493,8 @@ categories (id, title, color, folders that guess the category), `placement` (`wo
 default: the board lives in a workspace of its own and stays open; `tab`; `overlay`),
 `refreshSec`, `wakeUrl` (herdr-wake router), `scheduleWaitMin` (how long a due entry waits for a
 busy session, 240), `port` (web board, 12422), `web` (false turns the
-web board off), `browser` (path for the app window), `terminalTitle` (window title pattern to
+web board off), `terminal` (false turns the web board's [terminal](#terminal) off), `browser`
+(path for the app window), `terminalTitle` (window title pattern to
 raise, default `<COMPUTERNAME>:*`), `raiseTerminal`, `launch` (how new sessions start, see
 [New sessions](#new-sessions)).
 

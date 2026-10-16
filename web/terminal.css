@@ -1,0 +1,213 @@
+/* The board's terminal (terminal.js): the quick look's window, with a dark screen inset in it.
+   The screen stays dark in both themes: programs draw their own colors for a dark terminal
+   (Claude Code's included), and white text on a light screen would vanish. */
+
+:root {
+  --term-bg: #1b1b1e;
+  --term-fg: #e6e6eb;
+  --term-caret: #f5f5f7;
+  --term-edge: rgba(0, 0, 0, 0.18);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --term-bg: #0f0f11;
+    --term-edge: rgba(255, 255, 255, 0.08);
+  }
+}
+
+.term .ql-win { height: min(860px, calc(var(--term-vh, 100vh) - 48px)); }
+.term .ql-head { border-bottom: 0; padding-bottom: 8px; }
+.term-sub { margin: 1px 0 0; overflow: hidden; font: 12px/1.35 var(--font); color: var(--label-2); white-space: nowrap; text-overflow: ellipsis; }
+.term .ql-mode button:disabled { opacity: 0.4; }
+.term .ql-mode button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* The screen: a dark inset with a ring of the accent while it takes the keys. */
+.term-screen {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: 0 12px;
+  border-radius: 12px;
+  background: var(--term-bg);
+  box-shadow: inset 0 0 0 0.5px var(--term-edge), 0 0 0 0 transparent;
+  color: var(--term-fg);
+  overflow: hidden;
+  transition: box-shadow 140ms ease-out;
+}
+.term-screen.typing { box-shadow: inset 0 0 0 0.5px var(--term-edge), 0 0 0 2px var(--accent); }
+.term-win.can-type .term-scroll { cursor: text; }
+.term-scroll {
+  position: absolute;
+  inset: 0;
+  padding: 10px 12px 14px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+}
+/* Lines wrap at the window's edge: the text is sized so the pane's columns fit (terminal.js), and
+   a window wider than that gives long lines room rather than leave it empty. */
+.term-lines {
+  font: var(--term-size, 13px)/1.25 var(--mono);
+  font-variant-ligatures: none;
+  /* Spaces at the end of a line hang, as blank cells do; a line breaks anywhere, as a row does. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-break: anywhere;
+  tab-size: 8;
+  position: relative;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.term-lines .tl:empty::before { content: '\200b'; }
+.term-probe { position: absolute; visibility: hidden; font-size: 100px; white-space: pre; }
+
+.term-lines .f0 { color: #3a3a40; } .term-lines .f1 { color: #ff6b64; } .term-lines .f2 { color: #5fd27a; } .term-lines .f3 { color: #f2cc60; }
+.term-lines .f4 { color: #62a8ff; } .term-lines .f5 { color: #d68cf5; } .term-lines .f6 { color: #5fd0e0; } .term-lines .f7 { color: #d8d8de; }
+.term-lines .f8 { color: #86868f; } .term-lines .f9 { color: #ff918a; } .term-lines .f10 { color: #86e59a; } .term-lines .f11 { color: #ffe08a; }
+.term-lines .f12 { color: #93c3ff; } .term-lines .f13 { color: #e6b2ff; } .term-lines .f14 { color: #8fe6f0; } .term-lines .f15 { color: #ffffff; }
+.term-lines .b0 { background: #3a3a40; } .term-lines .b1 { background: #ff6b64; } .term-lines .b2 { background: #5fd27a; } .term-lines .b3 { background: #f2cc60; }
+.term-lines .b4 { background: #62a8ff; } .term-lines .b5 { background: #d68cf5; } .term-lines .b6 { background: #5fd0e0; } .term-lines .b7 { background: #d8d8de; }
+.term-lines .b8 { background: #86868f; } .term-lines .b9 { background: #ff918a; } .term-lines .b10 { background: #86e59a; } .term-lines .b11 { background: #ffe08a; }
+.term-lines .b12 { background: #93c3ff; } .term-lines .b13 { background: #e6b2ff; } .term-lines .b14 { background: #8fe6f0; } .term-lines .b15 { background: #ffffff; }
+.term-lines .fs { color: var(--term-bg); }
+.term-lines .bi { background: var(--term-fg); }
+.term-lines .tb { font-weight: 650; }
+.term-lines .td { opacity: 0.6; }
+.term-lines .ti { font-style: italic; }
+.term-lines .tu { text-decoration: underline; text-underline-offset: 2px; }
+.term-lines .ts { text-decoration: line-through; }
+.term-lines .tus { text-decoration: underline line-through; }
+.term-lines .th { color: transparent; }
+.term-lines .tlink { cursor: pointer; text-decoration-color: rgba(255, 255, 255, 0.45); }
+.term-lines .tlink:hover { color: #93c3ff; text-decoration-color: currentColor; }
+
+/* Where the terminal types next: solid and blinking while the screen has the keys, an outline
+   while it does not, as a terminal window does when it is not in front. */
+.term-lines .tcaret {
+  position: absolute;
+  width: 1ch;
+  height: 1.1em;
+  margin-top: 0.08em;
+  border-radius: 1.5px;
+  box-shadow: inset 0 0 0 1px rgba(245, 245, 247, 0.55);
+  pointer-events: none;
+}
+.term-screen.typing .term-lines .tcaret { background: var(--term-caret); box-shadow: none; animation: term-blink 1.06s steps(1) infinite; }
+@keyframes term-blink { 50% { opacity: 0; } }
+
+/* What the screen says when there is nothing (yet) to show: starting, gone, asleep, an error. */
+.term-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+  color: rgba(235, 235, 245, 0.72);
+  font-size: 13.5px;
+}
+.term-state[hidden] { display: none; }
+.term-screen.dimmed .term-state { background: rgba(15, 15, 17, 0.72); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.term-state p { display: flex; align-items: center; gap: 8px; max-width: 520px; margin: 0; overflow-wrap: anywhere; }
+.term-state small { color: #ffb340; font-size: 12px; }
+.term-state .button:not(.primary) { background: rgba(255, 255, 255, 0.12); color: #f5f5f7; }
+.term-state .button:disabled, .term-paste .button:disabled, .term-close:disabled { opacity: 0.4; }
+
+/* A paste of several lines waits for a yes. */
+.term-paste {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  left: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(44, 44, 48, 0.92);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.12), 0 10px 30px rgba(0, 0, 0, 0.4);
+  color: #f5f5f7;
+  font-size: 13px;
+}
+.term-paste[hidden] { display: none; }
+.term-paste span { flex: 1; min-width: 200px; }
+.term-paste pre { flex-basis: 100%; order: 1; max-height: calc(4 * 1.35em + 12px); margin: 0; padding: 6px 8px; overflow: hidden; border-radius: 8px; background: rgba(0, 0, 0, 0.28); color: rgba(235, 235, 245, 0.82); font: 12px/1.35 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.term-paste .button:not(.primary) { background: rgba(255, 255, 255, 0.12); color: #f5f5f7; }
+
+/* The field the keys arrive in: out of sight, big enough text that a phone does not zoom. */
+.term-input {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  resize: none;
+  font-size: 16px;
+  caret-color: transparent;
+  pointer-events: none;
+}
+
+/* The keys a phone's keyboard lacks. They never take the focus, so its keyboard stays up. */
+.term-keys { display: flex; gap: 6px; padding: 8px 12px 0; overflow-x: auto; scrollbar-width: none; }
+.term-keys[hidden] { display: none; }
+.term-keys button {
+  flex: 1 0 auto;
+  min-width: 44px;
+  height: 38px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--fill);
+  color: var(--label);
+  font: 500 14px var(--font);
+  font-variant-numeric: tabular-nums;
+  touch-action: manipulation;
+  transition: transform 90ms ease-out, background 90ms ease-out;
+}
+.term-keys button:active:not(:disabled) { transform: scale(0.94); background: color-mix(in srgb, var(--accent) 22%, var(--fill)); }
+.term-keys button:disabled { opacity: 0.4; }
+
+.term-foot { display: flex; align-items: center; gap: 10px; border-top: 0; }
+.term-status { display: flex; flex: 1; align-items: center; gap: 7px; min-width: 0; overflow: hidden; white-space: nowrap; }
+.term-status > span:not(.term-dot) { overflow: hidden; text-overflow: ellipsis; }
+.term-status.warn { color: var(--orange); }
+.term-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--label-3); transition: background 140ms ease-out; }
+.term-dot.on { background: var(--green); }
+.term-close { flex: none; height: 26px; font-size: 12.5px; }
+.term-close.armed { background: color-mix(in srgb, var(--red) 16%, transparent); color: var(--red); }
+
+/* The sheet's Terminal button: a dot while the board has a shell open for the session. */
+#sheet-term { position: relative; }
+#sheet-term.has-shell::after { content: ''; position: absolute; top: 5px; right: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 1.5px var(--surface); }
+
+@media (max-width: 760px) {
+  .term .ql-win { width: calc(100vw - 16px); height: calc(var(--term-vh, 100vh) - 16px); }
+  .term .ql-icon { grid-column: 1; }
+  .term .ql-titles { grid-column: 2 / 4; }
+  .term-screen { margin: 0 8px; border-radius: 10px; }
+  .term-scroll { padding: 8px 9px 12px; }
+  .term-keys { padding: 8px 8px 0; gap: 5px; }
+  .term-foot { padding: 7px 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .term-screen.typing .term-lines .tcaret { animation: none; }
+  .term-screen, .term-dot, .term-keys button { transition: none; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .term-screen.dimmed .term-state { background: var(--term-bg); backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .term-paste { background: #2c2c30; backdrop-filter: none; -webkit-backdrop-filter: none; }
+}
+@media (prefers-contrast: more) {
+  .term-screen { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.4); }
+  .term-lines .td { opacity: 0.75; }
+}
