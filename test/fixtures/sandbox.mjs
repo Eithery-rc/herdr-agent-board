@@ -25,7 +25,18 @@ export function sandbox(t) {
   t.after(async () => {
     for (const child of children) if (child.exitCode === null && child.signalCode === null) child.kill()
     await Promise.all(children.map(child => child.exited))
-    rmSync(dir, { recursive: true, force: true })
+    // A herdr call the server started just before it was stopped outlives it by a moment and can
+    // write its log here again while the folder goes (ENOTEMPTY): remove the whole tree again
+    // until that call is done. (rmSync's own maxRetries only retries the last rmdir.)
+    for (let tries = 1; ; tries++) {
+      try {
+        rmSync(dir, { recursive: true, force: true })
+        break
+      } catch (err) {
+        if (err.code !== 'ENOTEMPTY' || tries >= 40) throw err
+        await new Promise(resolve => setTimeout(resolve, 25))
+      }
+    }
   })
   // `extra`: environment a test needs on top (git on PATH for a worktree, say).
   function child(args, input, extra = {}) {
