@@ -10,9 +10,19 @@ if (mode === 'open') {
   const { send } = await import('../../src/actions.mjs')
   const { item, cfg, text } = JSON.parse(process.env.TEST_INPUT)
   console.log(JSON.stringify(await send(cfg, item, text)))
+} else if (mode === 'answer') {
+  // answer.mjs against the fake herdr: a question form, a permission prompt, or one own answer typed.
+  const { answerPermission, answerQuestions, paneIO } = await import('../../src/answer.mjs')
+  const { useLanguage } = await import('../../src/lang.mjs')
+  useLanguage('en')
+  const { kind, item, body, text } = JSON.parse(process.env.TEST_INPUT)
+  const out = kind === 'text' ? await paneIO(item.pane).text(text) : await (kind === 'permit' ? answerPermission : answerQuestions)(item, body)
+  console.log(JSON.stringify(out ?? null))
 } else if (mode === 'server') {
   const { startServer } = await import('../../src/server.mjs')
-  const server = await startServer({ cfg: JSON.parse(process.env.TEST_INPUT), log: text => process.send({ log: text }) })
+  const cfg = JSON.parse(process.env.TEST_INPUT)
+  if (cfg.language) (await import('../../src/lang.mjs')).useLanguage(cfg.language)
+  const server = await startServer({ cfg, log: text => process.send({ log: text }) })
   process.send({ ready: true })
   process.on('message', async message => {
     if (message === 'refresh') {

@@ -1,0 +1,38 @@
+❯ Now call AskUserQuestion once with three questions in this order. Q1: question 'Which size?', header
+  'Size', multiSelect false, options 'Small' (description 'Fits a phone'), 'Large' (description 'Fits a
+  desktop'). Q2: question 'Which toppings?', header 'Toppings', multiSelect true, options 'Cheese'
+  (description 'Melted on top'), 'Olives' (description 'Black, sliced'), 'Basil' (description 'Fresh
+  leaves'). Q3: question 'Deliver when?', header 'When', multiSelect false, options 'Now', 'Later'. After
+  the answers, reply with one line listing them, then wait.
+
+● User answered Claude's questions:
+  ⎿  · Which size? → Large
+     · Which toppings? → Cheese, Basil
+     · Deliver when? → Tomorrow at noon
+
+● Your answers: Size is Large, toppings are Cheese and Basil, and When is "Tomorrow at noon" (typed in
+  Other).
+
+✻ Sautéed for 8s · done 11:34 AM
+
+❯ Now call AskUserQuestion with one question: question 'Which platforms should the build target?', header
+  'Platforms', multiSelect true, options 'Windows' (description 'x64 installer'), 'macOS' (description
+  'Universal binary'), 'Linux' (description 'AppImage and deb'). After the answer, reply with one line,
+  then wait.
+──────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Platforms  ✔ Submit  →
+
+Which platforms should the build target?
+
+❯ 1. [ ] Windows
+         x64 installer
+  2. [ ] macOS
+         Universal binary
+  3. [ ] Linux
+         AppImage and deb
+  4. [ ] Type something
+     Submit
+──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel

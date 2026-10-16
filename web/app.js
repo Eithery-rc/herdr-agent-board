@@ -14,6 +14,7 @@ import { updateLive } from './live.js'
 import { limitInfo } from './limits-model.js'
 import { markdown } from './markdown.js'
 import { initMenu } from './menu.js'
+import { initQuestions } from './questions.js'
 import { keepInSight, menuOpen, Panel, panels, roomBelow } from './panel.js'
 import { renameInPlace } from './rename.js'
 import { reducedMotion, rubberband, Spring, velocityOf } from './spring.js'
@@ -103,6 +104,7 @@ const state = {
 }
 const itemOf = key => state.data.items.find(i => i.key === key)
 let launchUI = null // new sessions (launch.js), set up with the sheet below
+let questionsUI = null // questions asked in a terminal (questions.js), set up with the sheet below
 const catOf = it => state.moved.get(it.key) ?? it.category
 const colOf = it => state.movedCol.get(it.key)?.col ?? it.column
 /** A turn is on: it works, or a dialog stopped it midway. */
@@ -169,7 +171,7 @@ const connection = boardConnection({
 // needs fresh herdr data, or it would act on a session that may have moved on.
 const canMutate = () => state.connected && state.data.stale === false && state.data.lastSuccessfulRefreshAt != null
 const canEdit = () => !!state.connected
-const HERDR_ACTIONS = ['focus', 'wake', 'sleep', 'message']
+const HERDR_ACTIONS = ['focus', 'wake', 'sleep', 'message', 'answer', 'permit']
 function syncAvailability() {
   const blocked = !canMutate()
   const missing = !!state.open && (!itemOf(state.open) || state.detailState?.status === 'missing')
@@ -188,6 +190,7 @@ function syncAvailability() {
   if (missing) for (const element of document.querySelectorAll('#sheet-card button, #sheet-card input, #sheet [data-act], #sheet-new, #attach, #sheet-changes, #sheet-history')) element.disabled = true
   else for (const element of document.querySelectorAll('#sheet-changes, #sheet-history')) element.disabled = false
   files.refreshAvailability()
+  questionsUI?.sync()
   syncComposer()
   renderDetailState()
 }
@@ -207,7 +210,7 @@ async function act(key, action, body = {}) {
       body: JSON.stringify(body),
     })
     const r = await res.json().catch(() => ({}))
-    return res.ok && r.ok !== false ? { ...r, ok: true } : { ok: false, error: r.error || t('err.status', { code: res.status }) }
+    return res.ok && r.ok !== false ? { ...r, ok: true } : { ...r, ok: false, error: r.error || t('err.status', { code: res.status }) }
   } catch (err) {
     return { ok: false, error: t('err.offline', { why: err.message }) }
   }
@@ -482,7 +485,7 @@ function cardHTML(it) {
   const said = plain(it.column === 'done' || it.column === 'idle' ? it.result || it.lastText : it.lastText)
   let body = own ? `<div class="what">${esc(own)}</div>` : asked ? `<div class="what"><span class="you">${esc(t('card.you'))}</span> ${esc(asked)}</div>` : ''
   // A launch held at the trust dialog says what it asks itself (launch.js), with its buttons.
-  if (it.column === 'me' && it.launch?.state !== 'trust') body += `<div class="ask"><b>${esc(t(it.attention ? `att.${it.attention}` : 'att.default'))}:</b> ${esc(plain(it.question) || t(it.attention === 'later' ? 'card.lookLater' : 'card.needsDecision'))}</div>`
+  if (it.column === 'me' && it.launch?.state !== 'trust') body += questionsUI?.cardAsk(it, plain) || `<div class="ask"><b>${esc(t(it.attention ? `att.${it.attention}` : 'att.default'))}:</b> ${esc(plain(it.question) || t(it.attention === 'later' ? 'card.lookLater' : 'card.needsDecision'))}</div>`
   if (it.column === 'ext') body += `<div class="chip">${ICON.clock}<span>${esc(it.wait || t('note.parked'))}</span></div>`
   if (it.column !== 'me' && said && said !== what) body += `<div class="said">${esc(said)}</div>`
   if (it.column === 'work') {
@@ -865,6 +868,15 @@ launchUI = initLaunch({
   focusLaunch,
 })
 addEventListener('popstate', () => dialogBack.pop())
+questionsUI = initQuestions({
+  box: sheetQuestion,
+  t: () => t,
+  item: () => itemOf(state.open),
+  act,
+  toast,
+  canMutate,
+  focusSession,
+})
 const sessionPanel = new Panel($('#sheet'), {
   onClose: () => {
     saveDraft()
@@ -1028,7 +1040,10 @@ function renderSheetBody(reset) {
   renderSheetCard(it)
   const atBottom = sheetBody.scrollHeight - sheetBody.scrollTop - sheetBody.clientHeight < 40
   let html = '<div class="detail-status" id="sheet-detail-state" role="status" hidden></div>', question = ''
-  if (it.column === 'me') {
+  // A question form or a permission prompt is answered right here; the raw screen stays one click away.
+  const form = questionsUI.mount(it, state.detail)
+  if (form && state.detail?.screen) html += `<details class="qa-screen"><summary>${esc(t('qa.screen'))}</summary><pre class="screen">${esc(state.detail.screen)}</pre></details>`
+  else if (it.column === 'me') {
     const later = it.attention === 'later'
     const why = t(it.attention ? `why.${it.attention}` : 'why.default')
     const wave = dismissable(it) ? `<button class="button asked-dismiss" data-act="dismiss">${ICON.check}<span>${esc(t(later ? 'asked.seen' : 'asked.noReply'))}</span></button>` : ''
@@ -1036,8 +1051,8 @@ function renderSheetBody(reset) {
     question = `<div class="asked"><b>${esc(why)}</b>${esc(text)}${wave}</div>`
     if (state.detail?.screen) html += `<pre class="screen">${esc(state.detail.screen)}</pre>`
   }
-  if (sheetQuestion._html !== question) { sheetQuestion.innerHTML = question; sheetQuestion._html = question }
-  sheetQuestion.hidden = !question
+  if (!form && sheetQuestion._html !== question) { sheetQuestion.innerHTML = question; sheetQuestion._html = question }
+  sheetQuestion.hidden = !question && !form
   html += `<div class="section-title">${esc(t('thread.title'))}</div><div class="thread">`
   const conv = state.detail?.conversation
   if (!conv) html += `<p class="row-value muted">${esc(t(['error', 'missing'].includes(state.detailState?.status) ? 'detail.noTranscript' : 'loading'))}</p>`
@@ -1071,6 +1086,12 @@ function thread(conv, it) {
     run = []
   }
   for (const m of conv) {
+    // A question form is a turn of its own: what was asked, and the answer.
+    if (m.role === 'tool' && m.ask) {
+      flush()
+      html += questionsUI.threadHTML(m, it.status === 'blocked', clock(m.at))
+      continue
+    }
     if (m.role === 'tool') {
       run.push(m)
       continue
@@ -1965,6 +1986,9 @@ addEventListener('keydown', e => {
   } else if (['n', 'т'].includes(e.key.toLowerCase()) && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !files.isOpen()) {
     e.preventDefault()
     openNextAttention()
+  } else if (/^[1-9]$/.test(e.key) && state.open && sessionPanel.isOpen && !files.isOpen() && ($('#sheet').contains(document.activeElement) || document.activeElement?.closest?.('.card')?.dataset.key === state.open)) {
+    // Digits pick an option of the question the session waits on, as in the terminal.
+    if (questionsUI.onKey(e)) e.preventDefault()
   } else if (e.key === '/' && !typing) {
     e.preventDefault()
     $('#search').focus()

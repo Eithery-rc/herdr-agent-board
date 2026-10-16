@@ -1,0 +1,36 @@
+❯ Now call AskUserQuestion with one question that uses option previews: question 'Which layout for the
+  settings page?', header 'Layout', multiSelect false, options 'Sidebar' (description 'Nav on the left',
+  preview a 6-line ASCII mockup with a left sidebar), 'Tabs' (description 'Tabs on top', preview a 6-line
+  ASCII mockup with tabs across the top). After the answer, reply with one line, then wait.
+
+● User answered Claude's questions:
+  ⎿  · Which layout for the settings page? → Tabs
+
+● Your layout: Tabs, with the tabs across the top.
+
+✻ Brewed for 10s · done 11:36 AM
+
+● Session was started with bypass permissions, so plan mode won't ask before most edits or
+  commands. Start a new session without bypass permissions for prompts in plan mode.
+
+❯ Run this exact shell command with the Bash tool: echo hello > probe-note.txt . Then reply with one line
+  and wait.
+
+  Writing hello into a probe note file
+  ⎿  $ echo hello > probe-note.txt
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+ Tip: auto mode handles these prompts for you : choose "switch to auto mode" below
+ Write hello into a probe note file
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ echo hello > probe-note.txt
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and always allow access to C:\work\projects\a-rather-long-folder-name\with\several\levels\of\pro
+      be from this project
+   3. Yes, and switch to auto mode · auto mode handles these prompts for you
+   4. No
+
+ Esc to cancel · Tab to amend

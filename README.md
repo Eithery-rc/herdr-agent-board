@@ -44,8 +44,9 @@ raised when it is already open.
   it is stuck on, what it waits for.
 - Drag a card to another lane to change its category, or to another column to put it there by
   hand (also the "Status" chips in the sheet). See [Moving a card by hand](#moving-a-card-by-hand).
-- Click a card: a sheet with its card fields, the question and screen when it waits for you,
-  the conversation (tool calls folded), a message box, "Go to herdr" (focuses the pane and
+- Click a card: a sheet with its card fields, the question and screen when it waits for you
+  (a question form or a permission prompt is answered right there, see
+  [Answering from the board](#answering-from-the-board)), the conversation (tool calls folded), a message box, "Go to herdr" (focuses the pane and
   brings the terminal window up), "Put to sleep" (through herdr-wake, idle sessions only; also
   the moon on a card), "Wake" for sleeping sessions. To close: click the board beside it, flick
   it out the way it came, or Esc. Another card switches it to that session. Attachments stay
@@ -173,13 +174,87 @@ removed when the board starts again.
 
 1. A dialog holds the session in the terminal (permission prompt, question form, MCP input):
    herdr reports `blocked` from its own screen rules. The card shows the question or the
-   permission asked; the sheet shows the screen.
+   permission asked; the sheet shows the screen, and a question form or a permission prompt can
+   be answered from it.
 2. The agent ran `board ask "<question>"` before ending its turn. Cleared by the hook as soon as
    you write to that session.
 3. Its last message ends with a question and you have not written since. "No reply needed" on
    the card or in the sheet waves that one question off.
 4. You dragged it there yourself to look at it later ("Parked"). The check mark on the card
    ("Seen") takes it out.
+
+## Answering from the board
+
+When a session waits in Claude Code's question form (AskUserQuestion), its card says so with the
+header, the first question and its options in a line (`+2 questions` when there are more). The
+sheet shows the form itself: every question in order, its header, "Pick one" or "Pick any",
+the options with their descriptions, an own answer, and the mockup of an option that has a
+preview. The questions come from the tool call in the transcript, not from the screen. A lone
+single-choice question is answered with one click on an option, as a digit does in the
+terminal; otherwise pick the answers and press "Answer" (or Enter in an own answer). Keys 1 to 9
+pick an option of the question in focus while the focus is in the sheet. The conversation shows
+each form as a turn of its own, with the answers once given. A form the board cannot answer for
+sure is left to the terminal ("Go to herdr"): more than 4 questions or 8 options, a question or
+label longer than the board shows whole, two questions with the same text or two options with
+the same label. An own answer is one line, without control characters (C0, C1) or the Unicode
+marks that change the direction of text.
+
+A permission prompt ("Do you want to proceed?") shows its title, what the tool will do and the
+terminal's own choices (Yes, Yes and don't ask again, No...), read from the screen as drawn; one
+click or digit picks one. A very long prompt is cut on the board with a mark ("12 more lines: see
+the terminal screen"), never silently.
+
+The board answers by pressing keys in the pane through herdr (`herdr agent send-keys` with the
+pane id, and `herdr pane send-text` for an own answer: `agent prompt` refuses a pane in a
+dialog). `send-text` types its text literally (backslashes and a leading dash included, herdr
+0.9); an own answer that starts with a dash still goes with a space before it, as the board's
+other calls do, and the board then takes that space out of the field (Ctrl+A, right, Backspace)
+and checks it is gone, since Claude Code would keep it in the answer. How the form takes keys,
+as found on a live session (Claude Code 2.1, `src/questions.mjs`):
+
+- The cursor starts on option 1. In a single-choice question a digit picks that option and moves
+  on at once; a lone question is then submitted. With previews a digit only moves the cursor and
+  Enter picks.
+- The own answer is the row after the options. A digit there picks the text it already holds, so
+  the board reaches it with the arrow keys (the row then takes text; up leaves it), clears it with
+  Ctrl+U, types, and presses Enter. Typing on it in a multi-choice question ticks it.
+- In a multi-choice question a digit toggles an option and the cursor stays; "Next" (or
+  "Submit" for a lone question) under the options goes on with Enter.
+- Several questions, or one multi-choice question, end on a "Review your answers" screen that
+  lists every answer above "1. Submit answers". Left and right arrows move between the questions.
+
+What keeps it from pressing keys in the wrong place:
+
+- The answer needs fresh herdr data, like a message, and comes only from the board's own page
+  (the `Origin` check of new sessions). The pane must still hold the same Claude session (as
+  `send` checks), herdr must say it is blocked, and the transcript must still have that very
+  question call without a result: one answered in the terminal meanwhile is refused. One answer
+  at a time per session.
+- Before every key the screen is read and parsed; the board goes on only when it shows the
+  question it expects, with the same options. After every key it waits until the screen shows
+  what the key should have done (an option ticked, the next question, the field cleared). A
+  dialog begun in the terminal is taken back to its first question and set to the board's
+  answers.
+- The review screen must list exactly the board's answers, with "Submit answers" as its first
+  choice, before that is pressed.
+- Done needs proof, which a blank or half-drawn screen is not: the transcript holds the answer,
+  or two reads in a row show Claude's input box without the dialog, or a whole other dialog.
+- A permission prompt is pressed only while the screen shows the prompt the user saw: a
+  fingerprint of its title, text, question and choices exactly as drawn, every character and
+  space (`rm -rf build_*` is not `rm -rf build`); where the cursor stands does not count.
+- On the page, a click or a digit in the first half second after another dialog took the place
+  of the one on show is not taken (permission prompts can come back to back), nor is a held key.
+  A form that went through stays as "Answered" until herdr sees the session move on (at most 10
+  seconds); the same prompt asked again is a new one.
+- Anything unexpected stops it at once. The sheet says where it stopped and, once keys went in,
+  that the form may be partly filled in (a herdr failure midway too), shows the screen, and
+  offers "Go to herdr". Without fresh data the form stays readable and cannot be sent.
+
+`POST /api/session/<key>/answer` with `{ session, toolUseId, answers: [{ options: [labels],
+other }] }` and `POST /api/session/<key>/permit` with `{ session, fingerprint, option }` (the
+fingerprint comes with the sheet's data); both need the `X-Board` header. Code:
+`src/questions.mjs` (the questions, the screen, the keys), `src/answer.mjs` (the steps through
+herdr), `web/questions.js` and `web/question-model.js` (the form).
 
 ## Moving a card by hand
 

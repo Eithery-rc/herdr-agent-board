@@ -12,6 +12,7 @@ import { extname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { focus, send, sleepSession, wake } from './actions.mjs'
+import { answerPermission, answerQuestions } from './answer.mjs'
 import { checkoutChanges, isCheckout } from './changes.mjs'
 import { searchHistory } from './history.mjs'
 import { localUsage } from './usage.mjs'
@@ -25,6 +26,7 @@ import { createLaunches, listDirs, renameSession } from './launch.mjs'
 import { checkName } from '../web/launch-model.js'
 import { messageGate } from './message-gate.mjs'
 import { busy, COLUMNS, collect, forgetSleepers, PINS } from './model.mjs'
+import { parseDialog, publicDialog } from './questions.mjs'
 import { CARDS_DIR, ROOT, STATE_DIR } from './paths.mjs'
 import { listEntries, readLog, removeEntry, SCHEDULE_DIR, updateEntry } from './schedule.mjs'
 import { startScheduler } from './scheduler.mjs'
@@ -204,15 +206,18 @@ export function startServer({ cfg, log = () => {} } = {}) {
   }
 
   const guardedMessage = messageGate()
+  const answering = new Set() // sessions with an answer being typed into their dialog
   const find = key => items.find(i => i.key === key)
 
   async function detail(item) {
     // checkout: whether its folder is in git, for the sheet's Changes button.
-    const out = { item: { ...item, transcript: undefined }, conversation: conversation(item.transcript, 60), screen: '', checkout: await isCheckout(item.cwd) }
+    const out = { item: { ...item, transcript: undefined }, conversation: conversation(item.transcript, 60), screen: '', dialog: null, checkout: await isCheckout(item.cwd) }
     if (item.status === 'blocked' && item.pane) {
       try {
         const text = await herdrText(['agent', 'read', item.pane, '--source', 'visible'], 5000)
         out.screen = text.split('\n').map(l => l.trimEnd()).join('\n').replace(/\n{3,}/g, '\n\n').trim().split('\n').slice(-30).join('\n')
+        // The dialog on it, for the sheet to answer: a permission prompt goes by its fingerprint.
+        out.dialog = publicDialog(parseDialog(text))
       } catch {}
     }
     return out
@@ -240,6 +245,28 @@ export function startServer({ cfg, log = () => {} } = {}) {
           if (!fresh || fresh.session !== item.session || fresh.pane !== item.pane) return { ok: false, error: t('err.sessionChanged', { name: item.name }) }
           return send(cfg, fresh, [String(body.text ?? '').trim(), list].filter(Boolean).join('\n\n'))
         })
+      }
+      case 'answer':
+      case 'permit': {
+        // A question form or a permission prompt, answered with keys in the pane (answer.mjs).
+        if ((body.session ?? null) !== (item.session ?? null)) return { ok: false, error: t('err.sessionChanged', { name: item.name }) }
+        if (answering.has(item.key)) return { ok: false, error: t('err.qa.busy', { name: item.name }) }
+        answering.add(item.key)
+        try {
+          // A new snapshot first, as for a message: the board must not answer on old data.
+          let fresh
+          try {
+            fresh = (await collect(cfg)).find(next => next.key === item.key)
+          } catch (err) {
+            return { ok: false, error: t('err.qa.herdr', { why: err.message }) }
+          }
+          if (!fresh || fresh.session !== item.session || fresh.pane !== item.pane) return { ok: false, error: t('err.sessionChanged', { name: item.name }) }
+          const r = action === 'answer' ? await answerQuestions(fresh, body) : await answerPermission(fresh, body)
+          log(`${action} ${item.name}: ${r.ok ? 'ok' : r.error}`)
+          return r
+        } finally {
+          answering.delete(item.key)
+        }
       }
       case 'rename': {
         // The board's own name for it, kept on the card; empty gives the automatic one back.
@@ -447,8 +474,11 @@ export function startServer({ cfg, log = () => {} } = {}) {
         if (req.method === 'GET' && !m[2]) return json(200, await detail(item))
         if (req.method === 'POST' && m[2]) {
           if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })
+          // Answering a dialog presses keys in a session: like a launch, only from this page.
+          const origin = req.headers.origin
+          if (['answer', 'permit'].includes(m[2]) && origin && origin !== `http://127.0.0.1:${port}` && origin !== `http://localhost:${port}`) return json(403, { error: 'origin' })
           // Actions that go through herdr wait for a board that can reach it; card edits and the rest do not.
-          if (['focus', 'wake', 'sleep', 'message'].includes(m[2]) && refuseStale()) return json(409, { ok: false, error: t('mobile.readOnly') })
+          if (['focus', 'wake', 'sleep', 'message', 'answer', 'permit'].includes(m[2]) && refuseStale()) return json(409, { ok: false, error: t('mobile.readOnly') })
           const body = await readBody(req)
           if (m[2] === 'rename' && body.claude && refuseStale()) return json(409, { ok: false, error: t('mobile.readOnly') })
           const r = await act(item, m[2], body)

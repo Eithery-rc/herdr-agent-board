@@ -1,0 +1,209 @@
+/* Questions a session asks in its terminal (questions.js): the form in the sheet, the line on a
+   card, the turn in the conversation. The orange of "Needs me" frames it; inside, the options are
+   one grouped list on the surface, picked with a radio or a checkbox mark like a settings list. */
+
+/* ---------------------------------------------------------------- in the sheet */
+.sheet-question:has(.qa) { flex-shrink: 0; max-height: min(62vh, 680px); } /* the card's fields give way first */
+.sheet-inner:has(.sheet-question .qa) .sheet-card:not([hidden]) { min-height: 64px; }
+.asked.qa { display: flex; flex-direction: column; gap: 12px; padding: 12px 12px 12px 14px; }
+.asked.qa > b { margin-bottom: -6px; }
+.qa-q { display: flex; flex-direction: column; gap: 6px; }
+.qa-q + .qa-q { padding-top: 12px; box-shadow: inset 0 0.5px 0 color-mix(in srgb, var(--orange) 30%, transparent); }
+.qa-head { display: flex; align-items: center; gap: 8px; min-height: 20px; }
+.qa-tag {
+  display: inline-block;
+  max-width: 100%;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--orange) 24%, transparent);
+  color: var(--label);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.5;
+  vertical-align: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qa-kind { font-size: 12px; color: var(--label-2); }
+.qa-step { margin-left: auto; font-size: 12px; color: var(--label-3); font-variant-numeric: tabular-nums; }
+.qa-text { margin: 0; font: 600 15px/1.35 var(--font-display); letter-spacing: -0.008em; overflow-wrap: anywhere; }
+
+/* The options: one inset group, a row each, the mark on the trailing edge. */
+.qa-opts { display: flex; flex-direction: column; border-radius: 11px; background: var(--surface); box-shadow: var(--shadow-card); overflow: hidden; }
+.qa-opt {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px 8px 10px;
+  border: 0;
+  background: none;
+  color: var(--label);
+  text-align: left;
+  font-size: 13.5px;
+  transition: background 150ms ease;
+}
+.qa-opt + .qa-opt { box-shadow: inset 0 0.5px 0 var(--separator); }
+button.qa-opt:hover:not(:disabled) { background: var(--fill-2); }
+button.qa-opt:active:not(:disabled) { background: var(--fill); }
+.qa-opt:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); border-radius: 11px; }
+.qa-opt.on { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.qa-opt:disabled { color: var(--label); }
+/* No fresh data from herdr: the form stays readable, visibly out of reach. */
+.qa.read-only .qa-opts { opacity: 0.55; }
+.qa-n {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: var(--fill);
+  color: var(--label-2);
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.qa-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.qa-label { font-weight: 500; overflow-wrap: anywhere; }
+.qa-desc { font-size: 12.5px; line-height: 1.35; color: var(--label-2); overflow-wrap: anywhere; }
+
+/* Radio: a ring that fills; checkbox: a rounded square that fills with a tick. */
+.qa-mark {
+  flex: none;
+  position: relative;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--label-3);
+  transition: box-shadow 150ms ease, background 150ms ease;
+}
+.qa-opt[role="checkbox"] .qa-mark, .qa-opts[role="group"] .qa-other .qa-mark { border-radius: 6px; }
+.qa-opt.on .qa-mark { background: var(--accent); box-shadow: none; }
+.qa-opt.on .qa-mark::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fff;
+  animation: qa-pop 180ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+.qa-opt[role="checkbox"].on .qa-mark::after, .qa-opts[role="group"] .qa-other.on .qa-mark::after {
+  width: 10px;
+  height: 5px;
+  margin: 6px 0 0 5px;
+  border-radius: 0;
+  background: none;
+  border: solid #fff;
+  border-width: 0 0 2px 2px;
+  transform: rotate(-45deg);
+  animation: none;
+}
+@keyframes qa-pop { from { transform: scale(0.4); } to { transform: scale(1); } }
+
+/* The own answer: a field in the row; typing in it picks it. */
+.qa-input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  border: 0;
+  outline: 0;
+  background: none;
+  font-size: 13.5px;
+}
+.qa-input::placeholder { color: var(--label-3); }
+.qa-other:focus-within { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 11px; }
+.qa-preview {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--fill-2);
+  font: 11.5px/1.4 var(--mono);
+  white-space: pre;
+}
+
+.qa-foot { display: flex; align-items: center; gap: 10px; }
+.qa-hint { flex: 1; min-width: 0; font-size: 12px; color: var(--label-2); }
+.qa-send { flex: none; gap: 6px; }
+.qa-send:disabled { opacity: 0.45; }
+.qa-send .spin, .qa-status .spin, .perm-opt .spin { color: currentColor; }
+
+/* While it is typed into the terminal: the picks hold still, the rest steps back. */
+.qa.busy .qa-opt:not(.on):not(.chosen) { opacity: 0.45; }
+.qa.busy .qa-opt { transition: opacity 200ms ease; }
+
+.qa-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12.5px; color: var(--label-2); }
+.qa-status svg { width: 15px; height: 15px; }
+.qa-status.ok { color: var(--green); font-weight: 500; }
+.qa-status.error { padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--red) 11%, var(--surface)); color: var(--label); }
+.qa-status.error > b { flex: 1 1 100%; margin-bottom: -4px; font-size: 12px; font-weight: 600; color: var(--red); letter-spacing: 0.01em; }
+.qa-status.error > span { flex: 1 1 100%; overflow-wrap: anywhere; }
+.qa-status.error .button { height: 30px; }
+.qa-screen { flex: 1 1 100%; }
+.qa-screen summary { font-size: 12px; color: var(--label-2); cursor: default; }
+.qa-screen .screen { max-height: 220px; }
+.sheet-body > .qa-screen { margin-top: 10px; }
+
+/* A permission prompt: what the tool will do, then the terminal's own choices. */
+.perm-title { font-size: 12.5px; font-weight: 600; color: var(--label-2); margin-bottom: -6px; }
+.perm-body {
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  font: 12px/1.45 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.perm-more { margin-top: -6px; font-size: 12px; color: var(--label-2); }
+.perm-opt .qa-label { white-space: pre-line; } /* broken where the terminal broke it */
+.perm-opt.yes .qa-label { color: var(--accent); font-weight: 600; }
+.perm-opt.no .qa-label { color: var(--red); }
+.perm-opt.chosen { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+
+/* ---------------------------------------------------------------- on a card */
+.ask.qa-card { display: block; -webkit-line-clamp: none; }
+.qa-card-q { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.qa-card .qa-tag { display: inline; padding: 1px 6px; margin-right: 2px; font-size: 11px; line-height: inherit; vertical-align: baseline; }
+.qa-card-opts { margin-top: 3px; font-size: 12px; color: var(--label-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qa-more { margin-left: 8px; color: var(--label-3); }
+
+/* ---------------------------------------------------------------- in the conversation */
+.qa-msg { display: flex; flex-direction: column; gap: 6px; box-shadow: var(--shadow-card), inset 3px 0 0 color-mix(in srgb, var(--orange) 70%, transparent); }
+.qa-asked { font-size: 11px; font-weight: 600; color: var(--orange); letter-spacing: 0.02em; text-transform: uppercase; }
+.qa-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; }
+.qa-line-q { font-weight: 500; }
+.qa-ans { flex-basis: 100%; color: var(--accent); font-weight: 600; }
+.qa-ans::before { content: "→ "; color: var(--label-3); font-weight: 400; }
+.qa-wait { font-size: 12px; color: var(--label-2); }
+
+/* ---------------------------------------------------------------- narrow windows */
+@media (max-width: 760px) {
+  #sheet .sheet-question:has(.qa) { max-height: 56vh; }
+  #sheet .asked.qa { padding: 10px; font-size: 13.5px; }
+  #sheet .asked.qa > b { display: block; margin-bottom: -4px; }
+  .qa-opt { min-height: 48px; }
+  .qa-send { min-height: 36px; }
+}
+
+/* ---------------------------------------------------------------- accessibility */
+@media (prefers-reduced-motion: reduce) {
+  .qa-opt, .qa-mark, .qa.busy .qa-opt { transition: none; }
+  .qa-opt.on .qa-mark::after { animation: none; }
+}
+@media (prefers-contrast: more) {
+  .qa-opts, .perm-body { box-shadow: 0 0 0 1px var(--label-3); }
+  .qa-mark { box-shadow: inset 0 0 0 2px var(--label-2); }
+}
