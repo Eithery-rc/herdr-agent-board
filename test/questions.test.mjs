@@ -5,7 +5,8 @@ import { drivePermission, driveQuestions } from '../src/answer.mjs'
 import { answerText, arrows, onQuestion, parseDialog, publicDialog, questionsOf, resolveAnswers, reviewMatches, sameText, screenIndex, typedOther } from '../src/questions.mjs'
 import { FakeDialog } from './fixtures/fake-dialog.mjs'
 
-const screen = name => readFileSync(new URL(`./fixtures/screens/${name}.txt`, import.meta.url), 'utf8')
+// A checkout with core.autocrlf turns the screens into CRLF; herdr gives LF.
+const screen = name => readFileSync(new URL(`./fixtures/screens/${name}.txt`, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 const fast = { timeout: 200, every: 1 }
 
 // The questions the screens in fixtures/screens were taken from.
