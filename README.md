@@ -11,25 +11,62 @@ of each transcript (ai-title, last prompt), herdr-wake's `/sleeping`, and the ca
 what only the agent knows: its category, what it works on, what it waits for. Agents keep it
 current with the `board` command; a SessionStart / UserPromptSubmit hook tells each session how.
 
-## Install
+## Setup
 
-```sh
-herdr plugin install MokuTeam/herdr-agent-board   # or clone it and: herdr plugin link <folder>
-herdr plugin action invoke agent-board.install      # board command in ~/.local/bin; hooks and status line in ~/.claude/settings.json
-```
+Node 20 or newer, no dependencies. Windows, Linux and macOS (desktop notifications: Windows only).
+Steps 1 and 2 are what the board needs; the rest adds to it.
 
-Node 20 or newer, no dependencies. Then set up the lanes: "Categories" on the web board (titles,
-colors, the folders that sort sessions into each lane), or let the agents add them.
+1. **The plugin and its install** (required).
 
-Key, in herdr's `config.toml`:
+   ```sh
+   herdr plugin install MokuTeam/herdr-agent-board   # or clone it and: herdr plugin link <folder>
+   herdr plugin action invoke agent-board.install
+   ```
 
-```toml
-[[keys.command]]
-key = "prefix+a"
-type = "plugin_action"
-command = "agent-board.open"
-description = "agent board"
-```
+   The install puts two commands into `~/.local/bin` (a sh script for Git Bash, Linux and macOS,
+   a `.cmd` for PowerShell): `board`, which agents keep their cards current with, and
+   [`spawn-agent`](#spawn-agent), which starts a session in a new herdr tab. It registers the
+   Claude Code hooks (SessionStart, UserPromptSubmit) that brief every session about the board,
+   and the status line when you have none (usage windows and context fill on the board). It
+   replaces only its own entries in `~/.claude/settings.json`, keeps a copy of the file before
+   (`settings.json.bak-agent-board`), leaves a command of someone else's name alone, and ends with
+   the check below. `~/.local/bin` must be on PATH. Run it again after the plugin moved or was
+   updated: the hooks and the commands point at the plugin's folder.
+2. **A key** (recommended), in herdr's `config.toml` (`%APPDATA%\herdr\config.toml` on Windows,
+   `~/.config/herdr/config.toml` elsewhere), then `herdr server reload-config`. Without it the
+   board opens with `herdr plugin action invoke agent-board.open`.
+
+   ```toml
+   [[keys.command]]
+   key = "prefix+a"
+   type = "plugin_action"
+   command = "agent-board.open"
+   description = "agent board"
+   ```
+
+3. **How Claude starts** (optional). New sessions from the board and from `spawn-agent` start as
+   `claude` in a new tab. `launch.claude` in the board's config.json changes that: say
+   `["claude", "--dangerously-skip-permissions"]` (your call: Claude then runs every tool without
+   asking), a model, or a launcher of your own, such as tg-mcp's
+   [`claude-tg`](https://github.com/Eithery-rc/tg-mcp#herdr-launcher), which gives each herdr tab
+   its own Telegram topic. See [New sessions](#new-sessions).
+4. **[herdr-wake](https://github.com/Eithery-rc/tg-mcp/tree/main/herdr-wake)** (optional, worth it
+   with many sessions). It puts sessions that sat idle for an hour to sleep and wakes them for a
+   message, a reminder or a click; with [tg-mcp](https://github.com/Eithery-rc/tg-mcp) it also
+   brings your Telegram messages to them. Without it the board has no "Put to sleep" and "Wake",
+   shows no sleeping sessions, and a reminder cannot wake one. The board finds it at `wakeUrl`
+   (`http://127.0.0.1:12421`).
+5. **Desktop notifications** (optional, Windows): `herdr plugin action invoke
+   agent-board.notifications`. See [Notifications](#notifications).
+6. **Lanes**: "Categories" on the web board (titles, colors, the folders that sort sessions into
+   each lane), or let the agents add them.
+
+`board doctor` (or `herdr plugin action invoke agent-board.doctor`) says what is set up and what
+is not, what each missing piece costs and how to fix it: the commands (and whether PowerShell or
+Git Bash finds someone else's of that name first), the hooks and the status line (and whether they
+run this copy of the plugin), the key, herdr-wake, how new sessions start, the notifications. The
+web board says it too, quietly: "Setup incomplete" in its toolbar while something the board needs
+does not work (see [Web board](#web-board)).
 
 ## Web board
 
@@ -38,8 +75,8 @@ need an `X-Board` header, so no other site can type into a session). Open it wit
 terminal board or `herdr plugin action invoke agent-board.web`: an Edge app window of its own,
 raised when it is already open.
 
-To land on one session, from a desktop notification's click handler say: `node src/web-open.mjs
---pane <herdr pane id>`. The board's window comes up and opens that session's sheet (a page in
+To land on one session, from a desktop notification's click handler (the board's own
+[notifications](#notifications) do this) say: `node src/web-open.mjs --pane <herdr pane id>`. The board's window comes up and opens that session's sheet (a page in
 a minimized or covered window is told as it connects again, within 15 s); with no board window,
 a new one opens on it (`#session=<key>` in its address). It does not start the
 board: exit code 3 means the board does not run or has no session in that pane, so the handler
@@ -71,6 +108,12 @@ can go to the pane in herdr instead. The same goes to the board as `POST /api/re
   bottom), it shows the card on the left and the conversation on the right. "Categories" opens
   in the same place. On a phone it stays the full-height sheet.
 - `/` search, Esc closes. Light and dark, reduced motion and transparency respected.
+- "Setup incomplete" in the toolbar, quietly, while something the board needs does not work on
+  this computer (the checks of `board doctor`, run when the board starts and every 10 minutes).
+  It opens the list: what is set up, what is not, what each missing piece costs and how to fix
+  it, with the commands to copy. Optional parts that are off (herdr-wake, notifications) are
+  listed but never raise it. "Hide until something changes" puts it away until the problems are
+  other ones.
 - The sheet's thread renders Markdown (headings, lists, tables, code, quotes, links; escaped,
   links http(s) only). Files and screenshots go with a message: the clip, Ctrl+V, or a drop on
   the panel. They upload to `%LOCALAPPDATA%\herdr\plugins\agent-board\uploads\<day>\` (kept 14
@@ -148,12 +191,20 @@ herdr; the card says it waits there.
 
 How it starts, by `launch` in config.json:
 
-- Nothing set (the default): through herdr. A tab in the chosen workspace (or a new workspace),
-  `herdr agent start <name> --kind claude --pane <tab's pane> -- --session-id <id>`, then
-  `/rename <name>` and the first message. The session id is the board's, so the card has its
-  lane before Claude starts. When Claude stops at a dialog (trusting the folder), the card says
-  so; answer it in herdr and the board goes on. `launch.agent` picks another herdr agent kind,
-  `launch.args` adds the agent's own arguments, `launch.timeoutSec` (120) how long to wait.
+- Nothing set (the default): the board's own [spawn-agent](#spawn-agent), run as a launcher (see
+  `launch.command` below), with a session id the board picked, so the card has its lane before
+  Claude starts. A new workspace's first tab is used for the session. `launch.claude` (`"claude"`)
+  is what it types into the tab: a program, or a list of the program and its arguments, such as
+  `["claude", "--dangerously-skip-permissions"]` or `["claude-tg"]`. `launch.timeoutSec` (120)
+  is how long it waits for Claude to be ready. When Claude stops at a dialog before that, the card
+  says so: the folder trust as below, any other in herdr; the board then names the session and
+  sends the first message.
+- `launch.agent`: through herdr itself. A tab in the chosen workspace (or a new workspace),
+  `herdr agent start <name> --kind <agent> --pane <tab's pane> -- --session-id <id>` (the id for
+  `claude` only), then `/rename <name>` and the first message. When Claude stops at a dialog, the
+  card says so; answer it in herdr and the board goes on. herdr starts the agent kind's own
+  program, so `launch.claude` does not apply; `launch.args` adds the agent's arguments,
+  `launch.timeoutSec` (120) how long to wait.
 - `launch.command`: your own launcher, run without a shell. The first element is the program,
   each other element one argument, with `{name}`, `{label}`, `{cwd}`, `{workspace}` (herdr
   workspace id), `{workspaceLabel}`, `{category}`, `{message}`, `{messageFile}` (the first message
@@ -175,12 +226,52 @@ How it starts, by `launch` in config.json:
 
 ```json
 "launch": {
-  "command": ["pwsh", "-NoProfile", "-File", "C:\\tools\\spawn-agent.ps1",
+  "command": ["pwsh", "-NoProfile", "-File", "C:\\tools\\start-session.ps1",
               "-Name", "{name}", "-Cwd", "{cwd}", "-Workspace", "{workspace}",
               ["-BriefFile", "{messageFile}"]],
   "timeoutSec": 180
 }
 ```
+
+### spawn-agent
+
+The command the board starts sessions with, and agents start other sessions with (the install
+puts it on PATH; it is `node src/spawn.mjs`):
+
+```
+spawn-agent --name <Name> --cwd <folder> [--label <tab label>]
+            [--brief-file <utf-8 file> | --brief <text>] [--workspace <herdr workspace id>]
+            [--timeout-sec 120] [--session-id <uuid>] [--pane <herdr pane id>]
+```
+
+PowerShell's spelling works too: `-Name`, `-Cwd`, `-Label`, `-BriefFile`, `-Brief`, `-Workspace`,
+`-TimeoutSec`. It opens a tab in the workspace (inside herdr the current one, from
+`HERDR_WORKSPACE_ID`), labelled with `--label` or the name, and types `launch.claude` into it
+(with `--session-id` when given). Once herdr sees Claude ready, it gives the agent a herdr name to
+address it by (the name in `[a-z0-9_-]`, Cyrillic spelled in Latin, `-2` when taken), types
+`/rename <Name>`, then the brief. It prints
+
+```
+pane=<pane id> name=<Name> agent=<herdr name>
+```
+
+which is how the board knows who started whom. It fails (exit code 1, the reason on stderr) when
+the folder is not there, Claude is not ready in time, or Claude waits for a dialog first (the
+folder trust): answer it in that tab, then name and brief the session there. `--pane` starts
+Claude in that pane, at a shell prompt, instead of a new tab.
+
+Details it takes care of: `/rename` runs without a turn, so herdr calls it stalled, and the
+screen is read for "Session renamed" instead. Right after it Claude can drop typed text, and a
+short turn can end before herdr sees it working: a brief herdr calls stalled gets an Enter when
+it is still on screen (or shows as a pasted-text chip), else it is typed again, three times at
+most. A brief that starts with a dash goes with a space before it, or herdr would take it for an
+option. From PowerShell prefer `--brief-file` for a brief with quotes or `&` in it: the `.cmd`
+goes through cmd.exe. From Git Bash, a brief that starts with `/` (a slash command) reaches it
+as a path (MSYS rewrites such arguments for Windows programs): use `--brief-file` there too.
+
+`launch.claude` is typed at the tab's shell prompt (PowerShell, bash, zsh, fish): plain words as
+they are, other arguments in single quotes (no single quote or control character in them). The
+program itself must be a name on PATH, or a path without spaces.
 
 Launches live in the board's memory. A board that restarts in the middle of one forgets it: its
 card goes, a launcher it ran is left running (and finishes or fails on its own), and a session
@@ -473,6 +564,40 @@ are files, and the board keeps running.
 - The terminal board shows `⏰` (`⏳` for one that waits until the session is free) and the soonest
   time by a card's age, the count in its header.
 
+## Notifications
+
+On Windows, `herdr plugin action invoke agent-board.notifications` (`node src/install.mjs
+--toast`) adds Claude Code hooks that show a Windows notification in the agent's own words:
+
+- a session finished its turn: its last reply;
+- it needs a permission or asks for input (Notification, `permission_prompt` and
+  `elicitation_dialog`): Claude's message;
+- it asks a question (AskUserQuestion): the question.
+
+The title is `<workspace> · <session>`. None comes for the pane you are looking at (focused in
+herdr, with the terminal in front), for a subagent, or for a `claude -p` run inside a session. A
+newer one replaces the pane's last one in the notification center. They make no sound (herdr
+plays its own). A click opens that session on the web board when the board runs and has it (as
+`src/web-open.mjs --pane` does); else herdr goes to the pane and the terminal comes to the front.
+
+The click goes through a `claude-pane:<pane id>` link, a URL protocol the script registers for
+the current user (`HKCU\Software\Classes\claude-pane`, and the app id `Herdr.ClaudeAgent` that
+names the notifications). Any program or page can open such a link, so the handler takes nothing
+but a pane id (`w1:p2`) and only shows or focuses that pane.
+
+Keep herdr's own notifications off (`[ui.toast] delivery = "off"`, herdr's default), or each
+comes twice; `board doctor` says when they are on. `node src/install.mjs --no-toast` takes the
+hooks out again (the protocol entry stays; it only ever opens a pane). The hooks run
+`powershell -File src\toast.ps1` from the plugin's folder, in the background, so Claude does not
+wait for them. To see one, from a herdr pane (`force` shows it for the pane you are in):
+
+```powershell
+'{"hook_event_name":"Stop","last_assistant_message":"Hello"}' | powershell -NoProfile -File src\toast.ps1 force
+```
+
+On Linux and macOS the board shows none; herdr's own (`delivery = "system"`) say that a session
+finished, without its words.
+
 ## Language
 
 English and Russian. The globe button on the web board's toolbar switches between them; the
@@ -528,6 +653,9 @@ payload), `POST /api/launch/<id>/dismiss` and `/focus`. `POST /api/launch` also 
 own `Origin` when the browser sends one, and fresh herdr data like every action through herdr.
 Renaming: `POST /api/session/<key>/rename` with `{ name, claude }`.
 
+Setup (`src/setup.mjs`, `web/setup.js`): `GET /api/setup` runs the checks again and answers
+`{ checks, todo, sig }`; the board payload has `setup: { todo, sig }` from the last check.
+
 ## Board keys
 
 | Key | Action |
@@ -563,6 +691,8 @@ board every "<cron>" "<text>"  the same on a cron schedule
 board schedule [--all]    this session's entries (every session's)
 board unschedule <id|all> remove an entry (all: every entry of this session)
 --session <id|name|pane>  for another session's card
+board doctor              what is set up on this computer, and what is missing
+spawn-agent --name <Name> --cwd <folder> [--brief-file <file>]   a new session in a herdr tab
 ```
 
 ## Settings
@@ -574,8 +704,8 @@ default: the board lives in a workspace of its own and stays open; `tab`; `overl
 busy session, 240), `port` (web board, 12422), `web` (false turns the
 web board off), `terminal` (false turns the web board's [terminal](#terminal) off), `browser`
 (path for the app window), `terminalTitle` (window title pattern to
-raise, default `<COMPUTERNAME>:*`), `raiseTerminal`, `launch` (how new sessions start, see
-[New sessions](#new-sessions)).
+raise, default `<COMPUTERNAME>:*`), `raiseTerminal`, `launch` (how new sessions start: `claude`,
+`command`, `agent`, `args`, `timeoutSec`, see [New sessions](#new-sessions)).
 
 Cards: `%LOCALAPPDATA%\herdr\plugins\agent-board\cards\<session id>.json`.
 

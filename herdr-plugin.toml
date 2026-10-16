@@ -24,9 +24,22 @@ command = ["node", "src/web-open.mjs"]
 
 [[actions]]
 id = "install"
-title = "Agent board: install the board command and the Claude Code hooks"
+title = "Agent board: install the board and spawn-agent commands and the Claude Code hooks"
 contexts = ["workspace"]
 command = ["node", "src/install.mjs"]
+
+# Windows: notifications with the agent's words; a click opens the session on the board.
+[[actions]]
+id = "notifications"
+title = "Agent board: desktop notifications (Windows)"
+contexts = ["workspace"]
+command = ["node", "src/install.mjs", "--toast"]
+
+[[actions]]
+id = "doctor"
+title = "Agent board: check the setup"
+contexts = ["workspace"]
+command = ["node", "src/cli.mjs", "doctor"]
 
 [[panes]]
 id = "board"

@@ -6,6 +6,7 @@
 // (English: one, other; Russian: one, few, many). A key missing in a language falls back to English.
 
 import { LAUNCH_STRINGS } from './i18n-launch.js'
+import { SETUP_STRINGS } from './i18n-setup.js'
 
 export const LANGUAGES = { en: 'English', ru: 'Русский' }
 /** The language's name in English, for the agents' brief. */
@@ -1122,8 +1123,9 @@ const STRINGS = {
   },
 }
 
-// New sessions, the context menus and renaming keep their texts in a file of their own.
-for (const [code, dict] of Object.entries(LAUNCH_STRINGS)) Object.assign(STRINGS[code], dict)
+// New sessions, the context menus and renaming keep their texts in a file of their own; so does
+// the setup check.
+for (const strings of [LAUNCH_STRINGS, SETUP_STRINGS]) for (const [code, dict] of Object.entries(strings)) Object.assign(STRINGS[code], dict)
 
 /** "auto" or anything without a dictionary: the system's language when there is one for it, else English. */
 export function resolveLanguage(pref, locale) {

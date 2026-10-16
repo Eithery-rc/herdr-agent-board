@@ -32,6 +32,7 @@ import { parseDialog, publicDialog } from './questions.mjs'
 import { CARDS_DIR, ROOT, STATE_DIR } from './paths.mjs'
 import { listEntries, readLog, removeEntry, SCHEDULE_DIR, updateEntry } from './schedule.mjs'
 import { startScheduler } from './scheduler.mjs'
+import { checkSetup, gatherFacts, todo } from './setup.mjs'
 import { writeCard } from './store.mjs'
 import { createTerminals } from './terminal.mjs'
 
@@ -145,6 +146,17 @@ export function startServer({ cfg, log = () => {} } = {}) {
   const terminals = createTerminals({ onChange: () => publish() })
   // On unless config.json says otherwise: only a missing setting or true turns it on.
   const terminalOn = () => cfg.terminal === undefined || cfg.terminal === true
+  // What of the board is not set up on this computer (setup.mjs), for the page's quiet note:
+  // { todo, sig }, the sig naming the problems (in English, so a language switch is no news).
+  // Checked at the start, every 10 minutes and whenever the page opens the note.
+  let setup = null
+  async function checkSetupNow() {
+    const facts = await gatherFacts(cfg)
+    const open = todo(checkSetup(facts))
+    setup = { todo: open.length, sig: open.map(c => `${c.id}:${c.level}:${c.title}`).join('|') }
+    publish()
+    return checkSetup(facts, t)
+  }
 
   /** The board as clients see it, without the time of the last successful refresh. */
   function board() {
@@ -161,7 +173,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
     // The schedule without the scheduler's bookkeeping; the log is what was sent or missed lately.
     const schedules = listEntries().map(({ claim, tried, waited, ...entry }) => entry)
     // terminal: whether the board offers one (config `terminal`); shells: sessions it opened one for.
-    return { version, lang: lang(), language: cfg.language ?? 'auto', languages: LANGUAGES, fsToken: FILE_TOKEN, stale, limits: claudeLimits(), items: list, launches: launches.list(), categories, swatches: SWATCHES, columns: COLUMNS.map(({ id, title }) => ({ id, title })), schedules, scheduleLog: readLog(20), terminal: terminalOn(), shells: terminalOn() ? terminals.keys() : [] }
+    return { version, lang: lang(), language: cfg.language ?? 'auto', languages: LANGUAGES, fsToken: FILE_TOKEN, stale, limits: claudeLimits(), items: list, launches: launches.list(), categories, swatches: SWATCHES, columns: COLUMNS.map(({ id, title }) => ({ id, title })), schedules, scheduleLog: readLog(20), terminal: terminalOn(), shells: terminalOn() ? terminals.keys() : [], setup }
   }
 
   /**
@@ -419,6 +431,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
       const path = decodeURIComponent(url.pathname)
       const refuseStale = () => stale || !lastSuccessfulRefreshAt || Date.now()-lastSuccessfulRefreshAt > Math.max(10000,(cfg.refreshSec ?? 2)*3000)
 
+      if (req.method === 'GET' && path === '/api/setup') return json(200, { checks: await checkSetupNow(), ...setup })
       if (req.method === 'GET' && path === '/api/board') {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
         return res.end(payload)
@@ -707,6 +720,8 @@ export function startServer({ cfg, log = () => {} } = {}) {
       const scheduler = startScheduler({ cfg, log, onChange: refresh })
       // Shells a board before this one opened and that are gone by now are forgotten.
       if (terminalOn()) terminals.prune()
+      checkSetupNow().catch(err => log(`setup check: ${err.message}`))
+      setInterval(() => checkSetupNow().catch(() => {}), 10 * 60_000).unref()
       resolve({ port, url: `http://127.0.0.1:${port}/`, refresh, scheduler })
     })
   })
