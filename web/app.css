@@ -514,6 +514,10 @@ body.panel-resizing, body.panel-resizing * { cursor: var(--grab-cursor) !importa
   /* Scroll edge: content fades under the head and the composer instead of a hard line. */
   mask-image: linear-gradient(transparent, #000 10px, #000 calc(100% - 14px), transparent);
 }
+.detail-status { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px; margin: 4px 0 8px; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--orange) 12%, var(--surface)); font-size: 12px; }
+.detail-status span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.detail-status small { display: block; color: var(--label-2); margin-top: 3px; }
+.sheet-body.has-detail-state { mask-image: none; }
 .sheet-card { flex: 0 1 auto; min-height: 0; overflow: auto; padding: 0 18px 6px 22px; }
 .sheet-card .group { margin-top: 2px; }
 .group { margin-top: 14px; border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-card); }

@@ -22,6 +22,14 @@ const PLURAL = {
 
 const STRINGS = {
   en: {
+    'detail.error': 'Could not read the conversation: {error}',
+    'detail.retry': 'Retry',
+    'detail.stale': 'Session data is out of date. The last read conversation is shown.',
+    'detail.refreshing': 'Refreshing the conversation…',
+    'detail.readAt': 'Last read at {time}',
+    'detail.missing': 'This session is no longer on the board. Your draft is kept; session actions are unavailable.',
+    'detail.missingShort': 'Session unavailable',
+    'detail.noTranscript': 'The conversation could not be loaded.',
     'history.open': 'History',
     'history.hint': 'Search the past Claude sessions of this project',
     'history.title': 'Project history',
@@ -390,6 +398,14 @@ const STRINGS = {
   },
 
   ru: {
+    'detail.error': 'Не удалось прочитать переписку: {error}',
+    'detail.retry': 'Повторить',
+    'detail.stale': 'Сведения о сессии устарели. Показана последняя прочитанная переписка.',
+    'detail.refreshing': 'Обновляю переписку…',
+    'detail.readAt': 'Последнее чтение в {time}',
+    'detail.missing': 'Сессии больше нет на доске. Черновик сохранён; действия с сессией недоступны.',
+    'detail.missingShort': 'Сессия недоступна',
+    'detail.noTranscript': 'Переписка не загружена.',
     'history.open': 'История',
     'history.hint': 'Поиск по прошлым сессиям Claude этого проекта',
     'history.title': 'История проекта',
