@@ -1110,7 +1110,9 @@ button.swatch:active { transform: scale(0.88); }
 .ql-body { position: relative; flex: 1; min-height: 0; overflow: auto; background: var(--surface); }
 .ql-foot { min-height: 30px; padding: 7px 14px; border-top: 0.5px solid var(--separator); box-sizing: border-box; font-size: 12px; color: var(--label-2); font-variant-numeric: tabular-nums; }
 .look-foot { display: flex; align-items: center; gap: 12px; }
-.look-foot-text { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.look-foot-text { flex: 1; min-width: 0; }
+/* Beside the zoom bar the facts stay on one line; elsewhere they wrap as they always did. */
+.look-foot:has(.ql-zoom:not([hidden])) .look-foot-text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 /* The zoom: the scale, quiet, and one button in to 100% or back to fit. */
 .ql-zoom { display: inline-flex; flex: none; align-items: center; gap: 8px; margin: -4px -6px -4px 0; }
 .ql-zoom[hidden] { display: none; }
@@ -1118,6 +1120,11 @@ button.swatch:active { transform: scale(0.88); }
 .ql-zoom-button:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .ql-zoom-button:active { transform: scale(0.96); }
 .ql-zoom-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (pointer: coarse) {
+  /* A finger gets a bigger target than the button shows. */
+  .ql-zoom-button { position: relative; }
+  .ql-zoom-button::after { content: ''; position: absolute; inset: -10px -8px; }
+}
 .ql-wait { padding: 48px; text-align: center; color: var(--label-3); }
 
 .ql-code { width: max-content; min-width: 100%; padding: 10px 0 16px; box-sizing: border-box; font: 12.5px/1.6 var(--mono); }

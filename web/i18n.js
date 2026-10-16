@@ -307,7 +307,7 @@ const STRINGS = {
     'ql.modified': 'modified {date}',
     'ql.fit': 'Fit',
     'ql.fitHint': 'Fit to the window (0)',
-    'ql.zoomTo': 'Zoom to {pct} (double-click)',
+    'ql.zoomTo': 'Zoom to {pct}',
 
     // web board: toolbar
     'tb.title': 'Agents',
@@ -860,7 +860,7 @@ const STRINGS = {
     'ql.modified': 'изменён {date}',
     'ql.fit': 'Вписать',
     'ql.fitHint': 'Вписать в окно (0)',
-    'ql.zoomTo': 'Масштаб {pct} (двойной щелчок)',
+    'ql.zoomTo': 'Масштаб {pct}',
 
     'tb.title': 'Агенты',
     'tb.lanes': 'Категории',

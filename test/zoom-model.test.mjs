@@ -4,6 +4,7 @@ import { project, Spring } from '../web/spring.js'
 import {
   atFit,
   clampView,
+  clickZoom,
   EDGE_RESPONSE,
   fitView,
   fixedPoint,
@@ -19,6 +20,7 @@ import {
   softView,
   stepScale,
   toggleView,
+  unrubberband,
   unsoftScale,
   wheelPan,
   wheelZoom,
@@ -43,6 +45,15 @@ test('fit shows the whole image inside the margin, never above 100%; the limit i
   const icon = zoomLimits({ w: 16, h: 16 }, stage)
   assert.equal(icon.fit, 1)
   near(icon.max, 2 * (780 - 48) / 16)
+})
+
+test('a stage smaller than its margins still gives a finite, centred view', () => {
+  const tiny = { w: 30, h: 20, pad: 24 }
+  const v = fitView(shot, tiny)
+  assert.ok([v.s, v.x, v.y].every(Number.isFinite))
+  assert.ok(v.s > 0)
+  const b = panBounds(2, shot, tiny)
+  assert.ok(b.minX <= b.maxX && b.minY <= b.maxY)
 })
 
 test('a fitted image sits in the middle, like the CSS layout it takes over from', () => {
@@ -110,6 +121,9 @@ test('+ and − step through round scales, fit and the limit included, and stop 
   // From between two stops, the next one in that direction.
   assert.equal(stepScale(1.2, 1, lim), 1.5)
   assert.equal(stepScale(1.2, -1, lim), 1)
+  // A small image fits at 100%: + starts from there.
+  assert.equal(stepScale(1, 1, { fit: 1, max: 8 }), 1.5)
+  assert.equal(stepScale(1, -1, { fit: 1, max: 8 }), 1)
 })
 
 test('past fit or the limit a pinch follows ever more slowly, and the inverse finds the fingers again', () => {
@@ -125,6 +139,9 @@ test('past fit or the limit a pinch follows ever more slowly, and the inverse fi
   }
   assert.ok(softScale(100, lo, hi) < hi * 2)
   near(unsoftScale(softScale(12, lo, hi), lo, hi), 12, 1e-9)
+  // At or past the asymptote (a value no drag shows) the inverse stays finite.
+  assert.ok(Number.isFinite(unrubberband(500, 400)))
+  assert.ok(unrubberband(-500, 400) < 0)
 })
 
 test('dragged past an edge the image follows less and less; a grab mid-bounce starts where the finger would be', () => {
@@ -217,6 +234,18 @@ test('a plain wheel moves a zoomed image; Shift turns it sideways', () => {
   assert.deepEqual(wheelPan({ deltaY: 100, shiftKey: true }), { dx: 100, dy: 0, notch: true })
   assert.deepEqual(wheelPan({ deltaY: 3, deltaMode: 1 }), { dx: 0, dy: 48, notch: true })
   assert.equal(wheelPan({ deltaY: 1, deltaMode: 2 }, 700).dy, 700)
+})
+
+test('a click zooms in from fit; a double-click goes back, but not the one whose first click zoomed in', () => {
+  assert.equal(clickZoom(1, true, false), 'in')
+  assert.equal(clickZoom(1, false, false), null)
+  // The first click of this pair zoomed in: its second click leaves it there.
+  assert.equal(clickZoom(2, false, true), null)
+  // Zoomed already: the first click did nothing, the second goes back to fit.
+  assert.equal(clickZoom(2, false, false), 'fit')
+  assert.equal(clickZoom(3, false, false), null)
+  // A click without a count (from the keyboard) is a first click.
+  assert.equal(clickZoom(0, true, false), 'in')
 })
 
 test('a double-tap is two taps close in time and place', () => {

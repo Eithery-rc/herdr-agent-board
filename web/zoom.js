@@ -8,6 +8,7 @@ import { reducedMotion, Spring, velocityOf } from './spring.js'
 import {
   atFit,
   clampView,
+  clickZoom,
   EDGE_RESPONSE,
   fitView,
   fixedPoint,
@@ -62,7 +63,7 @@ export function zoomImage(stage, img, { size, vector = false, onChange = () => {
     img.classList.toggle('pixelated', !vector && pixelated(view.s, dpr))
     const lim = limits()
     const fit = atFit(goal.s, lim.fit)
-    stage.dataset.zoom = fit ? 'fit' : 'in'
+    if (stage.dataset.zoom !== (fit ? 'fit' : 'in')) stage.dataset.zoom = fit ? 'fit' : 'in'
     onChange({ s: view.s, fit, to: zoomInScale(lim) })
   }
 
@@ -94,18 +95,22 @@ export function zoomImage(stage, img, { size, vector = false, onChange = () => {
     })
   const springs = { x: axis('x'), y: axis('y') }
 
+  // Where the wheel's own notches are headed, while they animate.
+  let notchGoal = null
   function stop() {
     zs.stop()
     springs.x.stop()
     springs.y.stop()
     edges.x = edges.y = null
     goal = view
+    notchGoal = null
   }
 
   /** Head for `target` (within the limits) from wherever the image is now. */
   function animate(target, response = 0.4) {
     edges.x = edges.y = null
     goal = target
+    notchGoal = null
     const p = fixedPoint(view, target)
     if (!p) {
       zs.stop()
@@ -236,10 +241,10 @@ export function zoomImage(stage, img, { size, vector = false, onChange = () => {
     stage.classList.remove('dragging')
     // A mouse press that never dragged is a click (below), and leaves any motion running.
     if (!g) return
-    const center = g.pinch ? (g.at ?? g.c0) : p
-    if (e.type !== 'pointerup') return settle({ x: 0, y: 0 }, center)
+    const at = g.pinch ? (g.at ?? g.c0) : p
+    if (e.type !== 'pointerup') return settle({ x: 0, y: 0 }, at)
     // Held still before letting go: no glide.
-    samples.push({ ...(g.pinch ? center : local(e)), t: e.timeStamp })
+    samples.push({ ...(g.pinch ? at : local(e)), t: e.timeStamp })
     if (press.type !== 'mouse' && !press.moved && !press.pinched && e.timeStamp - press.t < 400) {
       const tap = { x: p.x, y: p.y, t: e.timeStamp }
       if (isDoubleTap(lastTap, tap)) {
@@ -248,7 +253,8 @@ export function zoomImage(stage, img, { size, vector = false, onChange = () => {
       }
       lastTap = tap
     }
-    settle(velocityOf(samples), center)
+    // A tap's wobble is not a flick.
+    settle(press.moved || press.pinched ? velocityOf(samples) : { x: 0, y: 0 }, at)
   }
   stage.addEventListener('pointerup', end)
   stage.addEventListener('pointercancel', end)
@@ -259,32 +265,38 @@ export function zoomImage(stage, img, { size, vector = false, onChange = () => {
   let clickedIn = false
   stage.addEventListener('click', e => {
     if (!press || press.type !== 'mouse' || press.moved) return
-    const fit = atFit(goal.s, limits().fit)
-    if (e.detail <= 1) {
-      clickedIn = fit
-      if (fit) animate(toggleView(goal, local(e), size, room), 0.42)
-    } else if (e.detail === 2 && !clickedIn && !fit) animate(fitView(size, room), 0.42)
+    const act = clickZoom(e.detail, atFit(goal.s, limits().fit), clickedIn)
+    if (e.detail <= 1) clickedIn = act === 'in'
+    if (act === 'in') animate(toggleView(goal, local(e), size, room), 0.42)
+    else if (act === 'fit') animate(fitView(size, room), 0.42)
   })
 
   stage.addEventListener(
     'wheel',
     e => {
       e.preventDefault()
-      if (gesture) return
+      if (gesture || (!e.deltaX && !e.deltaY)) return
       const p = local(e)
+      // A notch animates on from where the motion was headed. A trackpad's small steps follow at
+      // once, from where the notches were headed if they still run, so a mix loses nothing.
+      const step = (notch, next) => {
+        if (notch) {
+          animate(next(goal), 0.28)
+          notchGoal = goal
+          return
+        }
+        const base = notchGoal && (zs.moving || springs.x.moving || springs.y.moving) ? notchGoal : view
+        stop()
+        view = goal = next(base)
+        paint()
+      }
       if (e.ctrlKey) {
         const { factor, notch } = wheelZoom(e)
-        if (notch) return animate(zoomTo(goal, goal.s * factor, p, size, room), 0.28)
-        stop()
-        view = goal = zoomTo(view, view.s * factor, p, size, room)
-        return paint()
+        return step(notch, v => zoomTo(v, v.s * factor, p, size, room))
       }
       if (atFit(goal.s, limits().fit)) return
       const { dx, dy, notch } = wheelPan(e, room.h * 0.9)
-      if (notch) return animate(clampView({ ...goal, x: goal.x - dx, y: goal.y - dy }, size, room), 0.28)
-      stop()
-      view = goal = clampView({ ...view, x: view.x - dx, y: view.y - dy }, size, room)
-      paint()
+      step(notch, v => clampView({ ...v, x: v.x - dx, y: v.y - dy }, size, room))
     },
     { passive: false },
   )
@@ -325,15 +337,15 @@ export function zoomImage(stage, img, { size, vector = false, onChange = () => {
   resize.observe(stage)
   paint()
 
-  const center = () => ({ x: room.w / 2, y: room.h / 2 })
+  const middle = () => ({ x: room.w / 2, y: room.h / 2 })
   return {
     /** The zoom keys; true when the key was one of them. */
     key(e) {
       if (!stage.isConnected || e.altKey || gesture) return false
       const lim = limits()
       const k = e.key
-      if (k === '+' || k === '=') animate(zoomTo(goal, stepScale(goal.s, 1, lim), center(), size, room), 0.3)
-      else if (k === '-' || k === '_') animate(zoomTo(goal, stepScale(goal.s, -1, lim), center(), size, room), 0.3)
+      if (k === '+' || k === '=') animate(zoomTo(goal, stepScale(goal.s, 1, lim), middle(), size, room), 0.3)
+      else if (k === '-' || k === '_') animate(zoomTo(goal, stepScale(goal.s, -1, lim), middle(), size, room), 0.3)
       else if (k === '0') animate(fitView(size, room), 0.4)
       else if (/^Arrow/.test(k) && !e.ctrlKey && !e.metaKey && !e.shiftKey && !atFit(goal.s, lim.fit)) {
         const dx = k === 'ArrowLeft' ? -1 : k === 'ArrowRight' ? 1 : 0
@@ -343,7 +355,7 @@ export function zoomImage(stage, img, { size, vector = false, onChange = () => {
       return true
     },
     /** The footer's button: in from fit around the middle, else back to fit. */
-    toggle: () => animate(toggleView(goal, center(), size, room), 0.42),
+    toggle: () => animate(toggleView(goal, middle(), size, room), 0.42),
     destroy() {
       stop()
       resize.disconnect()

@@ -20,7 +20,7 @@ const DECELERATION = 0.998
 export const GLIDE_RESPONSE = (2 * Math.PI) / (-Math.log(DECELERATION) * 1000)
 /** Back from past an edge, and the bounce at an edge a glide runs into. */
 export const EDGE_RESPONSE = 0.4
-export const DOUBLE_TAP = { ms: 320, px: 40 }
+const DOUBLE_TAP = { ms: 320, px: 40 }
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v))
 
@@ -162,6 +162,15 @@ export function wheelPan({ deltaX = 0, deltaY = 0, deltaMode = 0, shiftKey = fal
   let dy = deltaY * k
   if (shiftKey && !dx) [dx, dy] = [dy, 0]
   return { dx, dy, notch: deltaMode !== 0 || Math.max(Math.abs(dx), Math.abs(dy)) >= 50 }
+}
+
+/**
+ * What a mouse click on the image does: the first click of a run zooms in from fit, the second
+ * goes back to fit, unless the first one of the pair just zoomed in. 'in', 'fit' or null.
+ */
+export function clickZoom(detail, fit, clickedIn) {
+  if (detail <= 1) return fit ? 'in' : null
+  return detail === 2 && !clickedIn && !fit ? 'fit' : null
 }
 
 export function isDoubleTap(prev, tap) {

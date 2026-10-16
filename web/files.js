@@ -180,7 +180,11 @@ export function initFiles({ t, token, toast, canMutate = () => true, onDialogCha
   const focus = modalFocus(root, win)
   const scrim = $(root, '.ql-scrim')
   const body = $(root, '.ql-body')
-  const setFoot = text => ($(root, '.look-foot-text').textContent = text)
+  function setFoot(text) {
+    const el = $(root, '.look-foot-text')
+    el.textContent = text
+    el.title = text
+  }
 
   const ql = { stack: [], origin: null, seq: 0, mode: 'view', data: null }
   // p: 0 = folded into the chip it came from, 1 = open. Interruptible: a close while opening
@@ -198,12 +202,14 @@ export function initFiles({ t, token, toast, canMutate = () => true, onDialogCha
     return percentIn.format.format(s)
   }
   function zoomBar(z) {
-    const level = z ? percent(z.s) : ''
-    const label = z ? (z.fit ? percent(z.to) : tr('ql.fit')) : ''
-    if (`${level}|${label}` === zoomShown) return
-    zoomShown = `${level}|${label}`
+    // Called on every frame of a zoom: the text is only rebuilt when a whole percent changes.
+    const shown = z ? `${t().lang}|${Math.round(z.s * 100)}|${z.fit ? Math.round(z.to * 100) : 'fit'}` : ''
+    if (shown === zoomShown) return
+    zoomShown = shown
     zoomBox.hidden = !z
     if (!z) return
+    const level = percent(z.s)
+    const label = z.fit ? percent(z.to) : tr('ql.fit')
     const hint = z.fit ? tr('ql.zoomTo', { pct: label }) : tr('ql.fitHint')
     $(zoomBox, '.ql-zoom-level').textContent = level
     const button = $(zoomBox, 'button')
@@ -297,12 +303,12 @@ export function initFiles({ t, token, toast, canMutate = () => true, onDialogCha
   async function show(fresh = false) {
     const target = ql.stack.at(-1)
     const seq = ++ql.seq
+    dropZoom()
     $(root, '.ql-back').hidden = ql.stack.length < 2
     $(root, '.ql-refresh').hidden = !target.changes
     if (target.changes) return showChanges(target, seq, fresh)
     if (target.history) return showHistory(target)
     head({ path: target.path, name: target.path.split(/[\\/]/).filter(Boolean).pop() ?? target.path, kind: 'file' })
-    dropZoom()
     body.className = 'ql-body loading'
     body.innerHTML = `<div class="ql-wait">${esc(tr('loading'))}</div>`
     setFoot('')
@@ -326,7 +332,6 @@ export function initFiles({ t, token, toast, canMutate = () => true, onDialogCha
       return render()
     }
     head({ kind: 'changes', name: tr('changes.title'), path: target.cache?.path ?? '' })
-    dropZoom()
     body.className = 'ql-body loading'
     body.innerHTML = `<div class="ql-wait">${esc(tr('loading'))}</div>`
     setFoot('')
@@ -403,10 +408,12 @@ export function initFiles({ t, token, toast, canMutate = () => true, onDialogCha
     img?.addEventListener(
       'load',
       () => {
+        // Walked away before it loaded: the footer is someone else's by now.
+        if (!img.isConnected) return
         if (img.naturalWidth) setFoot([`${img.naturalWidth} × ${img.naturalHeight}`, ...foot].filter(Boolean).join(' · '))
         // An SVG without a size of its own zooms from the size it was fitted at.
         const size = img.naturalWidth && img.naturalHeight ? { w: img.naturalWidth, h: img.naturalHeight } : { w: img.offsetWidth, h: img.offsetHeight }
-        if (d.kind === 'image' && img.isConnected && size.w && size.h) zoom = zoomImage(img.parentElement, img, { size, vector: /\.svg$/i.test(d.path), onChange: zoomBar })
+        if (d.kind === 'image' && size.w && size.h) zoom = zoomImage(img.parentElement, img, { size, vector: /\.svg$/i.test(d.path), onChange: zoomBar })
       },
       { once: true },
     )
