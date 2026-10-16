@@ -1,4 +1,5 @@
 import { boardConnection, dialogHistory } from './lifecycle.js'
+import { outsidePanelPress, panelPress } from './click-away.js'
 // Agent board, web. Live data over Server-Sent Events; every change of place animates with a
 // spring from where the card is on screen (FLIP), drags stay glued to the pointer and land
 // with the pointer's velocity, and the session sheet can be flicked away.
@@ -761,13 +762,12 @@ function onCardClick(e) {
 {
   let down = null
   const keeps = '.sheet, .ql, .launch, .menu, .rename, .card, .lane-head, .layout-menu, button, input, textarea, select, label, a, [data-act]'
-  addEventListener('pointerdown', e => (down = e.button === 0 ? { x: e.clientX, y: e.clientY, target: e.target, menu: menuOpen() } : null), true)
+  addEventListener('pointerdown', e => (down = panelPress(e, keeps, menuOpen())), true)
   addEventListener('click', e => {
     const d = down
     down = null
     const open = panels.find(p => p.isOpen)
-    if (!open || !d || d.menu || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 6) return
-    if (d.target.closest?.(keeps) || e.target.closest?.(keeps)) return
+    if (!open || !outsidePanelPress(d, e, keeps)) return
     open.close()
   })
 }
@@ -783,7 +783,7 @@ const dialogBack = dialogHistory({
   mobile: () => matchMedia('(max-width: 760px)').matches,
   // Asked at once when a reload finds the Back sentinel: launchUI is set up just below.
   isOpen: () => menu.isOpen() || !!launchUI?.isOpen() || files.isOpen() || panels.some(panel => panel.isOpen),
-  closeTop: () => menu.isOpen() ? menu.close() : launchUI?.isOpen() ? launchUI.close() : files.isOpen() ? files.close() : panels.find(panel => panel.isOpen)?.close(),
+  closeTop: () => menu.isOpen() ? menu.close() : launchUI?.isOpen() ? launchUI.close() : files.isOpen() ? files.back() : panels.find(panel => panel.isOpen)?.close(),
 })
 launchUI = initLaunch({
   t: () => t,
