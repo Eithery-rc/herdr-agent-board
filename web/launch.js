@@ -8,6 +8,7 @@
 // to browse, Finder style. The browser offers no picker that gives an absolute path, so this is ours.
 import { baseName, categoryForDir, checkBranch, checkName, completions, defaultWorkspace, folderSuggestions, NAME_MAX, slugName, splitPathInput, suggestName, worktreePath } from './launch-model.js'
 import { reducedMotion, Spring } from './spring.js'
+import { modalFocus } from './modal-focus.js'
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
 const svg = body => `<svg viewBox="0 0 20 20" aria-hidden="true">${body}</svg>`
@@ -103,6 +104,7 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
   document.body.append(root)
   const $ = sel => root.querySelector(sel)
   const win = $('.launch-win')
+  const focus = modalFocus(root, win)
   const scrim = $('.launch-scrim')
   const form = $('form')
   const f = {
@@ -175,6 +177,7 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
     origin = fromEl
     s = { ctx, set: {}, check: null, git: null, cache: new Map(), retry: ctx.retry ?? null }
     root.hidden = false
+    focus.open(fromEl instanceof Element ? fromEl : document.activeElement)
     labels()
     fill(ctx)
     from = measure(rectOf(fromEl))
@@ -208,7 +211,7 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
   function finishClose() {
     root.hidden = true
     s = null
-    if (origin instanceof Element && origin.isConnected) origin.focus?.({ preventScroll: true })
+    focus.close()
     origin = null
   }
 
@@ -671,7 +674,7 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
   addEventListener(
     'keydown',
     e => {
-      if (root.hidden || motion.target === 0) return
+      if (root.hidden || motion.target === 0 || !focus.isTop()) return
       if (e.key === 'Escape') {
         e.preventDefault()
         e.stopImmediatePropagation()
@@ -687,16 +690,6 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
       } else if (e.key === 'Enter' && e.target.matches?.('input[name="name"], input[name="newWorkspace"], input[name="branch"]')) {
         e.preventDefault()
         submit()
-      } else if (e.key === 'Tab' && !(e.target === f.cwd && pop.open)) {
-        const all = [...win.querySelectorAll('button, input, select, textarea')].filter(el => !el.disabled && !el.hidden && el.offsetParent)
-        const i = all.indexOf(document.activeElement)
-        if (e.shiftKey && i <= 0) {
-          e.preventDefault()
-          all.at(-1)?.focus()
-        } else if (!e.shiftKey && i === all.length - 1) {
-          e.preventDefault()
-          all[0]?.focus()
-        }
       }
     },
     true,
