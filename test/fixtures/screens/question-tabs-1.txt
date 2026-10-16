@@ -1,0 +1,37 @@
+❯ C:/Program Files/Git/rename q-probe-1
+
+  Ran 1 shell command
+
+❯ This is a UI test session. Do not read files or run tools other than AskUserQuestion. Call the
+  AskUserQuestion tool now with exactly one question: question 'Which color should the test widget use?',
+  header 'Color', multiSelect false, options: 'Red' (description 'A warm red, good for alerts'), 'Green'
+  (description 'Calm green for success states'), 'Blue' (description 'Neutral blue, the default'). After
+  you get the answer, reply with one line saying what was chosen, then wait for the next instruction.
+
+● User answered Claude's questions:
+  ⎿  · Which color should the test widget use? → Blue
+
+● You chose Blue.
+
+✻ Cogitated for 15s · done 11:33 AM
+
+❯ Now call AskUserQuestion once with three questions in this order. Q1: question 'Which size?', header
+  'Size', multiSelect false, options 'Small' (description 'Fits a phone'), 'Large' (description 'Fits a
+  desktop'). Q2: question 'Which toppings?', header 'Toppings', multiSelect true, options 'Cheese'
+  (description 'Melted on top'), 'Olives' (description 'Black, sliced'), 'Basil' (description 'Fresh
+  leaves'). Q3: question 'Deliver when?', header 'When', multiSelect false, options 'Now', 'Later'. After
+  the answers, reply with one line listing them, then wait.
+──────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Size  ☐ Toppings  ☐ When  ✔ Submit  →
+
+Which size?
+
+❯ 1. Small
+     Fits a phone
+  2. Large
+     Fits a desktop
+  3. Type something.
+──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel

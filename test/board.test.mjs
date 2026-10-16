@@ -125,7 +125,8 @@ test('transcript tail: title, last prompt, last words, pending tool; sidechains 
   assert.equal(info.prompt, 'load the receipts')
   assert.equal(info.lastText, 'The file is fine, asking.')
   assert.equal(info.context, 153012) // what the last request carried, cache included; output not
-  assert.deepEqual(info.tool, { name: 'AskUserQuestion', label: 'AskUserQuestion', detail: 'Import 10/23?', pending: true })
+  // No options: a form the board cannot answer, so no questions for it.
+  assert.deepEqual(info.tool, { id: 't2', name: 'AskUserQuestion', label: 'AskUserQuestion', detail: 'Import 10/23?', pending: true, questions: null })
 
   const conv = conversation(file)
   assert.deepEqual(conv.map(c => c.role), ['user', 'assistant', 'tool', 'assistant', 'tool', 'user'])

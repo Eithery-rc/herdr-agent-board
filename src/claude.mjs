@@ -5,6 +5,7 @@ import { closeSync, openSync, readSync, readdirSync, readFileSync, statSync } fr
 import { join } from 'node:path'
 import { onLanguage, t } from './lang.mjs'
 import { CLAUDE_DIR } from './paths.mjs'
+import { questionsOf } from './questions.mjs'
 
 function alive(pid) {
   try {
@@ -163,7 +164,8 @@ onLanguage(() => tailCache.clear()) // tool details are in the board's language
  *   title     Claude's own title of the session (ai-title)
  *   prompt    the user's last prompt
  *   lastText  the agent's last words to the user
- *   tool      the last tool call: { name, label, detail, pending, question }; pending = no result yet
+ *   tool      the last tool call: { id, name, label, detail, pending, questions }; pending = no
+ *             result yet, questions = an AskUserQuestion call's questions (questions.mjs)
  */
 export function transcriptInfo(path) {
   if (!path) return null
@@ -209,7 +211,8 @@ export function transcriptInfo(path) {
       for (let j = content.length - 1; j >= 0; j--) {
         const b = content[j]
         if (b.type === 'tool_use' && !info.tool) {
-          info.tool = { name: b.name, label: toolLabel(b.name), detail: toolDetail(b.name, b.input), pending: !results.has(b.id) }
+          info.tool = { id: b.id, name: b.name, label: toolLabel(b.name), detail: toolDetail(b.name, b.input), pending: !results.has(b.id) }
+          if (b.name === 'AskUserQuestion') info.tool.questions = questionsOf(b.input)
         } else if (b.type === 'text' && !info.lastText && b.text?.trim()) {
           info.lastText = clip(b.text.trim(), 700)
           info.question = trailingQuestion(b.text)
@@ -253,7 +256,9 @@ function parse(line) {
 
 /**
  * The last `limit` turns of a session for the detail view: the user's prompts, the agent's
- * texts and its tool calls in a line each (done = the call has a result).
+ * texts and its tool calls in a line each (done = the call has a result). A question form
+ * (AskUserQuestion) carries its questions and, once done, the answers: { ask, answers }, answers
+ * null when it was closed without one.
  */
 export function conversation(path, limit = 40) {
   const st = path && statSync(path, { throwIfNoEntry: false })
@@ -265,6 +270,13 @@ export function conversation(path, limit = 40) {
     if (items.filter(i => i.role !== 'tool').length >= limit / 3 || bytes >= st.size) break
   }
   return items.slice(-limit)
+}
+
+/** The answers Claude Code recorded for a question form, in the order of its questions. */
+function askAnswers(ask, result) {
+  const answers = result?.answers
+  if (!answers || typeof answers !== 'object') return null
+  return ask.map(q => (typeof answers[q.question] === 'string' ? clip(answers[q.question], 1000) : ''))
 }
 
 function turns(text) {
@@ -288,7 +300,12 @@ function turns(text) {
     }
     if (o.type === 'user') {
       if (Array.isArray(content)) {
-        for (const b of content) if (b.type === 'tool_result' && tools.has(b.tool_use_id)) tools.get(b.tool_use_id).done = true
+        for (const b of content) {
+          if (b.type !== 'tool_result' || !tools.has(b.tool_use_id)) continue
+          const tool = tools.get(b.tool_use_id)
+          tool.done = true
+          if (tool.ask) tool.answers = askAnswers(tool.ask, o.toolUseResult)
+        }
         if (content.every(b => b.type === 'tool_result')) continue
       }
       const text = userText(content)
@@ -298,6 +315,8 @@ function turns(text) {
         if (b.type === 'text' && b.text?.trim()) items.push({ role: 'assistant', text: clip(b.text.trim(), 4000), at })
         else if (b.type === 'tool_use') {
           const t = { role: 'tool', label: toolLabel(b.name), detail: toolDetail(b.name, b.input), path: toolPath(b.name, b.input), done: false, at }
+          const ask = b.name === 'AskUserQuestion' ? questionsOf(b.input) : null
+          if (ask) Object.assign(t, { id: b.id, ask: ask.map(({ question, header, multiSelect }) => ({ question, header, multiSelect })), answers: null })
           tools.set(b.id, t)
           items.push(t)
         }

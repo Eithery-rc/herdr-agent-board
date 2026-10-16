@@ -1,0 +1,25 @@
+❯ C:/Program Files/Git/rename q-probe-1
+
+  Ran 1 shell command
+
+❯ This is a UI test session. Do not read files or run tools other than AskUserQuestion. Call the
+  AskUserQuestion tool now with exactly one question: question 'Which color should the test widget use?',
+  header 'Color', multiSelect false, options: 'Red' (description 'A warm red, good for alerts'), 'Green'
+  (description 'Calm green for success states'), 'Blue' (description 'Neutral blue, the default'). After
+  you get the answer, reply with one line saying what was chosen, then wait for the next instruction.
+──────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Color
+
+Which color should the test widget use?
+
+❯ 1. Red
+     A warm red, good for alerts
+  2. Green
+     Calm green for success states
+  3. Blue
+     Neutral blue, the default
+  4. Type something.
+──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel

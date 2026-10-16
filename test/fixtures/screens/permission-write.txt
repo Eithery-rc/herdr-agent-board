@@ -1,0 +1,27 @@
+❯ Run this exact shell command with the Bash tool: echo hello > probe-note.txt . Then reply with one line
+  and wait.
+
+  Ran 1 shell command
+
+● I wrote "hello" to probe-note.txt in the working directory.
+
+✻ Sautéed for 15s · done 11:37 AM
+
+❯ Use the Write tool to create the file probe-two.txt containing the word two. Then reply with one line
+  and wait.
+
+● Write(probe-two.txt)
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Create file
+ probe-two.txt
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+  1 two
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to create probe-two.txt?
+ ❯ 1. Yes
+   2. Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session
+      (shift+tab)
+   3. No
+
+ Esc to cancel · Tab to amend
