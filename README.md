@@ -39,8 +39,9 @@ terminal board or `herdr plugin action invoke agent-board.web`: an Edge app wind
 raised when it is already open.
 
 To land on one session, from a desktop notification's click handler say: `node src/web-open.mjs
---pane <herdr pane id>`. Open pages open that session's sheet and the window comes up; with no
-page open, a new window opens on it (`#session=<key>` in its address). It does not start the
+--pane <herdr pane id>`. The board's window comes up and opens that session's sheet (a page in
+a minimized or covered window is told as it connects again, within 15 s); with no board window,
+a new one opens on it (`#session=<key>` in its address). It does not start the
 board: exit code 3 means the board does not run or has no session in that pane, so the handler
 can go to the pane in herdr instead. The same goes to the board as `POST /api/reveal` with
 `{ "pane": "<id>" }` or `{ "key": "<session>" }`.

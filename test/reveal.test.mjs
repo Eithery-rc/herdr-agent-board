@@ -33,26 +33,37 @@ test('a notification clicked: open pages are told the session in that pane; no s
     fetch(`${url}/api/reveal`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) }).then(async r => ({ status: r.status, body: await r.json() }))
 
   // A page of the board, listening.
-  let heard = ''
-  const page = http.get(`${url}/api/events`, res => {
-    res.setEncoding('utf8')
-    res.on('data', chunk => (heard += chunk))
-  })
-  // The board goes with the sandbox at the end: its stream breaks off then.
-  page.on('error', () => {})
-  t.after(() => page.destroy())
-  await until(() => heard.includes('data:'))
+  const listen = async () => {
+    const page = { heard: '' }
+    const req = http.get(`${url}/api/events`, res => {
+      res.setEncoding('utf8')
+      res.on('data', chunk => (page.heard += chunk))
+    })
+    // The board goes with the sandbox at the end: its stream breaks off then.
+    req.on('error', () => {})
+    t.after(() => req.destroy())
+    await until(() => page.heard.includes('data:'))
+    return page
+  }
+  const reveals = page => page.heard.split('event: reveal').length - 1
+  const page = await listen()
 
   assert.equal((await post({ pane: 'w1:p1' }, {})).status, 403)
   const r = await post({ pane: 'w1:p1' })
   assert.equal(r.status, 200)
   assert.deepEqual([r.body.key, r.body.pages], [key, 1])
-  await until(() => heard.includes('event: reveal'))
-  assert.ok(heard.includes(`event: reveal\ndata: ${JSON.stringify({ key })}\n\n`))
+  await until(() => reveals(page))
+  assert.ok(page.heard.includes(`event: reveal\ndata: ${JSON.stringify({ key })}\n\n`))
+
+  // A page that connects right after (its window was minimized, and is raised now) hears it as
+  // it comes; one that comes later on its own does not.
+  const raised = await listen()
+  assert.equal(reveals(raised), 1)
+  const later = await listen()
+  assert.equal(reveals(later), 0)
 
   // A pane the board has no session in: the caller goes to herdr instead.
-  const before = heard.split('event: reveal').length
   assert.equal((await post({ pane: 'w1:p2' })).status, 404)
   assert.equal((await post({})).status, 404)
-  assert.equal(heard.split('event: reveal').length, before)
+  assert.equal(reveals(page), 1)
 })

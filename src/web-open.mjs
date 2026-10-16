@@ -47,8 +47,9 @@ export async function openWeb(cfg = loadConfig(), { pane } = {}) {
   if (pane) {
     const r = await reveal(url, pane)
     if (!r?.ok) return { ok: false, missing: true, error: r?.error || t('err.notRunning') }
-    // Open pages show the session now: their window only has to come up.
-    if (r.pages && (await raiseWindow('*Agent board*'))) return { ok: true, url, key: r.key }
+    // The board's window comes up and shows the session: a page in a minimized or covered
+    // window has no stream, so it may be told only as it connects again (server.mjs).
+    if (await raiseWindow('*Agent board*')) return { ok: true, url, key: r.key }
     page = `${url}#session=${encodeURIComponent(r.key)}`
   } else {
     if (!(await up(url))) {

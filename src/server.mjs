@@ -216,6 +216,11 @@ export function startServer({ cfg, log = () => {} } = {}) {
   const guardedMessage = messageGate()
   const answering = new Set() // sessions with an answer being typed into their dialog
   const find = key => items.find(i => i.key === key)
+  // The session a notification click asked for, for a while: a page in a minimized or covered
+  // window keeps no stream, and connects again only once its window is raised.
+  let revealing = null // { key, at }
+  const REVEAL_MS = 15_000
+  const revealEvent = key => `event: reveal\ndata: ${JSON.stringify({ key })}\n\n`
 
   async function detail(item) {
     // checkout: whether its folder is in git, for the sheet's Changes button.
@@ -392,6 +397,9 @@ export function startServer({ cfg, log = () => {} } = {}) {
       if (req.method === 'GET' && path === '/api/events') {
         res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' })
         res.write(`retry: 2000\ndata: ${payload}\n\n`)
+        // Once: a page that comes back later on its own is not sent to that session again.
+        if (revealing && Date.now() - revealing.at < REVEAL_MS) res.write(revealEvent(revealing.key))
+        revealing = null
         clients.add(res)
         req.on('close', () => clients.delete(res))
         return
@@ -485,14 +493,16 @@ export function startServer({ cfg, log = () => {} } = {}) {
         })
         return res.end(body)
       }
-      // A session to show (web-open.mjs, when a notification is clicked): open pages open its
-      // sheet. { ok, key, pages } or 404 when the board has no session in that pane.
+      // A session to show (web-open.mjs, when a notification is clicked): pages open its sheet,
+      // those connected now and those that connect within REVEAL_MS (a window being raised).
+      // { ok, key, pages } or 404 when the board has no session in that pane.
       if (req.method === 'POST' && path === '/api/reveal') {
         if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })
         const body = await readBody(req)
         const item = body.key ? find(String(body.key)) : body.pane ? items.find(i => i.pane === String(body.pane)) : null
         if (!item) return json(404, { ok: false, error: t('err.gone') })
-        for (const page of clients) page.write(`event: reveal\ndata: ${JSON.stringify({ key: item.key })}\n\n`)
+        revealing = { key: item.key, at: Date.now() }
+        for (const page of clients) page.write(revealEvent(item.key))
         return json(200, { ok: true, key: item.key, pages: clients.size })
       }
       if (req.method === 'POST' && path === '/api/settings') {
