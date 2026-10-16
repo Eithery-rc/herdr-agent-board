@@ -1047,7 +1047,15 @@ $('#sheet-more').addEventListener('click', e => {
   const items = ['sheet-wake', 'sheet-sleep', 'sheet-changes', 'sheet-history', 'sheet-new']
     .map(id => document.getElementById(id)).filter(el => el && !el.hidden)
     .map(el => ({ id: el.id, label: el.textContent.trim(), disabled: el.disabled, reason: el.disabled ? (!canMutate() && ['sheet-wake', 'sheet-sleep', 'sheet-new'].includes(el.id) ? t('mobile.readOnly') : el.title || t('mobile.readOnly')) : '' }))
-  menu.open(items, { x: rect.right, y: rect.top, source: e.detail === 0 ? 'keyboard' : matchMedia('(pointer: coarse)').matches ? 'touch' : 'mouse', origin: button, label: t('sheet.more'), onPick: id => document.getElementById(id)?.click() })
+  menu.open(items, { x: rect.right, y: rect.top, source: e.detail === 0 ? 'keyboard' : matchMedia('(pointer: coarse)').matches ? 'touch' : 'mouse', origin: button, label: t('sheet.more'), onPick: id => {
+    const action = document.getElementById(id)
+    if (!action || action.disabled || action.hidden) return
+    // Dialogs must return focus to this visible opener, not the hidden toolbar button.
+    if (id === 'sheet-history') return state.open && files.lookHistory(state.open, itemOf(state.open)?.cwd ?? '', button)
+    if (id === 'sheet-changes') return state.open && files.lookChanges(state.open, button)
+    if (id === 'sheet-new') return state.open && newSession({ item: itemOf(state.open) }, button)
+    action.click()
+  } })
   button.setAttribute('aria-expanded', 'true')
 })
 
