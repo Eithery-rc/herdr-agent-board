@@ -1,7 +1,7 @@
 // Explicit local search in a single Claude project. Never scans sibling projects.
 import { readdir, lstat, realpath, open } from 'node:fs/promises'
 import { join, relative, isAbsolute } from 'node:path'
-import { transcriptInfo } from './claude.mjs'
+import { saidIn, transcriptInfo } from './claude.mjs'
 import { CLAUDE_DIR } from './paths.mjs'
 const norm = s => /^[a-z]:/i.test(s) ? s.replace(/\\/g,'/').replace(/\/+$/,'').toLowerCase() : s.replace(/\/+$/,'')
 export async function searchHistory(cwd, query, projects = join(CLAUDE_DIR,'projects'), excludeSession = null) {
@@ -36,7 +36,7 @@ export async function searchHistory(cwd, query, projects = join(CLAUDE_DIR,'proj
           const row=JSON.parse(line)
           if(row.isSidechain||row.isMeta||typeof row.cwd!=='string'||norm(row.cwd)!==norm(cwd)||!['user','assistant'].includes(row.type))continue
           const content=row.message?.content
-          const text=typeof content==='string'?content:Array.isArray(content)?content.filter(b=>b.type==='text').map(b=>b.text).join('\n'):''
+          const text=typeof content==='string'?content:Array.isArray(content)?content.map(b=>saidIn(row,b)).filter(Boolean).join('\n'):''
           const at=text.toLowerCase().indexOf(query.toLowerCase())
           if(at<0)continue
           const date=Date.parse(row.timestamp)

@@ -139,6 +139,29 @@ test('transcript tail: title, last prompt, last words, pending tool; sidechains 
   assert.ok(!conv.some(c => c.text === 'subagent noise'))
 })
 
+test('updates kept as thinking (thinkingDisplay "updates") are said like any message; other thinking is not', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agent-board-'))
+  const file = join(dir, 's.jsonl')
+  const line = o => JSON.stringify(o)
+  writeFileSync(
+    file,
+    [
+      line({ type: 'user', message: { content: 'is the sandbox free? then merge' } }),
+      // As Claude Code 2.1.296+ writes them: an empty thinking block, then the update in one of its own.
+      line({ type: 'assistant', thinkingDisplay: 'updates', message: { content: [{ type: 'thinking', thinking: '', signature: 'x' }] } }),
+      line({ type: 'assistant', thinkingDisplay: 'updates', message: { content: [{ type: 'thinking', thinking: 'The sandbox is free again. Starting with the first merge.\n\n', signature: 'x' }] } }),
+      line({ type: 'assistant', thinkingDisplay: 'updates', message: { content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'gh pr merge 1' } }] } }),
+      line({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } }),
+      // Older versions: thinking the terminal keeps folded away.
+      line({ type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'private reasoning', signature: 'x' }] } }),
+    ].join('\n'),
+  )
+  const conv = conversation(file)
+  assert.deepEqual(conv.map(c => c.role), ['user', 'assistant', 'tool'])
+  assert.equal(conv[1].text, 'The sandbox is free again. Starting with the first merge.')
+  assert.equal(transcriptInfo(file).lastText, 'The sandbox is free again. Starting with the first merge.')
+})
+
 test('a message ending in a question: its last sentence or two, markup ignored', () => {
   assert.equal(trailingQuestion('The draft is ready. Send it?'), 'The draft is ready. Send it?')
   assert.equal(trailingQuestion('Done.\n\n**OK or edit?**'), 'OK or edit?')

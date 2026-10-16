@@ -157,6 +157,17 @@ function userText(content) {
     .trim()
 }
 
+/**
+ * What a block of the session's message says to the user, as its terminal shows it: the text,
+ * and the short updates Claude Code keeps in thinking blocks when the entry has thinkingDisplay
+ * "updates" (since 2.1.296), printed in the terminal like any message. Other thinking stays hidden.
+ */
+export function saidIn(entry, block) {
+  if (block?.type === 'text') return block.text?.trim() ?? ''
+  if (block?.type === 'thinking' && entry?.thinkingDisplay === 'updates') return block.thinking?.trim() ?? ''
+  return ''
+}
+
 const tailCache = new Map() // path -> { mtimeMs, size, info }
 onLanguage(() => tailCache.clear()) // tool details are in the board's language
 
@@ -215,9 +226,9 @@ export function transcriptInfo(path) {
           info.tool = { id: b.id, name: b.name, label: toolLabel(b.name), detail: toolDetail(b.name, b.input), pending: !results.has(b.id) }
           // The form only while it waits for an answer: every board refresh carries it to the page.
           if (b.name === 'AskUserQuestion' && info.tool.pending) info.tool.questions = questionsOf(b.input)
-        } else if (b.type === 'text' && !info.lastText && b.text?.trim()) {
-          info.lastText = clip(b.text.trim(), 700)
-          info.question = trailingQuestion(b.text)
+        } else if (!info.lastText && saidIn(o, b)) {
+          info.lastText = clip(saidIn(o, b), 700)
+          info.question = trailingQuestion(saidIn(o, b))
         }
       }
     }
@@ -468,7 +479,8 @@ function turns(text, { sidechain = false } = {}) {
       else if (text) items.push({ role: 'user', text: clip(text, 3000), at })
     } else if (Array.isArray(content)) {
       for (const b of content) {
-        if (b.type === 'text' && b.text?.trim()) items.push({ role: 'assistant', text: clip(b.text.trim(), 4000), at })
+        const said = saidIn(o, b)
+        if (said) items.push({ role: 'assistant', text: clip(said, 4000), at })
         else if (b.type === 'tool_use') {
           const t = { role: 'tool', label: toolLabel(b.name), detail: toolDetail(b.name, b.input), path: toolPath(b.name, b.input), done: false, at }
           const ask = b.name === 'AskUserQuestion' ? questionsOf(b.input) : null
