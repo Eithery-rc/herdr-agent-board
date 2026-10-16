@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import http from 'node:http'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -8,6 +8,7 @@ import { useLanguage } from '../src/lang.mjs'
 import { checkRequest, commandArgs, failureKind, launcherError, launcherLabel, parseLauncherOutput, usesPlaceholder } from '../src/launch.mjs'
 import { baseName, categoryForDir, checkBranch, checkName, completions, defaultWorkspace, folderSuggestions, isAbsolutePath, sameDir, slugName, splitPathInput, suggestName, uniqueSlug, worktreePath } from '../web/launch-model.js'
 import { sandbox, until } from './fixtures/sandbox.mjs'
+import { trustScreen } from './fixtures/trust-screen.mjs'
 
 useLanguage('en')
 
@@ -17,6 +18,8 @@ test('session names: what a name may be, and herdr’s name for it', () => {
   assert.equal(checkName('  '), 'launch.err.nameEmpty')
   assert.equal(checkName('x'.repeat(61)), 'launch.err.nameLong')
   assert.equal(checkName('two\nlines'), 'launch.err.nameChars')
+  // C1 controls, line separators, and bidi overrides that make a name read as something else.
+  for (const c of ['\u0085', '\u009b', ' ', ' ', '‮', '⁦', '⁩']) assert.equal(checkName(`a${c}b`), 'launch.err.nameChars', c.codePointAt(0).toString(16))
   assert.equal(checkName('-Workspace w1'), 'launch.err.nameStart') // would read as an option
   assert.equal(checkName('/clear'), 'launch.err.nameStart') // would read as a Claude command
   assert.equal(slugName('Acme-Invoices'), 'acme-invoices')
@@ -88,6 +91,9 @@ test('launch.command: one argument per element, optional groups, no values in th
   assert.throws(() => commandArgs(['{cwd}\\evil.exe'], vars), /program itself/)
   assert.throws(() => commandArgs('pwsh -File x.ps1', vars), /must be a list/)
   assert.throws(() => commandArgs(['pwsh', 3], vars), /must be a list/)
+  // cmd.exe reads its own command line: no cmd, .bat or .cmd as the program, by any spelling.
+  for (const program of ['cmd', 'CMD.EXE', 'C:\\Windows\\System32\\cmd.exe', 'C:/tools/start.bat', 'launch.CMD']) assert.throws(() => commandArgs([program, '/c', '{name}'], vars), /cmd/, program)
+  assert.doesNotThrow(() => commandArgs(['cmdlet-runner', '{name}'], vars))
   assert.ok(usesPlaceholder(tpl, 'messageFile'))
   assert.ok(!usesPlaceholder(tpl, 'sessionId'))
   assert.equal(launcherLabel(tpl), 'spawn-agent')
@@ -121,7 +127,11 @@ test('a launch request is checked before anything runs', async t => {
   assert.equal(ok.ok, true)
   assert.deepEqual({ ...ok.launch }, { name: 'Acme', label: 'Acme', cwd: dir, category: 'acme', workspaceId: 'w2', workspaceLabel: '', newWorkspace: false, message: 'hi', worktree: null })
   assert.equal((await checkRequest({ name: 'A', cwd: dir, workspace: { create: 'Fresh' } })).launch.newWorkspace, true)
-  assert.equal((await checkRequest({ name: 'A', cwd: dir, category: 'Bad Id!', workspace: { id: 'w2' } })).launch.category, 'other')
+  // A lane must be one the board has; none given is "other".
+  const lanes = { categories: new Set(['acme']) }
+  assert.equal((await checkRequest({ name: 'A', cwd: dir, workspace: { id: 'w2' } }, lanes)).launch.category, 'other')
+  assert.equal((await checkRequest({ name: 'A', cwd: dir, category: 'acme', workspace: { id: 'w2' } }, lanes)).launch.category, 'acme')
+  for (const category of ['Bad Id!', '-acme', 'nope']) assert.equal((await checkRequest({ name: 'A', cwd: dir, category, workspace: { id: 'w2' } }, lanes)).field, 'category', category)
   // A workspace's name only fills {workspaceLabel}: one that could read as an option is dropped.
   assert.equal((await checkRequest({ name: 'A', cwd: dir, workspace: { id: 'w2', label: '-x' } })).launch.workspaceLabel, '')
   const fails = [
@@ -148,6 +158,9 @@ async function unusedPort() {
   return port
 }
 
+// Claude's input box as herdr reads it: a rule, the ❯ line with what is typed, a rule.
+const RULE = '─'.repeat(30)
+const SCREEN = typed => `Some reply.\n${RULE}\n❯ ${typed}\n${RULE}\n  ? for shortcuts\n`
 const SNAPSHOT = { panes: [{ pane_id: 'p1', agent: 'claude', agent_session: { value: 's1' }, agent_status: 'idle', cwd: 'C:\\old', terminal_title_stripped: 'work-10', workspace_id: 'wA' }], tabs: [], workspaces: [{ workspace_id: 'wA', label: 'Alpha' }] }
 const HERDR = {
   'api snapshot': { result: { snapshot: SNAPSHOT } },
@@ -161,15 +174,17 @@ const HERDR = {
   'agent get': { result: { agent: { agent_session: { value: 's1' }, agent_status: 'idle', name: 'work-10' } } },
   'agent rename': { result: null },
   'pane read': { text: 'Session renamed to: Alpha job' },
+  'agent read': { text: SCREEN('') },
   'pane list': { result: { panes: [{ pane_id: 'wN:p1', agent: null, tab_id: 'wN:t1' }, { pane_id: 'wN:p2', agent: null, tab_id: 'wN:t1' }] } },
   'tab close': { result: null },
+  'pane send-keys': { result: null },
 }
 
-async function boardServer(t, cfg = {}) {
+async function boardServer(t, cfg = {}, env = {}) {
   const box = sandbox(t)
   box.state(HERDR)
   const port = await unusedPort()
-  const proc = box.run('server', { port, categories: [{ id: 'acme', title: 'Acme', color: 'blue', paths: [] }, { id: 'other', title: 'Other', color: 'gray' }], wakeUrl: null, refreshSec: 3600, ...cfg })
+  const proc = box.run('server', { port, categories: [{ id: 'acme', title: 'Acme', color: 'blue', paths: [] }, { id: 'other', title: 'Other', color: 'gray' }], wakeUrl: null, refreshSec: 3600, ...cfg }, env)
   await until(() => proc.messages.some(m => m.ready))
   const url = `http://127.0.0.1:${port}`
   const board = async () => (await fetch(`${url}/api/board`)).json()
@@ -285,6 +300,100 @@ test('renaming: the board’s name on the card, back to the automatic one, and C
   const busy = await post('/api/session/s1/rename', { name: 'Other', claude: true })
   assert.equal(busy.status, 409)
   assert.match((await busy.json()).error, /working|работает/)
+  // Only idle and done: a state herdr cannot tell is no place to type either.
+  box.state({ ...HERDR, 'agent get': { result: { agent: { agent_session: { value: 's1' }, agent_status: 'unknown', name: 'billing-fixes' } } } })
+  assert.equal((await post('/api/session/s1/rename', { name: 'Other', claude: true })).status, 409)
+
+  // What the user started typing would go out with /rename: refused, and the board keeps the old name.
+  const prompted = () => box.calls().filter(a => a[0] === 'agent' && a[1] === 'prompt').length
+  const before = prompted()
+  box.state({ ...HERDR, 'agent read': { text: SCREEN('half a thought') } })
+  const draft = await post('/api/session/s1/rename', { name: 'Draft name', claude: true })
+  assert.equal(draft.status, 409)
+  assert.match((await draft.json()).error, /unsent text|недописанный/)
+  // No input box on screen (a picker, a dialog): refused too.
+  box.state({ ...HERDR, 'agent read': { text: 'Select a model\n> Opus\n  Sonnet\n' } })
+  assert.equal((await post('/api/session/s1/rename', { name: 'Draft name', claude: true })).status, 409)
+  assert.equal(prompted(), before)
+  assert.equal((await named()).name, 'Billing fixes')
+
+  // Claude does not say "Session renamed": the board name stays, herdr's does not follow, the page is told.
+  box.state({ ...HERDR, 'pane read': { text: 'nothing new' } })
+  const quiet = await post('/api/session/s1/rename', { name: 'Quiet name', claude: true })
+  assert.equal(quiet.status, 200)
+  assert.equal((await quiet.json()).confirmed, false)
+  assert.ok(!box.calls().some(a => a.join(' ') === 'agent rename p1 quiet-name'))
+  assert.equal((await named()).name, 'Quiet name')
+})
+
+test('a retry starts in the worktree and the workspace the failed launch made, not new ones', { timeout: 40_000 }, async t => {
+  const { execFileSync } = await import('node:child_process')
+  const { box, post, launched } = await boardServer(t, {}, { PATH: process.env.PATH })
+  const repo = join(box.dir, 'repo')
+  mkdirSync(join(repo, 'src'), { recursive: true })
+  writeFileSync(join(repo, 'src', 'a.txt'), 'a')
+  const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { cwd: repo, stdio: 'pipe' })
+  git('init', '-q', '-b', 'main')
+  git('add', '.')
+  git('commit', '-q', '-m', 'init')
+  // The worktree is made, then herdr fails: the view says where it is and offers no worktree again.
+  box.state({ ...HERDR, 'tab create': { error: 'workspace is gone' } })
+  const first = await (await post('/api/launch', { name: 'Wt job', cwd: join(repo, 'src'), category: 'acme', workspace: { id: 'wA', label: 'Alpha' }, worktree: { branch: 'feature-x' } })).json()
+  const failed = await launched(first.id)
+  assert.equal(failed.state, 'failed')
+  assert.equal(failed.worktree, null)
+  assert.ok(sameDir(failed.cwd, join(box.dir, 'repo-feature-x', 'src')), failed.cwd)
+  box.state(HERDR)
+  const again = await (await post('/api/launch', { name: failed.name, cwd: failed.cwd, category: failed.category, workspace: { id: 'wA' }, worktree: failed.worktree })).json()
+  assert.equal((await launched(again.id)).state, 'done')
+  assert.equal(git('worktree', 'list').toString().trim().split('\n').length, 2)
+
+  // A new workspace is made, then the agent fails: the retry goes to that workspace.
+  box.state({ ...HERDR, 'agent start': { error: 'no such agent kind' } })
+  const fresh = await (await post('/api/launch', { name: 'New ws', cwd: repo, category: 'acme', workspace: { create: 'Fresh' } })).json()
+  const ws = await launched(fresh.id)
+  assert.equal(ws.state, 'failed')
+  assert.deepEqual([ws.workspaceId, ws.newWorkspace], ['wN', false])
+})
+
+test('a launcher that runs too long is ended with everything it started', { timeout: 30_000 }, async t => {
+  const launcher = fileURLToPath(new URL('./fixtures/fake-launcher.mjs', import.meta.url))
+  const box0 = sandbox(t)
+  const record = join(box0.dir, 'launcher.json')
+  const { box, post, launched } = await boardServer(t, { launch: { command: [process.execPath, launcher, record, '-Name', '{name}'], timeoutSec: 1 } })
+  const started = Date.now()
+  const { id } = await (await post('/api/launch', { name: 'Will hang', cwd: box.dir, workspace: { id: 'wA' } })).json()
+  const l = await launched(id)
+  assert.equal(l.state, 'failed')
+  assert.equal(l.kind, 'timeout')
+  assert.ok(Date.now() - started < 8000, 'the card does not wait for pipes a descendant keeps open')
+  // What it started would have opened a tab 2.5 s in: it is gone with the launcher.
+  await new Promise(r => setTimeout(r, 3500))
+  assert.equal(existsSync(`${record}.late`), false)
+})
+
+test('dismissing a running launch takes it off the board; it goes on and its session keeps its lane', { timeout: 30_000 }, async t => {
+  const { box, post, board } = await boardServer(t)
+  const gate = join(box.dir, 'agent-start-gate')
+  box.state({ ...HERDR, 'agent start': { result: { type: 'ok' }, waitFor: gate } })
+  const { id } = await (await post('/api/launch', { name: 'Gone quiet', cwd: box.dir, category: 'acme', workspace: { id: 'wA' }, message: 'go on' })).json()
+  const deadline = Date.now() + 5000
+  while ((await board()).launches.find(l => l.id === id)?.step !== 'agent') {
+    if (Date.now() > deadline) throw new Error('never reached the agent step')
+    await new Promise(r => setTimeout(r, 20))
+  }
+  assert.equal((await post(`/api/launch/${id}/dismiss`, {})).status, 200)
+  assert.deepEqual((await board()).launches, [])
+  writeFileSync(gate, '')
+  const prompted = () => box.calls().filter(a => a[0] === 'agent' && a[1] === 'prompt').map(a => a.slice(2).join(' '))
+  const end = Date.now() + 10_000
+  while (!prompted().includes('wA:p9 go on')) {
+    if (Date.now() > end) throw new Error(`the launch did not go on: ${JSON.stringify(prompted())}`)
+    await new Promise(r => setTimeout(r, 50))
+  }
+  assert.deepEqual((await board()).launches, [])
+  const sid = box.calls().find(a => a[0] === 'agent' && a[1] === 'start').at(-1)
+  assert.equal(JSON.parse(readFileSync(join(box.cards, `${sid}.json`), 'utf8')).category, 'acme')
 })
 
 test('the folder picker lists folders only, and the drives to start from', { timeout: 20_000 }, async t => {
@@ -299,4 +408,92 @@ test('the folder picker lists folders only, and the drives to start from', { tim
   const roots = await (await post('/api/fs/dirs', { path: '' })).json()
   assert.ok(roots.roots.length >= 2)
   assert.equal((await fetch(`${url}/api/fs/dirs`, { method: 'POST', body: '{}' })).status, 403)
+})
+
+// ---------------------------------------------------------------- Claude's folder-trust dialog
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+const blocked = { result: { agent: { agent_session: { value: null }, agent_status: 'blocked', name: 'x' } } }
+const idle = { result: { agent: { agent_session: { value: null }, agent_status: 'idle', name: 'x' } } }
+const keysSent = box => box.calls().filter(a => a[0] === 'pane' && a[1] === 'send-keys').map(a => a.slice(2).join(' '))
+const promptsSent = box => box.calls().filter(a => a[0] === 'agent' && a[1] === 'prompt').map(a => a.slice(2).join(' '))
+async function launchState(board, id, pred, what) {
+  const end = Date.now() + 10_000
+  for (;;) {
+    const l = (await board()).launches.find(x => x.id === id)
+    if (pred(l)) return l
+    if (Date.now() > end) throw new Error(`${what}: ${JSON.stringify(l)}`)
+    await sleep(30)
+  }
+}
+
+test('Claude asks to trust a new folder: the launch waits on its card, and on request moves the cursor it sees to "Yes", then names and briefs it', { timeout: 40_000 }, async t => {
+  const { box, post, board, launched } = await boardServer(t)
+  const dir = join(box.dir, 'a fresh project') // a space: Claude may break the line there
+  mkdirSync(dir)
+  const dialog = selected => ({ text: trustScreen(dir, { selected, width: 30 }) })
+  const state = { ...HERDR, 'agent start': { code: 'agent_not_ready', error: 'agent_not_ready: blocked during startup' }, 'agent get': blocked, 'pane read': { seq: [dialog('no'), dialog('no'), dialog('yes'), { text: 'Session renamed to: Fresh one' }] } }
+  box.state(state)
+  const { id } = await (await post('/api/launch', { name: 'Fresh one', cwd: dir, category: 'acme', workspace: { id: 'wA' }, message: 'Say hello.' })).json()
+  const held = await launchState(board, id, l => l?.state === 'trust', 'never asked to trust')
+  assert.equal(held.pane, 'wA:p9')
+  assert.deepEqual(keysSent(box), []) // not a key before the user says so
+  assert.equal((await post(`/api/launch/${id}/trust`, {})).status, 200)
+  // The cursor was on "No, exit": one step down, read again, then Enter.
+  assert.deepEqual(keysSent(box), ['wA:p9 down', 'wA:p9 enter'])
+  // Trusted, Claude asks something else next (a project's MCP servers): the card says it waits in herdr.
+  const asked = await launchState(board, id, l => l?.state === 'waiting', 'a dialog after the trust went unnoticed')
+  assert.equal(asked.step, 'dialog')
+  assert.deepEqual(keysSent(box), ['wA:p9 down', 'wA:p9 enter']) // and no key for that one
+  box.state({ ...state, 'agent get': idle })
+  const l = await launched(id)
+  assert.equal(l.state, 'done', l.error)
+  assert.deepEqual(promptsSent(box), ['wA:p9 /rename Fresh one', 'wA:p9 Say hello.'])
+})
+
+test('"Close the tab" closes it and drops the launch; "Trust" refuses a screen without the dialog for that folder', { timeout: 30_000 }, async t => {
+  const { box, post, board } = await boardServer(t)
+  const dir = join(box.dir, 'unsure')
+  mkdirSync(dir)
+  const state = { ...HERDR, 'agent start': { code: 'agent_not_ready', error: 'agent_not_ready: blocked' }, 'agent get': blocked, 'pane read': { text: trustScreen(dir) }, 'pane get': { result: { pane: { pane_id: 'wA:p9', tab_id: 'wA:t9', agent: 'claude' } } } }
+  box.state(state)
+  const { id } = await (await post('/api/launch', { name: 'Unsure', cwd: dir, category: 'acme', workspace: { id: 'wA' } })).json()
+  await launchState(board, id, l => l?.state === 'trust', 'never asked to trust')
+  const sid = box.calls().find(a => a[0] === 'agent' && a[1] === 'start').at(-1)
+  assert.ok(existsSync(join(box.cards, `${sid}.json`)))
+  // The screen moved on (answered in herdr, or another folder): no key goes.
+  box.state({ ...state, 'pane read': { text: trustScreen(join(box.dir, 'elsewhere')) } })
+  const refused = await post(`/api/launch/${id}/trust`, {})
+  assert.equal(refused.status, 409)
+  assert.match((await refused.json()).error, /trust dialog|доверии/)
+  box.state({ ...state, 'pane read': { text: 'PS C:\\> ' } })
+  assert.equal((await post(`/api/launch/${id}/trust`, {})).status, 409)
+  assert.deepEqual(keysSent(box), [])
+  assert.equal((await post(`/api/launch/${id}/close`, {})).status, 200)
+  assert.ok(box.calls().some(a => a.join(' ') === 'tab close wA:t9'))
+  assert.equal((await board()).launches.some(l => l.id === id), false)
+  // The card the board made for it held nothing but the lane: it goes with the tab.
+  assert.equal(existsSync(join(box.cards, `${sid}.json`)), false)
+})
+
+test('a launcher that gives up at the trust dialog: the launch is kept, and once trusted the board does what the launcher did not', { timeout: 40_000 }, async t => {
+  const launcher = fileURLToPath(new URL('./fixtures/fake-launcher.mjs', import.meta.url))
+  const box0 = sandbox(t)
+  const record = join(box0.dir, 'launcher.json')
+  const { box, post, board, launched } = await boardServer(t, { launch: { command: [process.execPath, launcher, record, '-Name', '{name}', '-Cwd', '{cwd}', '-Workspace', '{workspace}'] } })
+  const dir = join(box.dir, 'Will fail here')
+  mkdirSync(dir)
+  // The stand-in fails like spawn-agent: "Claude in wT:p9 waits for a dialog (folder trust?)".
+  const state = { ...HERDR, 'agent get': blocked, 'agent list': { result: { agents: [] } }, 'pane read': { seq: [{ text: trustScreen(dir, { selected: 'yes' }) }, { text: trustScreen(dir, { selected: 'yes' }) }, { text: 'Session renamed to: Will fail' }] } }
+  box.state(state)
+  const { id } = await (await post('/api/launch', { name: 'Will fail', cwd: dir, category: 'acme', workspace: { id: 'wA' }, message: 'First task.' })).json()
+  const held = await launchState(board, id, l => l?.state === 'trust' || l?.state === 'failed', 'neither held nor failed')
+  assert.equal(held.state, 'trust', held.error)
+  assert.equal(held.pane, 'wT:p9')
+  assert.equal((await post(`/api/launch/${id}/trust`, {})).status, 200)
+  assert.deepEqual(keysSent(box), ['wT:p9 enter']) // already on "Yes": only Enter
+  box.state({ ...state, 'agent get': idle })
+  const l = await launched(id)
+  assert.equal(l.state, 'done', l.error)
+  assert.deepEqual(promptsSent(box), ['wT:p9 /rename Will fail', 'wT:p9 First task.'])
+  assert.ok(box.calls().some(a => a.join(' ') === 'agent rename wT:p9 will-fail'))
 })

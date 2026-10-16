@@ -204,9 +204,14 @@ export function boardMenu(ctx) {
 /** A starting or failed new session's menu. */
 export function launchMenu(l, ctx) {
   const { t } = ctx
+  const herdr = ctx.canMutate ? {} : { disabled: true, reason: t('mobile.readOnly') }
   return tidy([
-    l.pane && { id: 'focus', label: t('menu.focus'), ...(ctx.canMutate ? {} : { disabled: true, reason: t('mobile.readOnly') }) },
-    l.state === 'failed' && { id: 'retry', label: t('launch.retry') },
+    l.state === 'trust' && { id: 'trust', label: t('launch.trust.go'), ...herdr },
+    l.state === 'trust' && { id: 'closeTab', label: t('launch.trust.close'), ...herdr },
+    l.state === 'trust' && SEP,
+    l.pane && { id: 'focus', label: t('menu.focus'), ...herdr },
+    // A launch that failed only at its first message has a running session: a retry would start a second one.
+    l.state === 'failed' && l.kind !== 'message' && { id: 'retry', label: t('launch.retry') },
     l.state === 'failed' && { id: 'copyError', label: t('launch.copyError') },
     SEP,
     { id: 'copy:cwd', label: t('menu.copyPath') },

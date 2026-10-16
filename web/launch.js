@@ -243,7 +243,7 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
     f.wt.checked = !!r?.worktree
     f.branch.value = r?.worktree?.branch ?? ''
     s.set.branch = !!r?.worktree
-    s.workspace = r ? (r.newWorkspace ? { create: r.workspace } : { label: r.workspace }) : ctx.newWorkspace ? { create: '' } : card?.workspace ? { label: card.workspace } : null
+    s.workspace = r ? (r.workspaceId ? { id: r.workspaceId } : r.newWorkspace ? { create: r.workspace } : { label: r.workspace }) : ctx.newWorkspace ? { create: '' } : card?.workspace ? { label: card.workspace } : null
     s.set.workspace = !!s.workspace
     for (const el of root.querySelectorAll('.field-note, .launch-error')) el.hidden = true
     renderCats()
@@ -425,6 +425,7 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
   f.cwd.addEventListener('focus', () => showPop(false))
   f.cwd.addEventListener('blur', () => setTimeout(() => document.activeElement !== f.cwd && closePop(), 120))
   f.cwd.addEventListener('keydown', e => {
+    if (e.isComposing || e.keyCode === 229) return
     if (e.key === 'Enter' && !(pop.open && pop.active >= 0)) {
       e.preventDefault()
       closePop()
@@ -682,6 +683,8 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
     'keydown',
     e => {
       if (root.hidden || motion.target === 0 || !focus.isTop()) return
+      // Enter and Esc while an input method composes belong to it (they pick or drop a word).
+      if (e.isComposing || e.keyCode === 229) return
       if (e.key === 'Escape') {
         e.preventDefault()
         e.stopImmediatePropagation()
@@ -720,7 +723,7 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
       launch: l,
       name: l.name,
       category: l.category,
-      column: l.state === 'failed' || l.state === 'waiting' ? 'me' : 'work',
+      column: l.state === 'failed' || l.state === 'waiting' || l.state === 'trust' ? 'me' : 'work',
       cwd: l.cwd,
       workspace: l.workspace,
       activity: l.startedAt,
@@ -735,7 +738,14 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
     if (!l) return ''
     const go = l.pane ? `<button class="button" data-launch="focus" data-id="${esc(l.id)}">${esc(tr('card.focus'))}</button>` : ''
     if (l.state === 'failed') {
-      return `<div class="launch-note failed"><div class="ln-why">${ICON.warn}<span>${esc(l.error || tr('launch.failed'))}</span></div><div class="ln-hint">${esc(tr(`launch.hint.${l.kind === 'dialog' ? 'dialogFailed' : l.kind || 'other'}`))}</div><div class="ln-actions"><button class="button" data-launch="retry" data-id="${esc(l.id)}">${esc(tr('launch.retry'))}</button>${go}<button class="button plain" data-launch="dismiss" data-id="${esc(l.id)}">${esc(tr('launch.dismiss'))}</button></div></div>`
+      // Failed only at its first message, the session runs: a retry would start a second one.
+      const retry = l.kind === 'message' ? '' : `<button class="button" data-launch="retry" data-id="${esc(l.id)}">${esc(tr('launch.retry'))}</button>`
+      return `<div class="launch-note failed"><div class="ln-why">${ICON.warn}<span>${esc(l.error || tr('launch.failed'))}</span></div><div class="ln-hint">${esc(tr(`launch.hint.${l.kind === 'dialog' ? 'dialogFailed' : l.kind || 'other'}`))}</div><div class="ln-actions">${retry}${go}<button class="button plain" data-launch="dismiss" data-id="${esc(l.id)}">${esc(tr('launch.dismiss'))}</button></div></div>`
+    }
+    if (l.state === 'trust') {
+      // Claude stopped at "Do you trust this folder?": the folder, and the two ways on.
+      const busy = l.step === 'trusting' ? ' disabled' : ''
+      return `<div class="launch-note waiting trust"><div class="ln-why">${ICON.warn}<span>${esc(tr('launch.trust.title'))}</span></div><div class="ln-folder" title="${esc(l.cwd)}">${esc(l.cwd)}</div><div class="ln-hint">${esc(tr('launch.trust.hint'))}</div><div class="ln-actions"><button class="button primary" data-launch="trust" data-id="${esc(l.id)}"${busy}>${esc(tr(l.step === 'trusting' ? 'launch.step.trusting' : 'launch.trust.go'))}</button><button class="button" data-launch="closeTab" data-id="${esc(l.id)}"${busy}>${esc(tr('launch.trust.close'))}</button>${go}</div></div>`
     }
     if (l.state === 'waiting') {
       return `<div class="launch-note waiting"><div class="ln-why">${ICON.warn}<span>${esc(tr('launch.step.dialog'))}</span></div><div class="ln-hint">${esc(tr('launch.hint.dialog'))}</div><div class="ln-actions">${go}</div></div>`
@@ -746,7 +756,7 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
   /** The card of a session on its way that is not on the board yet. */
   function cardHTML(it) {
     const l = it.launch
-    const icon = l.state === 'failed' || l.state === 'waiting' ? `<span class="dot" style="--c:var(--orange)"></span>` : `<span class="dot work launching" style="--c:var(--green)"></span>`
+    const icon = l.state === 'failed' || l.state === 'waiting' || l.state === 'trust' ? `<span class="dot" style="--c:var(--orange)"></span>` : `<span class="dot work launching" style="--c:var(--green)"></span>`
     const where = [baseName(l.cwd), l.workspace && tr('meta.workspace', { name: l.workspace })].filter(Boolean).join(' · ')
     return `<div class="card-top">${icon}<span class="name">${esc(l.name)}</span><span class="age">${esc(tr('launch.new'))}</span></div><div class="said" title="${esc(l.cwd)}">${esc(where)}</div>${note(l)}`
   }
@@ -760,7 +770,29 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
     if (b.dataset.launch === 'dismiss') dismiss(id)
     else if (b.dataset.launch === 'retry' && l) open({ retry: l }, b)
     else if (b.dataset.launch === 'focus') focusLaunch(id)
+    else if (b.dataset.launch === 'trust') trust(id, b)
+    else if (b.dataset.launch === 'closeTab') closeTab(id, b)
     return true
+  }
+
+  /** The folder-trust dialog, answered from the card: the server checks the screen before any key. */
+  async function trust(id, b = null) {
+    if (b) b.disabled = true
+    const r = await post(`/api/launch/${encodeURIComponent(id)}/trust`, {})
+    if (!r.ok) {
+      if (b?.isConnected) b.disabled = false
+      toast(r.error, true)
+    }
+  }
+
+  async function closeTab(id, b = null) {
+    if (b) b.disabled = true
+    const r = await post(`/api/launch/${encodeURIComponent(id)}/close`, {})
+    if (r.ok) toast(tr('launch.trust.closed'))
+    else {
+      if (b?.isConnected) b.disabled = false
+      toast(r.error, true)
+    }
   }
 
   async function dismiss(id) {
@@ -779,6 +811,8 @@ export function initLaunch({ t, toast, canMutate, data, onDialogChange = () => {
     note,
     onCardAction,
     dismiss,
+    trust,
+    closeTab,
     retry: (l, el) => open({ retry: l }, el),
     syncAvailability: () => syncGo(),
   }

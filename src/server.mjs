@@ -268,9 +268,11 @@ export function startServer({ cfg, log = () => {} } = {}) {
         const name = String(body.name ?? '').trim()
         const bad = name && checkName(name)
         if (bad) return { ok: false, error: t(bad) }
-        writeCard(item.key, { name })
         // Claude and herdr only when the user asked for it: /rename is typed into the session.
-        return body.claude && name ? renameSession(item, name) : { ok: true }
+        // The board keeps the name only once that went through, so a refusal changes nothing.
+        const claude = body.claude && name ? await renameSession(item, name) : { ok: true }
+        if (claude.ok) writeCard(item.key, { name })
+        return claude
       }
       case 'card': {
         const patch = {}
@@ -445,14 +447,15 @@ export function startServer({ cfg, log = () => {} } = {}) {
           const r = await launches.start(body, items)
           return json(r.ok ? 200 : 400, r)
         }
-        const d = /^\/api\/launch\/([\w-]+)\/(dismiss|focus)$/.exec(path)
+        const d = /^\/api\/launch\/([\w-]+)\/(dismiss|focus|trust|close)$/.exec(path)
         if (d?.[2] === 'dismiss') {
           const r = launches.dismiss(d[1])
           return json(r.ok ? 200 : 404, r)
         }
-        if (d?.[2] === 'focus') {
+        // Going to its tab, trusting its folder, closing its tab: all through herdr.
+        if (d) {
           if (refuseStale()) return json(409, { ok: false, error: t('mobile.readOnly') })
-          const r = await launches.focus(d[1])
+          const r = await { focus: launches.focus, trust: launches.trust, close: launches.closeTab }[d[2]](d[1])
           return json(r.ok ? 200 : 409, r)
         }
         return json(404, { error: 'not found' })

@@ -4,12 +4,18 @@
 
 export const NAME_MAX = 60
 
+/**
+ * Characters a name must not carry: C0 and C1 controls, line and paragraph separators, and the
+ * bidi overrides and isolates that make a name read differently from what it is.
+ */
+export const UNSAFE_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/
+
 /** Why a session name is refused (a key of the texts), or '' when it is fine. */
 export function checkName(name) {
   const s = String(name ?? '').trim()
   if (!s) return 'launch.err.nameEmpty'
   if (s.length > NAME_MAX) return 'launch.err.nameLong'
-  if (/[\u0000-\u001f\u007f]/.test(s)) return 'launch.err.nameChars'
+  if (UNSAFE_CHARS.test(s)) return 'launch.err.nameChars'
   // A leading dash reads as an option to a launcher, a slash as a Claude command.
   if (/^[-/]/.test(s)) return 'launch.err.nameStart'
   return ''

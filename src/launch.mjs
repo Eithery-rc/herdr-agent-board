@@ -9,20 +9,23 @@
 //                    becomes a command; it should print `pane=<id>` when the session is up.
 // The card gets the chosen category as soon as the session has an id; a Claude started by the
 // board gets its id up front (--session-id), so even its first brief knows the lane.
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { open, readdir, stat } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, relative, resolve, sep } from 'node:path'
-import { checkBranch, checkName, normDir, sameDir, slugName, uniqueSlug, worktreePath } from '../web/launch-model.js'
+import { checkBranch, checkName, normDir, sameDir, slugName, uniqueSlug, UNSAFE_CHARS, worktreePath } from '../web/launch-model.js'
 import { resolvePath } from './files.mjs'
 import { raiseTerminal } from './actions.mjs'
 import { herdr, herdrText } from './herdr.mjs'
+import { inputDraft } from './screen.mjs'
 import { t } from './lang.mjs'
-import { CLAUDE_DIR, STATE_DIR } from './paths.mjs'
-import { writeCard } from './store.mjs'
+import { CARDS_DIR, CLAUDE_DIR, STATE_DIR } from './paths.mjs'
+import { readCard, writeCard } from './store.mjs'
+import { keyTowardYes, sameFolder, trustDialog } from './trust.mjs'
 
+const LAUNCH_DIR = join(STATE_DIR, 'launch') // first messages for {messageFile}, while a launcher runs
 export const PLACEHOLDERS = ['name', 'label', 'cwd', 'workspace', 'workspaceLabel', 'category', 'message', 'messageFile', 'sessionId']
 const MESSAGE_MAX = 20_000
 
@@ -45,6 +48,9 @@ export const usesPlaceholder = (template, key) => (template ?? []).flat().some(s
 export function commandArgs(template, vars) {
   if (!Array.isArray(template) || typeof template[0] !== 'string' || !template[0].trim()) throw new Error(t('launch.err.command'))
   if (used(template[0]).length) throw new Error(t('launch.err.commandValue'))
+  // cmd.exe parses its own command line, so values would meet a shell after all (and Node before
+  // 20.12.2 runs .bat and .cmd files through it): a launcher is a program, or a script run by one.
+  if (/(^|[\\/])cmd(\.exe)?$|\.(bat|cmd)$/i.test(template[0].trim())) throw new Error(t('launch.err.commandShell'))
   const args = []
   for (const part of template.slice(1)) {
     if (Array.isArray(part)) {
@@ -157,6 +163,68 @@ export async function listDirs(raw, { git = false } = {}) {
   const out = { path, exists: true, dir: true, entries: entries.slice(0, 2000), truncated: entries.length > 2000, parent: up !== path ? up : '', sep, error }
   if (git) out.git = await gitInfo(path)
   return out
+}
+
+/**
+ * Run a launcher: like `run`, but a timeout ends the whole process tree (on Windows a kill
+ * reaches only the direct child, and a script's descendants would go on and open a tab after
+ * "timed out"). It settles when the launcher exits, not when every pipe closed, so a descendant
+ * that kept stdout open cannot hold the launch at "starting".
+ */
+export function runTree(file, args, { timeout, env, cwd } = {}) {
+  return new Promise(res => {
+    let stdout = ''
+    let stderr = ''
+    let killed = false
+    let error = null
+    let settled = false
+    let child
+    try {
+      child = spawn(file, args, { env, cwd, windowsHide: true, detached: process.platform !== 'win32' })
+    } catch (err) {
+      return res({ code: err.code ?? 1, killed, error: err, stdout, stderr })
+    }
+    child.stdout.setEncoding('utf8').on('data', d => stdout.length < 4 << 20 && (stdout += d))
+    child.stderr.setEncoding('utf8').on('data', d => stderr.length < 4 << 20 && (stderr += d))
+    let code = 0
+    const finish = () => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      res({ code: error ? (error.code ?? 1) : code, killed, error, stdout, stderr })
+    }
+    const timer = setTimeout(() => {
+      killed = true
+      killTree(child)
+      // Whatever the kill managed, the card does not wait for it long.
+      setTimeout(finish, 5000).unref?.()
+    }, timeout)
+    child.on('error', err => {
+      error = err
+      finish()
+    })
+    child.on('exit', (c, signal) => {
+      code = c ?? (signal ? 1 : 0)
+      clearTimeout(timer)
+      // What it printed last may still be on its way; the pipes may also stay open for good.
+      setTimeout(finish, 300)
+    })
+    child.on('close', finish)
+  })
+}
+
+function killTree(child) {
+  if (process.platform === 'win32') {
+    // By its full path: the board's PATH need not have System32 on it.
+    const taskkill = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe')
+    execFile(taskkill, ['/T', '/F', '/PID', String(child.pid)], { windowsHide: true }, err => err && child.kill())
+  } else {
+    try {
+      process.kill(-child.pid, 'SIGKILL')
+    } catch {
+      child.kill('SIGKILL')
+    }
+  }
 }
 
 function run(file, args, { timeout = 15_000, env, cwd } = {}) {
@@ -281,12 +349,20 @@ export async function renameSession(item, name) {
   try {
     const agent = (await herdr(['agent', 'get', item.pane]))?.agent
     if (!agent || (agent.agent_session?.value ?? null) !== item.session) return { ok: false, error: t('err.sessionChanged', { name: item.name }) }
-    if (agent.agent_status === 'working' || agent.agent_status === 'blocked') return { ok: false, error: t('rename.err.busy', { name: item.name }) }
+    // Only a session that waits for input: not mid-turn, not at a dialog, not in a state herdr cannot tell.
+    if (agent.agent_status !== 'idle' && agent.agent_status !== 'done') return { ok: false, error: t('rename.err.busy', { name: item.name }) }
+    // /rename typed after what the user started in the input box would send both; no input box
+    // on screen (a picker, a dialog) is no place to type either.
+    const draft = inputDraft(await herdrText(['agent', 'read', item.pane, '--source', 'recent', '--lines', '40', '--ansi'], 10_000))
+    if (draft !== '') return { ok: false, error: t(draft === null ? 'rename.err.screen' : 'err.draft', { name: item.name }) }
     const confirmed = await claudeRename(item.pane, name)
-    const taken = await agentNames()
-    taken.delete(agent.name)
-    const slug = uniqueSlug(slugName(name), taken)
-    if (slug !== agent.name) await herdr(['agent', 'rename', item.pane, slug]).catch(() => {})
+    // herdr's name follows only a rename Claude confirmed, so the two do not drift apart.
+    if (confirmed) {
+      const taken = await agentNames()
+      taken.delete(agent.name)
+      const slug = uniqueSlug(slugName(name), taken)
+      if (slug !== agent.name) await herdr(['agent', 'rename', item.pane, slug]).catch(() => {})
+    }
     return { ok: true, confirmed }
   } catch (err) {
     return { ok: false, error: t('rename.err.claude', { why: err.message }) }
@@ -304,10 +380,11 @@ class LaunchError extends Error {
 
 const WORKSPACE_ID = /^[A-Za-z0-9][\w:-]{0,39}$/
 /** A workspace name herdr takes as a value: no control characters, no leading dash. */
-const workspaceName = (s, max) => !!s && s.length <= max && !/[\u0000-\u001f\u007f]/.test(s) && !s.startsWith('-')
+const workspaceName = (s, max) => !!s && s.length <= max && !UNSAFE_CHARS.test(s) && !s.startsWith('-')
+const CATEGORY_ID = /^[a-z0-9][a-z0-9_-]{0,31}$/
 
 /** Check a launch request. { ok, launch } or { ok: false, error, field }. */
-export async function checkRequest(body) {
+export async function checkRequest(body, { categories = null } = {}) {
   const fail = (field, key, vars) => ({ ok: false, field, error: t(key, vars) })
   const name = String(body?.name ?? '').trim()
   const bad = checkName(name)
@@ -318,7 +395,9 @@ export async function checkRequest(body) {
   if (st === SLOW) return fail('cwd', 'launch.err.cwdSlow', { path: cwd })
   if (!st) return fail('cwd', 'launch.err.cwdMissing', { path: cwd })
   if (!st.isDirectory()) return fail('cwd', 'launch.err.cwdFile', { path: cwd })
-  const category = /^[a-z0-9_-]{1,32}$/.test(String(body?.category ?? '')) ? body.category : 'other'
+  // A lane the board has (configured, or one an agent made), or "other" when none was given.
+  const category = String(body?.category ?? '') || 'other'
+  if (!CATEGORY_ID.test(category) || (categories && category !== 'other' && !categories.has(category))) return fail('category', 'launch.err.category', { id: category })
   const ws = body?.workspace ?? {}
   let workspaceId = ''
   let workspaceLabel = ''
@@ -349,11 +428,15 @@ export async function checkRequest(body) {
  */
 export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
   const launches = new Map()
+  // First messages a launcher never got to read (the board stopped mid-launch) do not stay on disk.
+  try {
+    for (const f of readdirSync(LAUNCH_DIR)) if (/^[0-9a-f]{8}\.txt$/.test(f)) unlinkSync(join(LAUNCH_DIR, f))
+  } catch {}
   const changed = () => onChange()
   const spec = () => cfg.launch ?? {}
 
   async function start(body, items = []) {
-    const r = await checkRequest(body)
+    const r = await checkRequest(body, { categories: new Set([...cfg.categories.map(c => c.id), ...items.map(i => i.category)]) })
     if (!r.ok) return r
     const l = { ...r.launch, id: randomUUID().slice(0, 8), state: 'starting', step: 'prepare', startedAt: Date.now(), knownPanes: new Set(items.map(i => i.pane)), pane: null, key: null, error: '', kind: '' }
     launches.set(l.id, l)
@@ -363,7 +446,7 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
         l.doneAt = Date.now()
       })
       .catch(err => {
-        if (l.dismissed) return void launches.delete(l.id) // waved off while it ran: nothing to show
+        if (l.dismissed || l.closed) return void launches.delete(l.id) // waved off, or its tab closed: nothing to show
         l.state = 'failed'
         l.error = err.message || String(err)
         l.kind = err.kind || failureKind(l.error, err.code)
@@ -392,6 +475,7 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
       const below = relative(git.root, l.cwd)
       const inside = below && !below.startsWith('..') ? join(path, below) : path
       l.cwd = (await statOf(inside))?.isDirectory?.() ? inside : path
+      l.worktreeMade = true
     }
     if (l.newWorkspace) {
       step(l, 'workspace')
@@ -437,7 +521,12 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
         const agent = kind === 'claude' ? 'Claude' : kind
         throw new LaunchError(/timeout|timed out/i.test(err.message) ? t('launch.err.notReady', { s: ms / 1000, agent }) : err.message, failureKind(err.message))
       }
-      // A dialog holds it (trusting the folder, usually): the user answers it, the board waits and goes on.
+      // Claude asks to trust the folder: the card asks the user, and the board goes on once it is.
+      if (await trustShown(l, 3)) {
+        await holdForTrust(l)
+        return finishStart(l, { kind, nameAgent: false })
+      }
+      // Another dialog holds it: the user answers it in herdr, the board waits and goes on.
       l.state = 'waiting'
       step(l, 'dialog')
       await untilReady(l, 15 * 60_000)
@@ -445,7 +534,9 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
     }
     if (kind === 'claude') {
       step(l, 'rename')
-      await claudeRename(pane, l.name)
+      // The name is cosmetic and Claude runs by now: a herdr error here must not mark the launch
+      // failed, or a retry would start a second session.
+      await claudeRename(pane, l.name).catch(err => log(`launch ${l.name}: /rename: ${err.message}`))
     }
     if (l.message) {
       step(l, 'message')
@@ -455,7 +546,7 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
 
   async function untilReady(l, limit) {
     const deadline = Date.now() + limit
-    while (Date.now() < deadline && !l.dismissed) {
+    while (Date.now() < deadline && !l.dismissed && !l.closed) {
       await new Promise(r => setTimeout(r, 1500))
       let agent = null
       try {
@@ -476,11 +567,12 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
       vars.sessionId = l.sessionId
     }
     let file = null
+    let held = false
     if (l.message && usesPlaceholder(template, 'messageFile')) {
-      const dir = join(STATE_DIR, 'launch')
-      mkdirSync(dir, { recursive: true })
-      file = join(dir, `${l.id}.txt`)
-      writeFileSync(file, l.message)
+      // Only this user may read it; a new file every time, never one someone put there.
+      mkdirSync(LAUNCH_DIR, { recursive: true, mode: 0o700 })
+      file = join(LAUNCH_DIR, `${l.id}.txt`)
+      writeFileSync(file, l.message, { mode: 0o600, flag: 'wx' })
       vars.messageFile = file
     }
     try {
@@ -490,8 +582,8 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
       const env = { ...process.env, HERDR_WORKSPACE_ID: l.workspaceId }
       delete env.HERDR_PANE_ID
       delete env.HERDR_TAB_ID
-      const timeout = Math.max(10, Number(spec().timeoutSec) || 180) * 1000
-      const r = await run(exe, args, { timeout, env, cwd: l.cwd })
+      const timeout = Math.max(1, Number(spec().timeoutSec) || 180) * 1000
+      const r = await runTree(exe, args, { timeout, env, cwd: l.cwd })
       const out = parseLauncherOutput(r.stdout)
       if (out.pane) l.pane = out.pane
       if (r.code !== 0) {
@@ -499,13 +591,149 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
         if (r.killed) throw new LaunchError(t('launch.err.launcherTimeout', { s: timeout / 1000 }), 'timeout')
         const e = launcherError(r.stdout, r.stderr)
         if (!l.pane && e.pane) l.pane = e.pane
-        throw new LaunchError(e.message || r.error?.message || t('err.status', { code: r.code }), failureKind(e.message, r.error?.code))
+        const kind = failureKind(e.message, r.error?.code)
+        // A launcher gives up where Claude asks to trust the folder; the session is there, waiting.
+        if (kind === 'dialog' && (await trustShown(l, 3))) held = true
+        else throw new LaunchError(e.message || r.error?.message || t('err.status', { code: r.code }), kind)
       }
-      // A new workspace starts with a tab of shells; the launcher opened its own tab beside it.
-      if (l.rootTab && l.pane && l.pane !== l.rootPane) await tidy(l.workspaceId, l.rootTab, l.pane)
     } finally {
       if (file) try { unlinkSync(file) } catch {}
     }
+    if (held) {
+      await holdForTrust(l)
+      // What the launcher did not get to: the names and the first message.
+      await finishStart(l, { kind: 'claude', nameAgent: true })
+    }
+    // A new workspace starts with a tab of shells; the launcher opened its own tab beside it.
+    if (l.rootTab && l.pane && l.pane !== l.rootPane) await tidy(l.workspaceId, l.rootTab, l.pane)
+  }
+
+  // -------------------------------------------------------------- the folder-trust dialog
+
+  /**
+   * The trust dialog the launch's pane ends in, for the launch's own folder; else null. `tries`:
+   * right after herdr calls the agent blocked, the dialog may still be drawing.
+   */
+  async function trustShown(l, tries = 1) {
+    if (!l.pane) return null
+    for (let i = 0; i < tries; i++) {
+      if (i) await new Promise(r => setTimeout(r, 700))
+      const screen = await herdrText(['pane', 'read', l.pane, '--source', 'visible'], 5000).catch(() => '')
+      const d = trustDialog(screen)
+      if (d && sameFolder(d.folder, l.cwd)) return d
+    }
+    return null
+  }
+
+  /** Keep the launch on the board, asking, until the folder is trusted (here or in herdr) or its tab closed. */
+  async function holdForTrust(l) {
+    l.state = 'trust'
+    l.error = ''
+    step(l, 'trust')
+    const deadline = Date.now() + 30 * 60_000
+    while (Date.now() < deadline && !l.dismissed && !l.closed) {
+      await new Promise(r => setTimeout(r, 1500))
+      let agent = null
+      try {
+        agent = (await herdr(['agent', 'get', l.pane], 5000))?.agent
+      } catch (err) {
+        if (/not.?found|no such/i.test(err.message)) throw new LaunchError(t('launch.err.paneGone'), 'other')
+      }
+      if (agent && (agent.agent_status === 'idle' || agent.agent_status === 'done')) {
+        l.state = 'starting'
+        return
+      }
+      // Trusted, and Claude asks something else (a project's MCP servers, say): that one is
+      // answered in herdr, and the card says so instead of "trusting" on and on.
+      if (l.state === 'trust' && agent?.agent_status === 'blocked' && !(await trustShown(l))) {
+        l.state = 'waiting'
+        step(l, 'dialog')
+      }
+    }
+    throw new LaunchError(t(l.dismissed ? 'launch.err.dismissed' : 'launch.err.dialogTimeout'), 'dialog')
+  }
+
+  /** Whether Claude's input box is there and empty: nothing is typed over what the user started. */
+  async function inputEmpty(pane) {
+    const screen = await herdrText(['agent', 'read', pane, '--source', 'recent', '--lines', '40', '--ansi'], 10_000).catch(() => null)
+    return screen !== null && inputDraft(screen) === ''
+  }
+
+  /**
+   * The rest of a start once a trusted Claude waits for input: its name (Claude's /rename, and
+   * herdr's when the launcher did not set it) and the first message, each only into an empty
+   * input box. A name that does not take is no failure; a message that cannot go is.
+   */
+  async function finishStart(l, { kind, nameAgent }) {
+    if (kind === 'claude') {
+      step(l, 'rename')
+      try {
+        if ((await inputEmpty(l.pane)) && (await claudeRename(l.pane, l.name)) && nameAgent) {
+          const taken = await agentNames()
+          await herdr(['agent', 'rename', l.pane, uniqueSlug(slugName(l.name), taken)])
+        }
+      } catch (err) {
+        log(`launch ${l.name}: naming: ${err.message}`)
+      }
+    }
+    if (l.message) {
+      step(l, 'message')
+      if (!(await inputEmpty(l.pane))) throw new LaunchError(t('launch.err.message.draft'), 'message')
+      if (!(await typeLine(l.pane, l.message))) throw new LaunchError(t('launch.err.message.lost'), 'message')
+    }
+  }
+
+  /**
+   * "Trust and continue": only on the trust dialog for this launch's folder, the cursor moved
+   * one key at a time to "Yes" as the screen shows it, then Enter. The launch goes on by itself
+   * once Claude is ready.
+   */
+  async function trust(id) {
+    const l = launches.get(id)
+    if (!l || l.state !== 'trust') return { ok: false, error: t('launch.err.gone') }
+    if (l.trusting) return { ok: true }
+    l.trusting = true
+    try {
+      for (let i = 0; i < 4; i++) {
+        const d = await trustShown(l)
+        if (!d) return { ok: false, error: t('launch.err.notTrust') }
+        const key = keyTowardYes(d)
+        if (key === null) return { ok: false, error: t('launch.err.trustCursor') }
+        if (key === '') {
+          await herdr(['pane', 'send-keys', l.pane, 'enter'])
+          step(l, 'trusting')
+          return { ok: true }
+        }
+        await herdr(['pane', 'send-keys', l.pane, key])
+        await new Promise(r => setTimeout(r, 300))
+      }
+      return { ok: false, error: t('launch.err.trustCursor') }
+    } catch (err) {
+      return { ok: false, error: t('err.send', { name: l.name, why: err.message }) }
+    } finally {
+      l.trusting = false
+    }
+  }
+
+  /** "Close the tab": the launch's tab goes, and the launch with it (and a card nothing but the lane was written to). */
+  async function closeTab(id) {
+    const l = launches.get(id)
+    if (!l?.pane || (l.state !== 'trust' && l.state !== 'waiting')) return { ok: false, error: t('launch.err.gone') }
+    try {
+      const tab = (await herdr(['pane', 'get', l.pane]))?.pane?.tab_id
+      if (tab) await herdr(['tab', 'close', tab])
+    } catch (err) {
+      return { ok: false, error: t('err.focus', { name: l.name, why: err.message }) }
+    }
+    l.closed = true
+    if (l.sessionId && Object.keys(readCard(l.sessionId) ?? {}).every(k => ['key', 'category', 'updatedAt'].includes(k))) {
+      try {
+        unlinkSync(join(CARDS_DIR, `${l.sessionId}.json`))
+      } catch {}
+    }
+    launches.delete(id)
+    changed()
+    return { ok: true }
   }
 
   /** Close the tab a new workspace came with, if no agent runs in it (the session is elsewhere). */
@@ -556,10 +784,15 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
   function decorate(item) {
     const l = [...launches.values()].find(x => x.key === item.key)
     if (!l) return item
-    return { ...item, category: item.categorySet ? item.category : l.category, launch: l.state === 'done' || l.dismissed ? null : view(l) }
+    const starting = l.state !== 'done' && !l.dismissed
+    // Until /rename went through, herdr knows it by its terminal's title ("claude"): the card shows the name it was started with.
+    const name = starting && item.name === item.autoName ? l.name : item.name
+    return { ...item, name, category: item.categorySet ? item.category : l.category, launch: starting ? view(l) : null }
   }
 
-  const view = l => ({ id: l.id, name: l.name, cwd: l.cwd, category: l.category, workspace: l.workspaceLabel, state: l.state, step: l.step, error: l.error, kind: l.kind, pane: l.pane, key: l.key, startedAt: l.startedAt, doneAt: l.doneAt ?? null, message: l.message, worktree: l.worktree, newWorkspace: l.newWorkspace })
+  // What a retry starts from: a worktree or a workspace this launch made already is used, not
+  // made again (git would refuse the branch; herdr would get a second, empty workspace).
+  const view = l => ({ id: l.id, name: l.name, cwd: l.cwd, category: l.category, workspace: l.workspaceLabel, workspaceId: l.workspaceId || null, state: l.state, step: l.step, error: l.error, kind: l.kind, pane: l.pane, key: l.key, startedAt: l.startedAt, doneAt: l.doneAt ?? null, message: l.message, worktree: l.worktreeMade ? null : l.worktree, newWorkspace: l.newWorkspace && !l.workspaceId })
 
   /**
    * Take a launch off the board. A failed one goes; one still running only stops showing: it
@@ -612,5 +845,5 @@ export function createLaunches({ cfg, log = () => {}, onChange = () => {} }) {
     }
   }
 
-  return { start, observe, decorate, dismiss, focus: focusLaunch, options, list: () => [...launches.values()].filter(l => !l.dismissed).map(view) }
+  return { start, observe, decorate, dismiss, focus: focusLaunch, trust, closeTab, options, list: () => [...launches.values()].filter(l => !l.dismissed).map(view) }
 }
