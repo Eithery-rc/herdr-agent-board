@@ -14,6 +14,7 @@ import { updateLive } from './live.js'
 import { limitInfo } from './limits-model.js'
 import { markdown } from './markdown.js'
 import { initMenu } from './menu.js'
+import { noticeLine } from './notice-model.js'
 import { initQuestions } from './questions.js'
 import { keepInSight, menuOpen, Panel, panels, roomBelow } from './panel.js'
 import { renameInPlace } from './rename.js'
@@ -35,6 +36,8 @@ const ICON = {
   spin: '<svg class="spin" viewBox="0 0 20 20"><path d="M10 3a7 7 0 1 1-7 7"/></svg>',
   chev: '<svg class="chev" viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"/></svg>',
   check: '<svg viewBox="0 0 20 20"><path d="m4.5 10.5 3.5 3.5 7.5-8"/></svg>',
+  cross: '<svg viewBox="0 0 20 20"><path d="m6 6 8 8M14 6l-8 8"/></svg>',
+  stop: '<svg viewBox="0 0 20 20"><rect x="6" y="6" width="8" height="8" rx="1.5"/></svg>',
   pin: '<svg viewBox="0 0 20 20"><circle cx="10" cy="7" r="3.5"/><path d="M10 10.5V17"/></svg>',
   plus: '<svg viewBox="0 0 20 20"><path d="M10 4.5v11M4.5 10h11"/></svg>',
   alarm: '<svg viewBox="0 0 20 20"><circle cx="10" cy="11" r="6"/><path d="M10 8v3.2l2 1.3M3.6 5.4 6 3.3M16.4 5.4 14 3.3"/></svg>',
@@ -1097,10 +1100,30 @@ function thread(conv, it) {
       continue
     }
     flush()
+    if (m.role === 'notice') {
+      html += notice(m)
+      continue
+    }
     html += `<div class="msg ${m.role}"><div class="md">${markdown(m.text)}</div>${thumbs(m.text)}<span class="when">${clock(m.at)}</span></div>`
   }
   flush()
   return html
+}
+
+/**
+ * A background task reporting back or a board reminder: a quiet line in the thread, not the
+ * user's bubble. An agent's report or a monitor's lines open from it; a command's output file is
+ * a click away.
+ */
+function notice(m) {
+  const { text, sub, tone } = noticeLine(m, t)
+  const mark = { ok: ICON.check, fail: ICON.cross, stop: ICON.stop }[tone] ?? (m.kind === 'reminder' || m.kind === 'schedule' ? ICON.alarm : ICON.bolt)
+  const file = m.file && !m.detail ? `<span class="notice-file fs-inline" data-path="${esc(m.file)}">${esc(t('notice.output'))}</span>` : ''
+  const line = `<span class="notice-mark">${mark}</span><span class="notice-text">${esc(text)}${sub ? ` <small>${esc(sub)}</small>` : ''}</span>${file}<span class="when">${clock(m.at)}</span>`
+  if (!m.detail) return `<div class="notice ${tone}">${line}</div>`
+  // An agent's report is markdown; a monitor's lines and a tool's result are kept as they came.
+  const body = ['agent', 'workflow'].includes(m.kind) ? `<div class="md">${markdown(m.detail)}</div>` : `<pre>${esc(m.detail)}</pre>`
+  return `<details class="notice ${tone}" data-i="notice-${esc(m.id || String(m.at))}"><summary>${line}${ICON.chev}</summary><div class="notice-body">${body}</div></details>`
 }
 
 sheetCard.addEventListener('click', e => {

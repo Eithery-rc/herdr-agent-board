@@ -4,6 +4,7 @@
 import { closeSync, openSync, readSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { onLanguage, t } from './lang.mjs'
+import { isNotice, reminderNotice, taskNotice } from './notices.mjs'
 import { CLAUDE_DIR } from './paths.mjs'
 import { questionsOf } from './questions.mjs'
 
@@ -197,8 +198,8 @@ export function transcriptInfo(path) {
       if (!o || o.isSidechain) continue
       if (o.type === 'user') {
         if (Array.isArray(content)) for (const b of content) if (b.type === 'tool_result') results.add(b.tool_use_id)
-        // A reminder the board typed in (scheduler.mjs) is not the user answering.
-        if (!info.lastText && !o.isMeta && userText(content) && !/^\[board (reminder|schedule)\b/.test(userText(content))) info.replied = true
+        // A reminder the board typed in (scheduler.mjs) or a background task reporting back is not the user answering.
+        if (!info.lastText && !o.isMeta && o.origin?.kind !== 'task-notification' && userText(content) && !isNotice(userText(content))) info.replied = true
         continue
       }
       if (o.type !== 'assistant' || !Array.isArray(content)) continue
@@ -259,7 +260,8 @@ function parse(line) {
  * The last `limit` turns of a session for the detail view: the user's prompts, the agent's
  * texts and its tool calls in a line each (done = the call has a result). A question form
  * (AskUserQuestion) carries its questions and, once done, the answers: { ask, answers }, answers
- * null when it was closed without one.
+ * null when it was closed without one. Background tasks reporting back and board reminders come
+ * as { role: 'notice', ...taskNotice() or reminderNotice() } (notices.mjs).
  */
 export function conversation(path, limit = 40) {
   const st = path && statSync(path, { throwIfNoEntry: false })
@@ -284,6 +286,15 @@ function askAnswers(ask, result) {
 function turns(text) {
   const items = []
   const tools = new Map() // tool_use id -> item
+  const tasks = new Set() // task ids already shown: a notice can be queued and then sent as a turn
+  // A background task reporting back or a board reminder: a line of its own (notices.mjs).
+  const notice = (n, at) => {
+    if (n.id && tasks.has(n.id)) return
+    if (n.id) tasks.add(n.id)
+    const prev = items.at(-1)
+    if (!n.id && prev?.role === 'notice' && prev.kind === n.kind && prev.name === n.name) return
+    items.push({ role: 'notice', ...n, at })
+  }
   for (const line of text.split('\n')) {
     if (!line || !(line.includes('"type":"user"') || line.includes('"type":"assistant"') || line.includes('"type":"queued_command"'))) continue
     const o = parse(line)
@@ -292,12 +303,17 @@ function turns(text) {
     const at = Date.parse(o.timestamp) || 0
     // A prompt sent while the session worked goes into the running turn, and the transcript
     // keeps it as a queued command, not a user line. Other sessions' messages and task
-    // notifications arrive the same way; only what a person typed is shown.
+    // notifications arrive the same way; other sessions' messages are not shown.
     if (o.type === 'attachment') {
       const a = o.attachment
-      const text = a?.type === 'queued_command' && a.commandMode === 'prompt' && a.origin?.kind !== 'peer' ? userText(a.prompt) : ''
-      const prev = items.at(-1)
-      if (text && !(prev?.role === 'user' && prev.text === clip(text, 3000))) items.push({ role: 'user', text: clip(text, 3000), at: Date.parse(a.timestamp) || at })
+      if (a?.type !== 'queued_command') continue
+      const when = Date.parse(a.timestamp) || at
+      const task = a.commandMode === 'task-notification' ? taskNotice(a.prompt) : null
+      if (task) notice(task, when)
+      const text = a.commandMode === 'prompt' && a.origin?.kind !== 'peer' ? userText(a.prompt) : ''
+      const reminder = reminderNotice(text)
+      if (reminder) notice(reminder, when)
+      else if (text && !(items.at(-1)?.role === 'user' && items.at(-1).text === clip(text, 3000))) items.push({ role: 'user', text: clip(text, 3000), at: when })
       continue
     }
     if (o.type === 'user') {
@@ -311,7 +327,9 @@ function turns(text) {
         if (content.every(b => b.type === 'tool_result')) continue
       }
       const text = userText(content)
-      if (text) items.push({ role: 'user', text: clip(text, 3000), at })
+      const n = taskNotice(text) ?? reminderNotice(text)
+      if (n) notice(n, at)
+      else if (text) items.push({ role: 'user', text: clip(text, 3000), at })
     } else if (Array.isArray(content)) {
       for (const b of content) {
         if (b.type === 'text' && b.text?.trim()) items.push({ role: 'assistant', text: clip(b.text.trim(), 4000), at })
