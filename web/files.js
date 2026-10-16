@@ -168,8 +168,8 @@ export function initFiles({ t, token, toast, canMutate = () => true, onDialogCha
           <button class="icon-button ql-refresh" hidden>${ICONS.refresh}</button>
           <button class="icon-button ql-reveal">${ICONS.reveal}</button>
           <button class="icon-button ql-copy">${ICONS.copy}</button>
-          <button class="icon-button ql-close">${ICONS.close}</button>
         </div>
+        <button class="icon-button ql-close">${ICONS.close}</button>
       </header>
       <div class="ql-body"></div>
       <footer class="ql-foot"></footer>
