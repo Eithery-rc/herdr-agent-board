@@ -44,37 +44,62 @@ export const norm = s =>
     .trim()
 
 /**
- * The text of a row and the line wrapped under it, as one. A line the terminal broke in the
- * middle of a word (a long path) fills the whole width, a rule's length; one broken at a space
- * stops short of it. `prev` is the line above, as drawn.
+ * Text to compare with what the screen shows, without any whitespace. The terminal wraps long
+ * lines at a space or, for a long path, in the middle of it, and nothing on the screen tells the
+ * two apart (a line broken at a space can fill the whole width too). Read without spaces, a
+ * wrapped label is the label either way.
  */
-const wrapJoin = (text, prev, line, width) => norm(`${text}${width && [...prev].length >= width ? '' : ' '}${line.trim()}`)
-const widthOf = lines => Math.max(0, ...lines.filter(l => RULE.test(l)).map(l => [...l.trimEnd()].length))
+const flat = s => norm(s).replace(/\s+/g, '')
+/** The text of a row and the line wrapped under it, as one, for reading and for flat(). */
+const wrapJoin = (text, line) => norm(`${text} ${line}`)
+
+// The most a form the board answers may hold. Beyond that it is left to the terminal: a question
+// or a label cut short would differ from what the screen shows.
+export const LIMITS = { questions: 4, options: 8, question: 2000, header: 100, label: 500, description: 2000, preview: 8000 }
 
 /**
- * The questions of an AskUserQuestion call, cleaned and bounded: { question, header,
- * multiSelect, preview, options: [{ label, description, preview? }] }. null when the input is not
- * one the board can answer (no questions, or one without text or options).
+ * The questions of an AskUserQuestion call: { question, header, multiSelect, preview, options:
+ * [{ label, description, preview? }] }. null when the board cannot answer it for sure: no
+ * questions, one without text or options, more or longer than LIMITS, two questions with the
+ * same text (the answers are keyed by it) or two options with the same label.
  */
 export function questionsOf(input) {
-  const list = Array.isArray(input?.questions) ? input.questions.slice(0, 4) : []
-  const out = list.map(q => {
-    const options = (Array.isArray(q?.options) ? q.options.slice(0, 8) : []).map(o => ({
-      label: clip(str(o?.label).trim(), 300),
-      description: clip(str(o?.description).trim(), 600),
-      ...(str(o?.preview).trim() ? { preview: clip(str(o.preview), 4000) } : {}),
+  const list = Array.isArray(input?.questions) ? input.questions : []
+  if (!list.length || list.length > LIMITS.questions) return null
+  const out = []
+  for (const q of list) {
+    const raw = Array.isArray(q?.options) ? q.options : []
+    if (!raw.length || raw.length > LIMITS.options) return null
+    const options = raw.map(o => ({
+      label: str(o?.label).trim(),
+      description: str(o?.description).trim(),
+      ...(str(o?.preview).trim() ? { preview: str(o.preview) } : {}),
     }))
-    return {
-      question: clip(str(q?.question).trim(), 1000),
-      header: clip(str(q?.header).trim(), 60),
-      multiSelect: q?.multiSelect === true,
-      preview: options.some(o => o.preview),
-      options,
-    }
-  })
-  if (!out.length || out.some(q => !q.question || q.options.length < 1 || q.options.some(o => !o.label))) return null
-  return out
+    const question = { question: str(q?.question).trim(), header: str(q?.header).trim(), multiSelect: q?.multiSelect === true, preview: options.some(o => o.preview), options }
+    const fits =
+      question.question &&
+      question.question.length <= LIMITS.question &&
+      question.header.length <= LIMITS.header &&
+      options.every(o => o.label && o.label.length <= LIMITS.label && o.description.length <= LIMITS.description && (o.preview ?? '').length <= LIMITS.preview) &&
+      new Set(options.map(o => o.label)).size === options.length
+    if (!fits) return null
+    out.push(question)
+  }
+  return new Set(out.map(q => q.question)).size === out.length ? out : null
 }
+
+/**
+ * An own answer as the terminal's one-line field takes it: no control characters (C0, C1), no
+ * bidirectional overrides that make it read otherwise than it is, one space between words.
+ */
+export const cleanOther = text =>
+  clip(
+    String(text ?? '')
+      .replace(/[\x00-\x1f\x7f-\x9f‪-‮⁦-⁩]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim(),
+    OTHER_LIMIT,
+  )
 
 /**
  * The answers the user picked, checked against the questions: per question { choose: [option
@@ -94,8 +119,7 @@ export function resolveAnswers(questions, answers) {
       choose.push(n)
     }
     choose.sort((x, y) => x - y)
-    // An own answer is one line: the terminal's field takes no line breaks.
-    const other = clip(String(a.other ?? '').replace(/[\x00-\x1f\x7f]+/g, ' ').replace(/\s+/g, ' ').trim(), OTHER_LIMIT)
+    const other = cleanOther(a.other)
     if (other && q.preview) return { error: 'err.qa.invalid' } // no own-answer row beside previews
     if (q.multiSelect ? !choose.length && !other : choose.length + (other ? 1 : 0) !== 1) return { error: 'err.qa.invalid' }
     picks.push({ choose, other })
@@ -157,7 +181,6 @@ function questionDialog(lines) {
 
 /** Numbered rows from `start`, each with the lines indented under it, until a rule or the footer. */
 function optionBlock(lines, start) {
-  const width = widthOf(lines)
   const options = []
   let next = null
   let preview = false
@@ -169,7 +192,8 @@ function optionBlock(lines, start) {
     if (m && Number(m[2]) === options.length + 1) {
       if (BOX.test(m[4])) preview = true
       const label = m[4].replace(BOX, '').trim()
-      options.push({ n: Number(m[2]), label, text: norm(label), checked: m[3] === undefined ? null : m[3] === '✔', cursor: m[1] === '❯' })
+      // spaced: the row's text starts with a space of its own (one typed before a leading dash).
+      options.push({ n: Number(m[2]), label, text: norm(label), spaced: /^\s/.test(m[4]), checked: m[3] === undefined ? null : m[3] === '✔', cursor: m[1] === '❯' })
       continue
     }
     const nx = NEXT.exec(line)
@@ -180,14 +204,13 @@ function optionBlock(lines, start) {
     // Under an option: its description or the rest of a long label. Beside previews: the mockup.
     if (line.trim() && options.length && !preview && !next && /^\s{3,}/.test(line)) {
       const last = options.at(-1)
-      last.text = wrapJoin(last.text, lines[i - 1], line, width)
+      last.text = wrapJoin(last.text, line)
     }
   }
   return { options, next, preview, end: i }
 }
 
 function review(lines, start, tabs) {
-  const width = widthOf(lines)
   const answers = []
   let i = start
   for (; i < lines.length; i++) {
@@ -199,8 +222,8 @@ function review(lines, start, tabs) {
     else if (a && answers.length) answers.at(-1).answer = a[1].trim()
     else if (line.trim() && answers.length) {
       const last = answers.at(-1)
-      if (last.answer === null) last.question = wrapJoin(last.question, lines[i - 1], line, width)
-      else last.answer = wrapJoin(last.answer, lines[i - 1], line, width)
+      if (last.answer === null) last.question = wrapJoin(last.question, line)
+      else last.answer = wrapJoin(last.answer, line)
     }
   }
   while (i < lines.length && !OPTION.test(lines[i])) i++
@@ -212,7 +235,6 @@ function review(lines, start, tabs) {
 const PERM_OPTION = /^\s{0,3}(?:(❯)\s+)?(\d+)\.\s+(.*)$/
 
 function permissionDialog(lines) {
-  const width = widthOf(lines)
   let foot = -1
   for (let i = lines.length - 1; i >= 0; i--) {
     if (/^\s*Esc to cancel/.test(lines[i])) {
@@ -231,11 +253,18 @@ function permissionDialog(lines) {
     }
   }
   if (first < 1) return null
+  // raw: the option as drawn (its lines, without the cursor), for the fingerprint. text: for
+  // reading, its lines as the terminal broke them: a path broken in the middle shows as it is
+  // rather than with a space that is not in it.
   const options = []
   for (let i = first; i < foot; i++) {
     const m = PERM_OPTION.exec(lines[i])
-    if (m && Number(m[2]) === options.length + 1) options.push({ n: options.length + 1, label: m[3].trim(), text: norm(m[3]), checked: null, cursor: !!m[1] })
-    else if (lines[i].trim() && options.length) options.at(-1).text = wrapJoin(options.at(-1).text, lines[i - 1], lines[i], width)
+    if (m && Number(m[2]) === options.length + 1) options.push({ n: options.length + 1, label: m[3].trim(), text: m[3].trim(), raw: [m[3]], checked: null, cursor: !!m[1] })
+    else if (lines[i].trim() && options.length) {
+      const o = options.at(-1)
+      o.raw.push(lines[i])
+      o.text += `\n${lines[i].trim()}`
+    }
   }
   let p = first - 1
   while (p > 0 && !lines[p].trim()) p--
@@ -250,26 +279,45 @@ function permissionDialog(lines) {
   while (body.length && !body.at(-1).trim()) body.pop()
   // The dialog's own one-space margin off, the tool's indentation kept.
   const shown = body.every(l => !l.trim() || l.startsWith(' ')) ? body.map(l => l.slice(1)) : body
+  // Everything as drawn, every character and space: `rm -rf build_*` and `rm -rf build` must
+  // not pass for the same prompt. Only where the cursor stands is left out.
   const fingerprint = createHash('sha256')
-    .update(JSON.stringify([title, shown.map(norm), prompt, options.map(o => o.text)]))
+    .update(JSON.stringify([title, shown, prompt, options.map(o => o.raw)]))
     .digest('hex')
     .slice(0, 24)
   return { kind: 'permission', title, body: shown, prompt, options, cursor: options.find(o => o.cursor)?.n ?? null, fingerprint }
 }
 
-/** The dialog for the page: what it needs to show it and answer it, nothing of the parse. */
+const BODY_LINES = 80
+const LINE = 600
+
+/**
+ * The dialog for the page: what it needs to show it and answer it. A permission prompt's text
+ * comes as drawn; what does not fit is cut with a mark ("…", `more` lines) and never silently,
+ * and the fingerprint is always of the whole.
+ */
 export function publicDialog(d) {
   if (!d) return null
-  if (d.kind === 'permission') return { kind: d.kind, title: clip(d.title, 200), body: d.body.slice(0, 60).map(l => clip(l, 400)), prompt: clip(d.prompt, 300), options: d.options.map(o => ({ n: o.n, label: clip(o.text, 300) })), fingerprint: d.fingerprint }
+  if (d.kind === 'permission') {
+    return {
+      kind: d.kind,
+      title: clip(d.title, LINE),
+      body: d.body.slice(0, BODY_LINES).map(l => clip(l, LINE)),
+      more: Math.max(0, d.body.length - BODY_LINES),
+      prompt: clip(d.prompt, LINE),
+      options: d.options.map(o => ({ n: o.n, label: clip(o.text, LINE) })),
+      fingerprint: d.fingerprint,
+    }
+  }
   if (d.kind === 'review') return { kind: d.kind }
-  return { kind: d.kind, question: clip(d.question, 1000) }
+  return { kind: d.kind, question: clip(d.question, LIMITS.question) }
 }
 
 /** The screen shows question `q` of the dialog: its text and its options in order. */
 export function onQuestion(d, q) {
-  if (d?.kind !== 'question' || d.question !== norm(q.question)) return false
+  if (d?.kind !== 'question' || flat(d.question) !== flat(q.question)) return false
   if (d.options.length !== q.options.length + (q.preview ? 0 : 1)) return false
-  return q.options.every((o, j) => d.options[j].text.startsWith(norm(o.label)))
+  return q.options.every((o, j) => flat(d.options[j].text).startsWith(flat(o.label)))
 }
 
 /** Which of `questions` the screen shows: its index, questions.length for the review, -1 for neither. */
@@ -285,10 +333,10 @@ export function typedOther(d) {
   return PLACEHOLDER.test(row.text) ? '' : row.text
 }
 
-/** A long own answer may be cut short with an ellipsis on screen; the start must agree. */
+/** Text on the screen is the text wanted (read flat). A long own answer may be cut short with an ellipsis; the start must agree. */
 export function sameText(shown, wanted) {
-  const a = norm(shown)
-  const b = norm(wanted)
+  const a = flat(shown)
+  const b = flat(wanted)
   if (a === b) return true
   const cut = a.replace(/…$/, '')
   return a.endsWith('…') && cut.length >= 20 && b.startsWith(cut)
@@ -297,7 +345,7 @@ export function sameText(shown, wanted) {
 /** The review screen lists exactly these answers. */
 export function reviewMatches(d, questions, picks) {
   if (d?.kind !== 'review' || d.answers.length !== questions.length) return false
-  return questions.every((q, i) => d.answers[i].question === norm(q.question) && sameText(d.answers[i].answer, answerText(q, picks[i])))
+  return questions.every((q, i) => flat(d.answers[i].question) === flat(q.question) && sameText(d.answers[i].answer, answerText(q, picks[i])))
 }
 
 /** The arrow keys from one row to another (the "Next" row counts as the one after the last option). */

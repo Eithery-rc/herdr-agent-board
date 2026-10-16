@@ -46,7 +46,7 @@ export class FakeDialog {
       text: async text => {
         this.texts.push(text)
         if (!this.ignore && !this.submitted && this.editing()) {
-          this.s.other += text
+          this.insert(text)
           if (this.q.multiSelect) this.s.checked.add(this.q.options.length + 1)
         }
         this.stale = this.lag
@@ -61,6 +61,14 @@ export class FakeDialog {
     else s.answer = [...s.checked].sort((a, b) => a - b).map(n => (n <= q.options.length ? q.options[n - 1].label : s.other)).join(', ')
     if (!this.tabbed) return this.submit()
     this.tab++
+  }
+
+  /** Text at the caret of the own answer's field (its end unless moved). */
+  insert(text) {
+    const s = this.s
+    const at = s.caret ?? s.other.length
+    s.other = s.other.slice(0, at) + text + s.other.slice(at)
+    if (s.caret !== null && s.caret !== undefined) s.caret = at + text.length
   }
 
   submit() {
@@ -78,7 +86,7 @@ export class FakeDialog {
     const s = this.s
     const n = q.options.length
     if (/^[1-9]$/.test(k)) {
-      if (this.editing()) return void (s.other += k)
+      if (this.editing()) return void this.insert(k)
       const d = Number(k)
       if (q.multiSelect) {
         if (d <= n + 1) s.checked.has(d) ? s.checked.delete(d) : s.checked.add(d)
@@ -110,12 +118,26 @@ export class FakeDialog {
         this.tab = Math.max(0, this.tab - 1)
         return
       case 'right':
+        if (this.editing()) return void (s.caret = Math.min(s.other.length, (s.caret ?? s.other.length) + 1))
+      // falls through
       case 'tab':
         if (this.editing() || !this.tabbed) return
         this.tab = Math.min(this.total, this.tab + 1)
         return
+      case 'ctrl+a':
+        if (this.editing()) s.caret = 0
+        return
+      case 'backspace': {
+        if (!this.editing()) return
+        const at = s.caret ?? s.other.length
+        if (!at) return
+        s.other = s.other.slice(0, at - 1) + s.other.slice(at)
+        if (s.caret !== null && s.caret !== undefined) s.caret = at - 1
+        return
+      }
       case 'ctrl+u':
         if (!this.editing()) return
+        s.caret = null
         s.other = ''
         if (q.multiSelect) s.checked.delete(n + 1)
         return

@@ -145,6 +145,7 @@ button.qa-opt:active:not(:disabled) { background: var(--fill); }
 .qa-status svg { width: 15px; height: 15px; }
 .qa-status.ok { color: var(--green); font-weight: 500; }
 .qa-status.error { padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--red) 11%, var(--surface)); color: var(--label); }
+.qa-status.error > b { flex: 1 1 100%; margin-bottom: -4px; font-size: 12px; font-weight: 600; color: var(--red); letter-spacing: 0.01em; }
 .qa-status.error > span { flex: 1 1 100%; overflow-wrap: anywhere; }
 .qa-status.error .button { height: 30px; }
 .qa-screen { flex: 1 1 100%; }
@@ -166,6 +167,8 @@ button.qa-opt:active:not(:disabled) { background: var(--fill); }
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.perm-more { margin-top: -6px; font-size: 12px; color: var(--label-2); }
+.perm-opt .qa-label { white-space: pre-line; } /* broken where the terminal broke it */
 .perm-opt.yes .qa-label { color: var(--accent); font-weight: 600; }
 .perm-opt.no .qa-label { color: var(--red); }
 .perm-opt.chosen { background: color-mix(in srgb, var(--accent) 9%, transparent); }

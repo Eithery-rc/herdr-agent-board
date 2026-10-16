@@ -28,9 +28,14 @@ const FOCUS = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 4.5h8.5V1
  * an action and resolves the server's answer. canMutate(): fresh herdr data (else read only).
  */
 export function initQuestions({ box, t, item, act, toast, canMutate, focusSession }) {
-  const forms = new Map() // form key -> { picks, status: idle | sending | sent | error, error, screen, chosen }
+  const forms = new Map() // form key -> { picks, status: idle | sending | sent | error, error, stopped, screen, chosen }
   let shown = null // { kind: 'question' | 'permission', key, it, questions | dialog }
   let answered = null // { shown, at }: the last answer that went through, until herdr sees the session move on
+  // A click or a digit right after another dialog took the place of the one on show was meant for
+  // the one before (permission prompts can come back to back): the first moment is not taken.
+  const SETTLE_MS = 500
+  let keyAt = 0
+  const settling = () => performance.now() - keyAt < SETTLE_MS
 
   const formOf = (key, questions) => {
     let f = forms.get(key)
@@ -79,8 +84,12 @@ export function initQuestions({ box, t, item, act, toast, canMutate, focusSessio
     // the form stays, saying it went through, rather than "answer in the terminal"; a new
     // permission prompt on the screen takes over.
     if (answered?.shown.it.key === it.key) {
-      if (it.status !== 'blocked' || Date.now() - answered.at > 10_000) answered = null
-      else if (!(dialog?.kind === 'permission' && dialog.fingerprint !== answered.shown.dialog?.fingerprint)) return { ...answered.shown, it }
+      // Moved on, or still blocked long after: the finished form goes, so the same prompt asked
+      // again is a new one to answer.
+      if (it.status !== 'blocked' || Date.now() - answered.at > 10_000) {
+        if (forms.get(answered.shown.key)?.status === 'sent') forms.delete(answered.shown.key)
+        answered = null
+      } else if (!(dialog?.kind === 'permission' && dialog.fingerprint !== answered.shown.dialog?.fingerprint)) return { ...answered.shown, it }
     }
     if (it.status === 'blocked' && dialog?.kind === 'permission') return { kind: 'permission', key: `${it.key}|${dialog.fingerprint}`, it, dialog }
     return null
@@ -88,7 +97,13 @@ export function initQuestions({ box, t, item, act, toast, canMutate, focusSessio
 
   /** Draws the form into the box when the session has one; false leaves the box to the caller. */
   function mount(it, detail) {
+    const before = shown?.key ?? null
     shown = wants(it, detail)
+    if ((shown?.key ?? null) !== before) {
+      // The dialog went or another took its place: a finished form goes with it.
+      if (before && forms.get(before)?.status === 'sent') forms.delete(before)
+      if (shown) keyAt = performance.now()
+    }
     if (!shown) {
       if (box._qa) box._qa = box._html = ''
       return false
@@ -97,7 +112,7 @@ export function initQuestions({ box, t, item, act, toast, canMutate, focusSessio
     const tr = t()
     // Built again only when its shape changes; picks and availability are set in place (sync),
     // so a click or a keystroke never loses the focus or the own answer being typed.
-    const shape = JSON.stringify([tr.lang, shown.key, f.status, f.error, f.screen, f.chosen])
+    const shape = shapeOf(f, tr)
     if (box._qa !== shape) {
       const focused = box.contains(document.activeElement) ? document.activeElement.dataset.focusId : null
       box.innerHTML = shown.kind === 'question' ? questionHTML(shown, f, tr) : permissionHTML(shown, f, tr)
@@ -108,6 +123,8 @@ export function initQuestions({ box, t, item, act, toast, canMutate, focusSessio
     sync()
     return true
   }
+
+  const shapeOf = (f, tr) => JSON.stringify([tr.lang, shown.key, f.status, f.error, f.stopped, f.screen, f.chosen])
 
   function questionHTML(s, f, tr) {
     const many = s.questions.length > 1
@@ -145,7 +162,7 @@ export function initQuestions({ box, t, item, act, toast, canMutate, focusSessio
         return `<button type="button" class="qa-opt perm-opt ${permissionTone(o.label)}${chosen ? ' chosen' : ''}" data-perm="${o.n}" data-focus-id="p.${o.n}"><span class="qa-n" aria-hidden="true">${o.n}</span><span class="qa-body"><span class="qa-label">${esc(o.label)}</span></span>${chosen && f.status === 'sending' ? SPIN : ''}</button>`
       })
       .join('')
-    return `<div class="asked qa perm${f.status === 'sending' || f.status === 'sent' ? ' busy' : ''}" aria-busy="${f.status === 'sending'}"><b>${esc(tr('why.permission'))}</b>${d.title ? `<div class="perm-title">${esc(d.title)}</div>` : ''}${body ? `<pre class="perm-body">${esc(body)}</pre>` : ''}<p class="qa-text">${esc(d.prompt)}</p><div class="qa-opts">${opts}</div>${statusHTML(f, tr)}</div>`
+    return `<div class="asked qa perm${f.status === 'sending' || f.status === 'sent' ? ' busy' : ''}" aria-busy="${f.status === 'sending'}"><b>${esc(tr('why.permission'))}</b>${d.title ? `<div class="perm-title">${esc(d.title)}</div>` : ''}${body ? `<pre class="perm-body">${esc(body)}</pre>` : ''}${d.more ? `<div class="perm-more">${esc(tr('qa.perm.more', { n: d.more }))}</div>` : ''}<p class="qa-text">${esc(d.prompt)}</p><div class="qa-opts">${opts}</div>${statusHTML(f, tr)}</div>`
   }
 
   /** How it went: on its way, done, or why not, with a way to the terminal. */
@@ -154,7 +171,8 @@ export function initQuestions({ box, t, item, act, toast, canMutate, focusSessio
     if (f.status === 'sent') return `<div class="qa-status ok" role="status">${CHECK}<span>${esc(tr('qa.sent'))}</span></div>`
     if (f.status !== 'error') return '<div class="qa-status" role="status" hidden></div>'
     const screen = f.screen ? `<details class="qa-screen"><summary>${esc(tr('qa.screen'))}</summary><pre class="screen">${esc(f.screen)}</pre></details>` : ''
-    return `<div class="qa-status error" role="alert"><span>${esc(f.error)}</span><button type="button" class="button" data-qa-focus>${FOCUS}<span>${esc(tr('sheet.focus'))}</span></button>${screen}</div>`
+    // stopped: keys went in before it stopped, so the dialog may be partly filled in.
+    return `<div class="qa-status error${f.stopped ? ' stopped' : ''}" role="alert"><b>${esc(tr(f.stopped ? 'qa.stopped' : 'qa.failed'))}</b><span>${esc(f.error)}</span><button type="button" class="button" data-qa-focus>${FOCUS}<span>${esc(tr('sheet.focus'))}</span></button>${screen}</div>`
   }
 
   /** Picks, the send button and the read-only state, set on the drawn form. */
@@ -205,8 +223,8 @@ export function initQuestions({ box, t, item, act, toast, canMutate, focusSessio
     if (s?.kind !== 'question' || !canMutate()) return
     const f = forms.get(s.key)
     if (!f || f.status === 'sending' || f.status === 'sent' || remaining(s.questions, f.picks)) return
-    Object.assign(f, { status: 'sending', error: '', screen: '' })
-    mount(item(), null)
+    Object.assign(f, { status: 'sending', error: '', stopped: false, screen: '' })
+    mount(item(), lastDetail)
     const r = await act(s.it.key, 'answer', { session: s.it.session ?? null, toolUseId: s.it.tool.id, answers: payload(s.questions, f.picks) })
     finish(s, f, r, () => t()('qa.done', { name: s.it.name }))
   }
@@ -217,7 +235,7 @@ export function initQuestions({ box, t, item, act, toast, canMutate, focusSessio
     const f = forms.get(s.key)
     const o = s.dialog.options.find(x => x.n === n)
     if (!f || !o || f.status === 'sending' || f.status === 'sent') return
-    Object.assign(f, { status: 'sending', error: '', screen: '', chosen: n })
+    Object.assign(f, { status: 'sending', error: '', stopped: false, screen: '', chosen: n })
     mount(item(), lastDetail)
     const r = await act(s.it.key, 'permit', { session: s.it.session ?? null, fingerprint: s.dialog.fingerprint, option: n })
     finish(s, f, r, () => t()('qa.permDone', { name: s.it.name, choice: o.label }))
@@ -228,10 +246,14 @@ export function initQuestions({ box, t, item, act, toast, canMutate, focusSessio
       f.status = 'sent'
       answered = { shown: s, at: Date.now() }
       toast(done())
-    } else Object.assign(f, { status: 'error', error: r.error || t()('qa.failed'), screen: r.screen || '' })
+    } else if (r.gone) {
+      // Nothing left to answer (answered in the terminal meanwhile): the form goes, the reason in a toast.
+      forms.delete(s.key)
+      toast(r.error, true)
+    } else Object.assign(f, { status: 'error', error: r.error || t()('qa.failed'), stopped: !!r.stopped, screen: r.screen || '' })
     if (shown?.key === s.key) mount(item(), lastDetail)
-    // The form went with the dialog (answered in the terminal meanwhile): the reason in a toast.
-    else if (!r.ok) toast(f.error, true)
+    // The form went with the dialog meanwhile: the reason in a toast.
+    else if (!r.ok && !r.gone) toast(f.error, true)
   }
 
   // ------------------------------------------------------------ input
@@ -251,7 +273,7 @@ export function initQuestions({ box, t, item, act, toast, canMutate, focusSessio
       return
     }
     f.picks = choose(f.picks, s.questions, i, n)
-    if (box._qa !== JSON.stringify([t().lang, s.key, f.status, f.error, f.screen, f.chosen])) mount(item(), lastDetail)
+    if (box._qa !== shapeOf(f, t())) mount(item(), lastDetail)
     else sync()
     if (instant(s.questions)) return void sendQuestions()
     // A key moves on to the next question, as the terminal does after a single select.
@@ -263,6 +285,7 @@ export function initQuestions({ box, t, item, act, toast, canMutate, focusSessio
 
   box.addEventListener('click', e => {
     if (e.target.closest('[data-qa-focus]')) return void (shown && focusSession(shown.it.key))
+    if (settling()) return
     if (e.target.closest('[data-qa-send]')) return void sendQuestions()
     const perm = e.target.closest('[data-perm]')
     if (perm) return void sendPermission(Number(perm.dataset.perm))
@@ -312,6 +335,8 @@ export function initQuestions({ box, t, item, act, toast, canMutate, focusSessio
     if (!shown || e.ctrlKey || e.metaKey || e.altKey || !/^[1-9]$/.test(e.key)) return false
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) || document.activeElement?.isContentEditable) return false
     if (!canMutate()) return false
+    // A held key repeats; a dialog that just came up may not be the one the key was meant for.
+    if (e.repeat || settling()) return true
     const d = Number(e.key)
     if (shown.kind === 'permission') {
       if (!shown.dialog.options.some(o => o.n === d)) return false

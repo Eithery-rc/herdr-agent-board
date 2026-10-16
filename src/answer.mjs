@@ -7,6 +7,7 @@
 import { herdr, herdrText } from './herdr.mjs'
 import { transcriptInfo } from './claude.mjs'
 import { t } from './lang.mjs'
+import { inputDraft } from './screen.mjs'
 import {
   answerText,
   arrows,
@@ -30,13 +31,38 @@ class Stop extends Error {
   }
 }
 
-/** Reading and typing in one pane through herdr. */
+/**
+ * Reading and typing in one pane through herdr. `agent send-keys` takes the pane id as its
+ * target (`pane send-keys` would do too). Text goes literally with `pane send-text`: `agent
+ * prompt` refuses a pane that waits in a dialog. herdr 0.9 types even "-x" or "--help" as text,
+ * but a leading dash gets a space before it all the same, as the board's other calls do, so a
+ * herdr that reads it as an option cannot; typeOther() takes that space out of the field again.
+ */
 export function paneIO(pane) {
   return {
     read: () => herdrText(['agent', 'read', pane, '--source', 'visible'], 5000),
     keys: (...keys) => herdr(['agent', 'send-keys', pane, ...keys], 10_000),
-    // Literal text, not a prompt: `agent prompt` refuses a pane that waits in a dialog.
-    text: text => herdr(['pane', 'send-text', pane, text], 10_000),
+    text: text => herdr(['pane', 'send-text', pane, /^-/.test(text) ? ` ${text}` : text], 10_000),
+  }
+}
+
+/** The same io, counting what it sent and keeping the last screen it read: where a failure leaves the dialog. */
+function counted(io) {
+  const seen = { sent: 0, screen: '' }
+  return {
+    seen,
+    io: {
+      ...io,
+      read: async () => (seen.screen = await io.read()),
+      keys: (...keys) => {
+        seen.sent += keys.length
+        return io.keys(...keys)
+      },
+      text: text => {
+        seen.sent++
+        return io.text(text)
+      },
+    },
   }
 }
 
@@ -48,9 +74,8 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
  */
 async function until(io, ok, step, { timeout = 3000, every = 100 } = {}) {
   const end = Date.now() + timeout
-  let screen = ''
   for (;;) {
-    screen = await io.read()
+    const screen = await io.read()
     const d = parseDialog(screen)
     if (ok(d)) return d
     if (Date.now() > end) throw new Stop('stuck', step, screen)
@@ -59,28 +84,65 @@ async function until(io, ok, step, { timeout = 3000, every = 100 } = {}) {
 }
 
 /**
- * Drives the question dialog to these answers and submits it. `picks` from resolveAnswers.
- * Resolves { ok: true } once the dialog is gone, or { ok: false, reason, step, screen }:
- *   changed  the screen does not show these questions (nothing was pressed in that state)
- *   stuck    a key did not do what it should have
- *   review   the review screen lists other answers than these (not submitted)
+ * Waits until the dialog is surely gone, which a blank or half-drawn screen does not prove: the
+ * transcript has the answer (io.answered, when the caller can tell), or two reads in a row show
+ * Claude's input box with no dialog, or a whole other dialog. `ours(dialog)`: the dialog is still
+ * the one answered. Throws Stop('unconfirmed') after `timeout` ms.
  */
-export async function driveQuestions({ questions, picks, io, timing }) {
-  const wait = (ok, step) => until(io, ok, step, timing)
-  const read = async () => {
+async function settled(io, ours, step, { timeout = 5000, every = 100 } = {}) {
+  const end = Date.now() + timeout
+  let streak = 0
+  for (;;) {
+    if (io.answered && (await io.answered())) return
     const screen = await io.read()
-    return { screen, d: parseDialog(screen) }
+    const d = parseDialog(screen)
+    streak = !ours(d) && (d || inputDraft(screen) !== null) ? streak + 1 : 0
+    if (streak >= 2) return
+    if (Date.now() > end) throw new Stop('unconfirmed', step, screen)
+    await sleep(every)
   }
+}
+
+/**
+ * Types an own answer into the field the cursor is on and waits until the field holds it. The
+ * space paneIO puts before a leading dash is taken out again (start of the line, one right, one
+ * back), so the answer is the text as written, which the screen then shows with nothing before it.
+ */
+async function typeOther(io, wait, q, text, step) {
+  const row = q.options.length + 1
+  await io.text(text)
+  const d = await wait(x => onQuestion(x, q) && x.cursor === row && sameText(typedOther(x), text), step)
+  if (!d.options[row - 1].spaced) return d
+  await io.keys('ctrl+a', 'right', 'backspace')
+  return wait(x => onQuestion(x, q) && x.cursor === row && sameText(typedOther(x), text) && !x.options[row - 1].spaced, step)
+}
+
+/** A failure of herdr itself, with what was sent before it. */
+const broken = (err, seen) => ({ ok: false, reason: 'herdr', why: err.message, sent: seen.sent, screen: seen.screen })
+
+/**
+ * Drives the question dialog to these answers and submits it. `picks` from resolveAnswers.
+ * Resolves { ok: true } once the dialog is surely gone, or { ok: false, reason, step, screen, sent }:
+ *   changed      the screen does not show these questions (nothing was pressed in that state)
+ *   stuck        a key did not do what it should have
+ *   review       the review screen lists other answers than these, or no "Submit answers" (not submitted)
+ *   unconfirmed  submitted, but the screen never showed the dialog gone
+ *   herdr        herdr failed (why); `sent` says whether keys went in before
+ */
+export async function driveQuestions({ questions, picks, io: raw, timing }) {
+  const { io, seen } = counted(raw)
+  const wait = (ok, step) => until(io, ok, step, timing)
   const leaveText = async (d, i, step) => {
     // On the own-answer row keys are text: up puts the cursor back on the options.
     if (!d.editing) return d
     await io.keys('up')
     return wait(x => onQuestion(x, questions[i]) && !x.editing, step)
   }
+  const ours = x => screenIndex(x, questions) >= 0
   try {
-    let { screen, d } = await read()
+    let d = parseDialog(await io.read())
     let at = screenIndex(d, questions)
-    if (at < 0) throw new Stop('changed', { what: 'start' }, screen)
+    if (at < 0) throw new Stop('changed', { what: 'start' }, seen.screen)
     // Begun in the terminal: back to the first question (left moves one tab back).
     while (at > 0) {
       if (d.kind === 'question') d = await leaveText(d, at, { what: 'back' })
@@ -93,7 +155,10 @@ export async function driveQuestions({ questions, picks, io, timing }) {
       const pick = picks[i]
       d = await wait(x => onQuestion(x, q), { q: i + 1, what: 'question' })
       d = await leaveText(d, i, { q: i + 1, what: 'question' })
-      const moved = x => !onQuestion(x, q)
+      // A lone single-choice question is submitted by its answer: settled() below waits for that,
+      // the transcript included, rather than for the screen to move on.
+      const lone = questions.length === 1 && !q.multiSelect
+      const moved = x => lone || !onQuestion(x, q)
       if (!q.multiSelect) {
         if (pick.other) {
           const row = q.options.length + 1
@@ -103,8 +168,7 @@ export async function driveQuestions({ questions, picks, io, timing }) {
           await wait(x => onQuestion(x, q) && x.cursor === row && x.editing, step)
           await io.keys('ctrl+u')
           await wait(x => onQuestion(x, q) && x.cursor === row && typedOther(x) === '', step)
-          await io.text(pick.other)
-          await wait(x => onQuestion(x, q) && x.cursor === row && sameText(typedOther(x), pick.other), step)
+          await typeOther(io, wait, q, pick.other, step)
           await io.keys('enter')
           await wait(moved, step)
         } else if (q.preview) {
@@ -136,7 +200,7 @@ export async function driveQuestions({ questions, picks, io, timing }) {
         await wait(x => onQuestion(x, q) && x.cursor === row && x.editing, step)
         await io.keys('ctrl+u')
         await wait(x => onQuestion(x, q) && typedOther(x) === '', step)
-        await io.text(pick.other)
+        await typeOther(io, wait, q, pick.other, step)
         d = await wait(x => onQuestion(x, q) && sameText(typedOther(x), pick.other) && x.options[row - 1].checked, step)
       } else if (d.options[row - 1].checked) {
         await io.keys(String(row))
@@ -149,35 +213,33 @@ export async function driveQuestions({ questions, picks, io, timing }) {
       await io.keys('enter')
       await wait(moved, { q: i + 1, what: 'next' })
     }
-    const gone = x => screenIndex(x, questions) < 0
-    if (questions.length === 1 && !questions[0].multiSelect) {
-      await wait(gone, { what: 'submit' })
-      return { ok: true }
+    // A lone single-choice question is submitted by its answer; the others end on the review.
+    if (questions.length > 1 || questions[0].multiSelect) {
+      d = await wait(x => x?.kind === 'review', { what: 'review' })
+      if (!reviewMatches(d, questions, picks) || d.options[0]?.text !== 'Submit answers') throw new Stop('review', { what: 'review' }, seen.screen)
+      await io.keys('1')
     }
-    d = await wait(x => x?.kind === 'review' || gone(x), { what: 'review' })
-    if (d?.kind !== 'review') return { ok: true }
-    if (!reviewMatches(d, questions, picks)) throw new Stop('review', { what: 'review' }, (await read()).screen)
-    await io.keys('1') // "1. Submit answers"
-    await wait(gone, { what: 'submit' })
+    await settled(io, ours, { what: 'submit' }, timing)
     return { ok: true }
   } catch (err) {
-    if (err instanceof Stop) return { ok: false, reason: err.reason, step: err.step, screen: err.screen }
-    throw err
+    if (err instanceof Stop) return { ok: false, reason: err.reason, step: err.step, screen: err.screen, sent: seen.sent }
+    return broken(err, seen)
   }
 }
 
-/** Picks option `n` of the permission prompt whose fingerprint the user saw. */
-export async function drivePermission({ fingerprint, n, io, timing }) {
-  const screen = await io.read()
-  const d = parseDialog(screen)
-  if (d?.kind !== 'permission' || d.fingerprint !== fingerprint || !d.options.some(o => o.n === n)) return { ok: false, reason: 'changed', step: { what: 'start' }, screen }
-  await io.keys(String(n))
+/** Picks option `n` of the permission prompt whose fingerprint the user saw. Results as driveQuestions. */
+export async function drivePermission({ fingerprint, n, io: raw, timing }) {
+  const { io, seen } = counted(raw)
+  const ours = x => x?.kind === 'permission' && x.fingerprint === fingerprint
   try {
-    await until(io, x => x?.kind !== 'permission' || x.fingerprint !== fingerprint, { what: 'option', n }, timing)
+    const d = parseDialog(await io.read())
+    if (!ours(d) || !d.options.some(o => o.n === n)) return { ok: false, reason: 'changed', step: { what: 'start' }, screen: seen.screen, sent: 0 }
+    await io.keys(String(n))
+    await settled(io, ours, { what: 'option', n }, timing)
     return { ok: true }
   } catch (err) {
-    if (err instanceof Stop) return { ok: false, reason: err.reason, step: err.step, screen: err.screen }
-    throw err
+    if (err instanceof Stop) return { ok: false, reason: err.reason, step: err.step, screen: err.screen, sent: seen.sent }
+    return broken(err, seen)
   }
 }
 
@@ -193,13 +255,17 @@ const tail = screen =>
     .slice(-24)
     .join('\n')
 
-/** The pane still holds this session, waiting in a dialog. Returns an error result or null. */
-async function checkPane(item) {
+/**
+ * The pane still holds this Claude session, waiting in a dialog. Returns an error result or null.
+ * gone: the dialog is no longer there to answer.
+ */
+export async function checkPane(item) {
   if (!item?.pane) return { ok: false, error: t('err.noPane') }
-  if (item.sleeping) return { ok: false, error: t('err.qa.notWaiting', { name: item.name }) }
+  if (item.agent !== 'claude' || !item.session) return { ok: false, error: t('err.qa.notClaude', { name: item.name }) }
+  if (item.sleeping) return { ok: false, gone: true, error: t('err.qa.notWaiting', { name: item.name }) }
   try {
     const agent = (await herdr(['agent', 'get', item.pane]))?.agent
-    if (!agent || (agent.agent_session?.value ?? null) !== (item.session ?? null)) return { ok: false, error: t('err.sessionChanged', { name: item.name }) }
+    if (!agent || (agent.agent_session?.value ?? null) !== item.session) return { ok: false, error: t('err.sessionChanged', { name: item.name }) }
     if (agent.agent_status !== 'blocked') return { ok: false, gone: true, error: t('err.qa.notWaiting', { name: item.name }) }
   } catch (err) {
     return { ok: false, error: t('err.qa.herdr', { why: err.message }) }
@@ -213,12 +279,20 @@ function stepText(step = {}) {
   return step.q ? t('qa.step.inQuestion', { q: step.q, what }) : what
 }
 
+/**
+ * A run that did not go through, for the page. stopped: keys went in, so the dialog may be partly
+ * filled in; the screen shows where it was left.
+ */
 function failure(item, r) {
+  const name = item.name
+  if (r.reason === 'herdr' && !r.sent) return { ok: false, error: t('err.qa.herdr', { why: r.why }) }
   const error =
-    r.reason === 'changed' ? t('err.qa.changed', { name: item.name })
-    : r.reason === 'review' ? t('err.qa.review', { name: item.name })
-    : t('err.qa.stuck', { name: item.name, step: stepText(r.step) })
-  return { ok: false, error, stopped: r.reason !== 'changed', screen: tail(r.screen) }
+    r.reason === 'herdr' ? t('err.qa.herdrMidway', { name, why: r.why })
+    : r.reason === 'changed' ? t('err.qa.changed', { name })
+    : r.reason === 'review' ? t('err.qa.review', { name })
+    : r.reason === 'unconfirmed' ? t('err.qa.unconfirmed', { name })
+    : t('err.qa.stuck', { name, step: stepText(r.step) })
+  return { ok: false, error, stopped: r.sent > 0, screen: tail(r.screen) }
 }
 
 /**
@@ -234,27 +308,22 @@ export async function answerQuestions(item, body, io = paneIO(item?.pane)) {
   if (!tool.questions) return { ok: false, error: t('err.qa.unknown', { name: item.name }) }
   const { picks, error } = resolveAnswers(tool.questions, body.answers)
   if (error) return { ok: false, error: t(error) }
-  let r
-  try {
-    r = await driveQuestions({ questions: tool.questions, picks, io })
-  } catch (err) {
-    return { ok: false, stopped: true, error: t('err.qa.herdr', { why: err.message }) }
+  // The transcript holds the answer once Claude Code took it: proof the form is done.
+  const answered = () => {
+    const now = transcriptInfo(item.transcript)?.tool
+    return !!now && (now.id !== tool.id || !now.pending)
   }
+  const r = await driveQuestions({ questions: tool.questions, picks, io: { ...io, answered } })
   if (!r.ok) return failure(item, r)
   return { ok: true, answers: tool.questions.map((q, i) => ({ question: q.question, answer: answerText(q, picks[i]) })) }
 }
 
 /** Pick option `n` of the permission prompt the user saw (its fingerprint, from the screen). */
 export async function answerPermission(item, body, io = paneIO(item?.pane)) {
-  const bad = await checkPane(item)
-  if (bad) return bad
   const n = Number(body?.option)
   if (!Number.isInteger(n) || n < 1 || n > 9 || typeof body?.fingerprint !== 'string') return { ok: false, error: t('err.qa.invalid') }
-  let r
-  try {
-    r = await drivePermission({ fingerprint: body.fingerprint, n, io })
-  } catch (err) {
-    return { ok: false, stopped: true, error: t('err.qa.herdr', { why: err.message }) }
-  }
+  const bad = await checkPane(item)
+  if (bad) return bad
+  const r = await drivePermission({ fingerprint: body.fingerprint, n, io })
   return r.ok ? { ok: true } : failure(item, r)
 }

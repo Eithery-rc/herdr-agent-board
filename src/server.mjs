@@ -254,7 +254,12 @@ export function startServer({ cfg, log = () => {} } = {}) {
         answering.add(item.key)
         try {
           // A new snapshot first, as for a message: the board must not answer on old data.
-          const fresh = (await collect(cfg)).find(next => next.key === item.key)
+          let fresh
+          try {
+            fresh = (await collect(cfg)).find(next => next.key === item.key)
+          } catch (err) {
+            return { ok: false, error: t('err.qa.herdr', { why: err.message }) }
+          }
           if (!fresh || fresh.session !== item.session || fresh.pane !== item.pane) return { ok: false, error: t('err.sessionChanged', { name: item.name }) }
           const r = action === 'answer' ? await answerQuestions(fresh, body) : await answerPermission(fresh, body)
           log(`${action} ${item.name}: ${r.ok ? 'ok' : r.error}`)
@@ -469,6 +474,9 @@ export function startServer({ cfg, log = () => {} } = {}) {
         if (req.method === 'GET' && !m[2]) return json(200, await detail(item))
         if (req.method === 'POST' && m[2]) {
           if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })
+          // Answering a dialog presses keys in a session: like a launch, only from this page.
+          const origin = req.headers.origin
+          if (['answer', 'permit'].includes(m[2]) && origin && origin !== `http://127.0.0.1:${port}` && origin !== `http://localhost:${port}`) return json(403, { error: 'origin' })
           // Actions that go through herdr wait for a board that can reach it; card edits and the rest do not.
           if (['focus', 'wake', 'sleep', 'message', 'answer', 'permit'].includes(m[2]) && refuseStale()) return json(409, { ok: false, error: t('mobile.readOnly') })
           const body = await readBody(req)

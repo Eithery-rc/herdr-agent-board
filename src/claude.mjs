@@ -212,7 +212,8 @@ export function transcriptInfo(path) {
         const b = content[j]
         if (b.type === 'tool_use' && !info.tool) {
           info.tool = { id: b.id, name: b.name, label: toolLabel(b.name), detail: toolDetail(b.name, b.input), pending: !results.has(b.id) }
-          if (b.name === 'AskUserQuestion') info.tool.questions = questionsOf(b.input)
+          // The form only while it waits for an answer: every board refresh carries it to the page.
+          if (b.name === 'AskUserQuestion' && info.tool.pending) info.tool.questions = questionsOf(b.input)
         } else if (b.type === 'text' && !info.lastText && b.text?.trim()) {
           info.lastText = clip(b.text.trim(), 700)
           info.question = trailingQuestion(b.text)
@@ -276,7 +277,8 @@ export function conversation(path, limit = 40) {
 function askAnswers(ask, result) {
   const answers = result?.answers
   if (!answers || typeof answers !== 'object') return null
-  return ask.map(q => (typeof answers[q.question] === 'string' ? clip(answers[q.question], 1000) : ''))
+  // Keyed by the full question text, which questionsOf keeps whole.
+  return ask.map(q => (typeof answers[q.question] === 'string' ? clip(answers[q.question], 2000) : ''))
 }
 
 function turns(text) {

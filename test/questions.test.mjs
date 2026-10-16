@@ -8,6 +8,8 @@ import { FakeDialog } from './fixtures/fake-dialog.mjs'
 // A checkout with core.autocrlf turns the screens into CRLF; herdr gives LF.
 const screen = name => readFileSync(new URL(`./fixtures/screens/${name}.txt`, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 const fast = { timeout: 200, every: 1 }
+// Claude's input box and no dialog: the screen once a dialog is answered.
+const IDLE = ['● Done.', '', '─'.repeat(60), '❯ ', '─'.repeat(60), '  ⏵⏵ manual mode on'].join('\n')
 
 // The questions the screens in fixtures/screens were taken from.
 const COLOR = questionsOf({ questions: [{ question: 'Which color should the test widget use?', header: 'Color', multiSelect: false, options: [
@@ -31,9 +33,28 @@ test('questionsOf keeps what the form needs and refuses what it cannot answer', 
   assert.equal(questionsOf({ questions: [] }), null)
   assert.equal(questionsOf({ questions: [{ question: 'No options?', options: [] }] }), null)
   assert.equal(questionsOf({ questions: [{ question: 'Fine', options: [{ label: 'A' }] }, { question: '', options: [{ label: 'B' }] }] }), null)
-  const long = questionsOf({ questions: [{ question: 'x'.repeat(5000), options: [{ label: 'A', description: 3 }] }] })
-  assert.equal(long[0].question.length, 1000)
-  assert.equal(long[0].options[0].description, '')
+  assert.equal(questionsOf({ questions: [{ question: 'Fine', options: [{ label: 'A', description: 3 }] }] })[0].options[0].description, '')
+  // Never cut short (the screen would differ): too much, and the terminal answers it.
+  const one = (q = 'Q?', options = [{ label: 'A' }, { label: 'B' }]) => ({ question: q, header: 'H', options })
+  assert.equal(questionsOf({ questions: [one('x'.repeat(2001))] }), null)
+  assert.ok(questionsOf({ questions: [one('x'.repeat(2000))] }))
+  assert.equal(questionsOf({ questions: [one('Q?', [{ label: 'y'.repeat(501) }])] }), null)
+  assert.equal(questionsOf({ questions: [1, 2, 3, 4, 5].map(n => one(`Q${n}?`)) }), null)
+  assert.ok(questionsOf({ questions: [1, 2, 3, 4].map(n => one(`Q${n}?`)) }))
+  assert.equal(questionsOf({ questions: [one('Q?', Array.from({ length: 9 }, (_, i) => ({ label: `O${i}` })))] }), null)
+  // Answers are keyed by the question's text and picked by an option's label: both must be unique.
+  assert.equal(questionsOf({ questions: [one('Same?'), one('Same?')] }), null)
+  assert.equal(questionsOf({ questions: [one('Q?', [{ label: 'A' }, { label: 'A' }])] }), null)
+})
+
+test('an own answer: one line, no control or direction characters', () => {
+  const [q] = questionsOf({ questions: [{ question: 'Q?', options: [{ label: 'A' }] }] })
+  const other = text => resolveAnswers([q], [{ other: text }]).picks[0].other
+  assert.equal(other(' two\r\nlines\there '), 'two lines here')
+  assert.equal(other('a\x1b[31mb\x85c\x9bd'), 'a [31mb c d')
+  assert.equal(other('pay‮txt.exe⁦x⁩'), 'pay txt.exe x')
+  assert.equal(other('-1 day'), '-1 day') // the dash is herdr's business (answer.mjs paneIO)
+  assert.equal(other('x'.repeat(1500)).length, 1000)
 })
 
 test('resolveAnswers maps labels to option numbers and checks every question', () => {
@@ -107,21 +128,52 @@ test('parseDialog reads permission prompts, with a fingerprint that changes with
   assert.deepEqual(bash.body, ['Write hello into a probe note file', 'echo hello > probe-note.txt'])
   assert.equal(bash.prompt, 'Do you want to proceed?')
   assert.equal(bash.options.length, 4)
-  // The wrapped line joined: broken mid-word at the full width (a long path), so without a space.
-  assert.match(bash.options[1].text, /\\of\\probe from this project$/)
+  // A wrapped choice reads as the terminal broke it: a path broken mid-word gets no space in it.
+  assert.match(bash.options[1].text, /\\of\\pro\nbe from this project$/)
   assert.equal(bash.options[3].text, 'No')
   assert.equal(bash.cursor, 1)
   const write = parseDialog(screen('permission-write'))
   assert.equal(write.title, 'Create file')
   assert.equal(write.prompt, 'Do you want to create probe-two.txt?')
   assert.deepEqual(write.options.map(o => o.n), [1, 2, 3])
-  assert.match(write.options[1].text, /for this session \(shift\+tab\)$/) // broken at a space
+  assert.match(write.options[1].text, /for this session\n\(shift\+tab\)$/) // broken at a space
   assert.notEqual(write.fingerprint, bash.fingerprint)
   assert.equal(parseDialog(screen('permission-bash')).fingerprint, bash.fingerprint)
-  const changed = parseDialog(screen('permission-bash').replace('\n echo hello > probe-note.txt\n', '\n echo bye > probe-note.txt\n'))
+  const command = c => parseDialog(screen('permission-bash').replace('\n echo hello > probe-note.txt\n', `\n ${c}\n`))
+  const changed = command('echo bye > probe-note.txt')
   assert.deepEqual(changed.body, ['Write hello into a probe note file', 'echo bye > probe-note.txt'])
   assert.notEqual(changed.fingerprint, bash.fingerprint)
-  assert.deepEqual(Object.keys(publicDialog(bash)).sort(), ['body', 'fingerprint', 'kind', 'options', 'prompt', 'title'])
+  // Every character counts: what markdown or spacing would hide is another command.
+  for (const [a, b] of [['cat my_secret.txt', 'cat mysecret.txt'], ['rm -rf build_*', 'rm -rf build'], ['echo "a  b"', 'echo "a b"'], ['echo `id`', 'echo id']]) {
+    assert.notEqual(command(a).fingerprint, command(b).fingerprint, `${a} / ${b}`)
+    assert.deepEqual(command(a).body.at(-1), a)
+  }
+  // Where the cursor stands is not part of the prompt.
+  const moved = parseDialog(screen('permission-bash').replace(' ❯ 1. Yes', '   1. Yes').replace('   4. No', ' ❯ 4. No'))
+  assert.equal(moved.cursor, 4)
+  assert.equal(moved.fingerprint, bash.fingerprint)
+})
+
+test('publicDialog cuts long prompts with a mark, never silently', () => {
+  const bash = parseDialog(screen('permission-bash'))
+  assert.deepEqual(Object.keys(publicDialog(bash)).sort(), ['body', 'fingerprint', 'kind', 'more', 'options', 'prompt', 'title'])
+  assert.equal(publicDialog(bash).more, 0)
+  const long = { ...bash, body: [...Array.from({ length: 100 }, (_, i) => `line ${i}`), 'x'.repeat(900)] }
+  const shown = publicDialog(long)
+  assert.equal(shown.body.length, 80)
+  assert.equal(shown.more, 21)
+  assert.equal(publicDialog({ ...bash, body: ['y'.repeat(900)] }).body[0].at(-1), '…')
+  assert.equal(shown.fingerprint, bash.fingerprint) // of the whole, from the parse
+})
+
+test('a long label wrapped at a space or in the middle of a word is the same label', () => {
+  const label = 'Keep the generated files under C:\\work\\projects\\a-rather-long-folder-name\\with\\several\\levels'
+  const [q] = questionsOf({ questions: [{ question: 'Where should the build put its output?', header: 'Out', options: [{ label }, { label: 'Elsewhere' }] }] })
+  const draw = (first, rest) => ['❯ earlier', '─'.repeat(40), ' ☐ Out', '', 'Where should the build', 'put its output?', '', `❯ 1. ${first}`, `     ${rest}`, '  2. Elsewhere', '  3. Type something.', '─'.repeat(40), '  4. Chat about this', '', 'Enter to select · ↑/↓ to navigate · Esc to cancel'].join('\n')
+  // At a space (the space gone), in the middle of the path (nothing gone).
+  assert.ok(onQuestion(parseDialog(draw('Keep the generated files under', 'C:\\work\\projects\\a-rather-long-folder-name\\with\\several\\levels')), q))
+  assert.ok(onQuestion(parseDialog(draw('Keep the generated files under C:\\work\\projects\\a-rather-lon', 'g-folder-name\\with\\several\\levels')), q))
+  assert.ok(!onQuestion(parseDialog(draw('Keep the generated files under C:\\work\\other', 'folder')), q))
 })
 
 test('parseDialog finds nothing on a plain screen or another dialog', () => {
@@ -167,6 +219,26 @@ test('an own answer is reached with arrows, cleared and typed, never by its digi
   assert.deepEqual(fake.keysLog, ['down', 'down', 'down', 'ctrl+u', 'enter'])
   assert.deepEqual(fake.texts, ['Teal'])
   assert.deepEqual(fake.submitted, ['Teal'])
+})
+
+test('an own answer with a leading dash: the space herdr gets before it is taken out again', async () => {
+  for (const [questions, answers, want] of [
+    [COLOR, [{ other: '-1 day' }], ['-1 day']],
+    [PLATFORMS, [{ options: ['Linux'], other: '-arm64' }], ['Linux, -arm64']],
+  ]) {
+    const fake = new FakeDialog(questions, { lag: 1 })
+    const io = fake.io()
+    const text = io.text
+    io.text = t => text(/^-/.test(t) ? ` ${t}` : t) // as paneIO sends it
+    const r = await driveQuestions({ questions, picks: resolveAnswers(questions, answers).picks, io, timing: fast })
+    assert.ok(r.ok, JSON.stringify(r))
+    assert.deepEqual(fake.submitted, want)
+    assert.ok(fake.keysLog.join(' ').includes('ctrl+a right backspace'))
+  }
+  // Without a dash nothing is moved.
+  const fake = new FakeDialog(COLOR)
+  await driveQuestions({ questions: COLOR, picks: resolveAnswers(COLOR, [{ other: 'Teal' }]).picks, io: fake.io(), timing: fast })
+  assert.ok(!fake.keysLog.includes('ctrl+a'))
 })
 
 test('three questions: single, multiSelect, own answer, then the review and submit', async () => {
@@ -244,9 +316,15 @@ test('a permission prompt is answered only while the screen shows the prompt the
   const { fingerprint } = parseDialog(bash)
   const keys = []
   let shown = bash
-  const io = { read: async () => shown, keys: async (...k) => { keys.push(...k); shown = '❯ \n' }, text: async () => {} }
+  const io = { read: async () => shown, keys: async (...k) => { keys.push(...k); shown = IDLE }, text: async () => {} }
   assert.deepEqual(await drivePermission({ fingerprint, n: 1, io, timing: fast }), { ok: true })
   assert.deepEqual(keys, ['1'])
+  // The next prompt right after: a whole other dialog proves it as well.
+  shown = bash
+  keys.length = 0
+  io.keys = async (...k) => { keys.push(...k); shown = screen('permission-write') }
+  assert.deepEqual(await drivePermission({ fingerprint, n: 1, io, timing: fast }), { ok: true })
+  io.keys = async (...k) => { keys.push(...k); shown = IDLE }
   shown = screen('permission-write')
   keys.length = 0
   const r = await drivePermission({ fingerprint, n: 1, io, timing: fast })
@@ -255,4 +333,61 @@ test('a permission prompt is answered only while the screen shows the prompt the
   shown = bash
   assert.equal((await drivePermission({ fingerprint, n: 7, io, timing: fast })).reason, 'changed')
   assert.deepEqual(keys, [])
+})
+
+test('done needs proof: a blank or half-drawn screen after the last key is not taken for it', async () => {
+  for (const after of ['', '\n\n   \n', '──────────\n Bash command\n']) {
+    const fake = new FakeDialog(COLOR)
+    const io = fake.io()
+    const read = io.read
+    io.read = async () => (fake.submitted ? after : read())
+    const r = await driveQuestions({ questions: COLOR, picks: resolveAnswers(COLOR, [{ options: ['Blue'] }]).picks, io, timing: fast })
+    assert.equal(r.reason, 'unconfirmed', JSON.stringify(after))
+    assert.equal(r.sent, 1)
+  }
+  // The transcript's word is enough, whatever the screen shows meanwhile.
+  const slow = new FakeDialog(COLOR, { lag: 50 })
+  const ok = await driveQuestions({ questions: COLOR, picks: resolveAnswers(COLOR, [{ options: ['Blue'] }]).picks, io: { ...slow.io(), answered: async () => !!slow.submitted }, timing: fast })
+  assert.deepEqual(ok, { ok: true })
+  // One frame with the input box between blank ones is not two in a row.
+  const bash = screen('permission-bash')
+  const { fingerprint } = parseDialog(bash)
+  let frames = null
+  const io = { read: async () => (frames ? (frames.shift() ?? '') : bash), keys: async () => { frames = [IDLE, '', IDLE, ''] }, text: async () => {} }
+  assert.equal((await drivePermission({ fingerprint, n: 1, io, timing: fast })).reason, 'unconfirmed')
+})
+
+test('the review is submitted only under its own "Submit answers"', async () => {
+  const fake = new FakeDialog(ORDER)
+  const io = fake.io()
+  const read = io.read
+  io.read = async () => (await read()).replace('1. Submit answers', '1. Send everything')
+  const picks = resolveAnswers(ORDER, [{ options: ['Large'] }, { options: ['Cheese'] }, { options: ['Now'] }]).picks
+  const r = await driveQuestions({ questions: ORDER, picks, io, timing: fast })
+  assert.equal(r.reason, 'review')
+  assert.equal(fake.submitted, null)
+})
+
+test('herdr failing midway says how much went in', async () => {
+  const fake = new FakeDialog(ORDER)
+  const io = fake.io()
+  const keys = io.keys
+  let calls = 0
+  io.keys = async (...k) => {
+    if (++calls === 3) throw new Error('pipe closed')
+    return keys(...k)
+  }
+  const picks = resolveAnswers(ORDER, [{ options: ['Large'] }, { options: ['Cheese', 'Basil'] }, { options: ['Now'] }]).picks
+  const r = await driveQuestions({ questions: ORDER, picks, io, timing: fast })
+  assert.equal(r.reason, 'herdr')
+  assert.equal(r.why, 'pipe closed')
+  assert.equal(r.sent, 3)
+  assert.match(r.screen, /Which toppings\?/)
+  const io2 = new FakeDialog(COLOR).io()
+  io2.read = async () => {
+    throw new Error('no pane')
+  }
+  const r2 = await driveQuestions({ questions: COLOR, picks: resolveAnswers(COLOR, [{ options: ['Red'] }]).picks, io: io2, timing: fast })
+  assert.equal(r2.reason, 'herdr')
+  assert.equal(r2.sent, 0)
 })
