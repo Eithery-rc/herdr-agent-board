@@ -1,9 +1,8 @@
 // Where the side panel sits and how big it is: plain geometry, shared by the page (panel.js) and
 // the tests. A panel docks right, left or at the bottom, flush with the window's edge like a
 // sidebar, where the board makes room for it, or floats over the board as a window inset from the
-// edges. A window too narrow to make room beside a side panel gets it over the board, inset like
-// a floating one (Slide Over, where room is Split View). Rectangles are { x, y, w, h } in CSS
-// pixels of the window `vp` ({ w, h }).
+// edges. A window too narrow to make room beside a side panel keeps it docked, lying over the
+// board like a drawer. Rectangles are { x, y, w, h } in CSS pixels of the window `vp` ({ w, h }).
 import { project, rubberband } from './spring.js'
 
 export const DOCKS = ['right', 'left', 'bottom', 'float']
@@ -38,14 +37,11 @@ export function dockSize(layout, dock, vp) {
   return clamp(own ?? (dock === 'bottom' ? Math.round(vp.h * DEFAULT.bottom) : DEFAULT.side), min, max)
 }
 
-/**
- * A docked panel's rectangle at `size`, unlimited: a drag shows sizes past the limits, softened.
- * `inset`: its distance from the window's edges, when it lies over the board.
- */
-export function dockRect(dock, size, vp, inset = 0) {
-  if (dock === 'left') return { x: inset, y: inset, w: size, h: vp.h - 2 * inset }
+/** A docked panel's rectangle at `size`, unlimited: a drag shows sizes past the limits, softened. */
+export function dockRect(dock, size, vp) {
+  if (dock === 'left') return { x: 0, y: 0, w: size, h: vp.h }
   if (dock === 'bottom') return { x: 0, y: vp.h - size, w: vp.w, h: size }
-  return { x: vp.w - inset - size, y: inset, w: size, h: vp.h - 2 * inset }
+  return { x: vp.w - size, y: 0, w: size, h: vp.h }
 }
 
 /** Does a panel docked at a side lie over the board, the window too narrow to make room beside it? */
@@ -78,7 +74,7 @@ export function defaultFloat(vp) {
 /** Where the panel rests for `layout` ({ dock, side, bottom, float }). */
 export function rectFor(layout, vp) {
   if (layout.dock === 'float') return clampFloat(layout.float ?? defaultFloat(vp), vp)
-  return dockRect(layout.dock, dockSize(layout, layout.dock, vp), vp, overlays(layout, vp) ? MARGIN : 0)
+  return dockRect(layout.dock, dockSize(layout, layout.dock, vp), vp)
 }
 
 /** Where a docked panel comes in from and leaves to: just past its own edge. A floating one fades in place. */
@@ -133,18 +129,39 @@ export function foldsAway(size, velocity, min) {
   return size + project(velocity) < min / 2
 }
 
-/**
- * The dock a panel lands in when let go with the pointer at `at` ({ x, y }) moving at `v` (px/s):
- * where the pointer would come to rest, if that is within `zone` of an edge or past it; the edge
- * reached furthest wins a corner. Null: it floats. The top edge belongs to the toolbar.
- */
-export function dockFromThrow(at, v, vp, zone = 36) {
-  const x = at.x + project(v.x)
-  const y = at.y + project(v.y)
-  const reach = { right: x - (vp.w - zone), left: zone - x, bottom: y - (vp.h - zone) }
+/** How near an edge a loose panel docks there: a tenth of the window, within bounds easy to hit. */
+export function dockZone(vp) {
+  return { x: clamp(vp.w * 0.1, 72, 160), y: clamp(vp.h * 0.12, 72, 140) }
+}
+/** Once a dock is shown, its zone reaches this much further, so the preview does not flicker at the line. */
+export const DOCK_HOLD = 40
+
+/** The edge a point is in the zone of, or past; the edge reached furthest wins a corner. The top edge belongs to the toolbar. */
+function edgeAt(x, y, vp, held) {
+  const zone = dockZone(vp)
+  const hold = dock => (dock === held ? DOCK_HOLD : 0)
+  const reach = { right: x - (vp.w - zone.x - hold('right')), left: zone.x + hold('left') - x, bottom: y - (vp.h - zone.y - hold('bottom')) }
   let best = null
   for (const dock of ['right', 'left', 'bottom']) if (reach[dock] >= 0 && (best === null || reach[dock] > reach[best])) best = dock
   return best
+}
+
+/**
+ * The dock a loose panel would land in now, for the preview while it moves: where the pointer is,
+ * carried a short way by its speed (a flick reaches an edge sooner, a wobble does not), and
+ * `held`, the dock shown now, kept until the pointer is clearly out of its zone. Null: it floats.
+ */
+export function dockAt(at, v, vp, held = null) {
+  return edgeAt(at.x + project(v.x, 0.99), at.y + project(v.y, 0.99), vp, held)
+}
+
+/**
+ * The dock a panel lands in when let go with the pointer at `at` ({ x, y }) moving at `v` (px/s).
+ * The dock the preview shows (`held`) is where it goes; without one, a throw docks where the
+ * pointer would come to rest, if that is in an edge's zone. Null: it floats.
+ */
+export function dockFromThrow(at, v, vp, held = null) {
+  return held ?? edgeAt(at.x + project(v.x), at.y + project(v.y), vp, null)
 }
 
 /** Where a floating panel let go at `r` with velocity `v` comes to rest: a short glide, inside the window. */

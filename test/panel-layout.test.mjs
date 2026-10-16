@@ -3,7 +3,10 @@ import assert from 'node:assert/strict'
 import {
   clampFloat,
   defaultFloat,
+  dockAt,
   dockFromThrow,
+  dockZone,
+  DOCK_HOLD,
   dockSize,
   flicksAway,
   floatLanding,
@@ -70,11 +73,11 @@ test('rectangles per dock, flush with the window like a sidebar, and the way in 
   assert.deepEqual(offRect('float', right), right)
 })
 
-test('a side panel the window has no room for lies over the board, inset like a window, and keeps the toolbar clear', () => {
+test('a side panel the window has no room for lies over the board, still docked, and keeps the toolbar clear', () => {
   const laptop = { w: 1440, h: 900 }
   assert.equal(overlays(fresh, laptop), true)
-  assert.deepEqual(rectFor(fresh, laptop), { x: 1440 - 12 - 560, y: 12, w: 560, h: 876 })
-  assert.deepEqual(rectFor({ ...fresh, dock: 'left' }, laptop), { x: 12, y: 12, w: 560, h: 876 })
+  assert.deepEqual(rectFor(fresh, laptop), { x: 1440 - 560, y: 0, w: 560, h: 900 })
+  assert.deepEqual(rectFor({ ...fresh, dock: 'left' }, laptop), { x: 0, y: 0, w: 560, h: 900 })
   assert.deepEqual(overFor(fresh, laptop), { left: 0, right: 572 })
   assert.deepEqual(overFor({ ...fresh, dock: 'left' }, laptop), { left: 572, right: 0 })
   assert.equal(overlays(fresh, vp), false)
@@ -111,7 +114,25 @@ test('soft limits: inside 1:1, past them less and less', () => {
   assert.ok(soft(200, lim) < 360 && soft(200, lim) > 200)
 })
 
-test('a throw docks where the pointer would come to rest; a gentle drop floats', () => {
+test('the dock zones are easy to hit and the preview holds steady at their line', () => {
+  assert.deepEqual(dockZone(vp), { x: 160, y: 120 })
+  assert.deepEqual(dockZone({ w: 600, h: 400 }), { x: 72, y: 72 })
+  // Held still: where the pointer is.
+  assert.equal(dockAt({ x: 1460, y: 500 }, { x: 0, y: 0 }, vp), 'right')
+  assert.equal(dockAt({ x: 1420, y: 500 }, { x: 0, y: 0 }, vp), null)
+  assert.equal(dockAt({ x: 120, y: 500 }, { x: 0, y: 0 }, vp), 'left')
+  assert.equal(dockAt({ x: 800, y: 900 }, { x: 0, y: 0 }, vp), 'bottom')
+  assert.equal(dockAt({ x: 800, y: 20 }, { x: 0, y: 0 }, vp), null)
+  // Shown, a dock stays until the pointer is clearly out of its zone.
+  assert.equal(dockAt({ x: 1420, y: 500 }, { x: 0, y: 0 }, vp, 'right'), 'right')
+  assert.equal(dockAt({ x: 1600 - 160 - DOCK_HOLD - 2, y: 500 }, { x: 0, y: 0 }, vp, 'right'), null)
+  // Moving, the pointer is carried only a short way: a wobble near the line does not flip it.
+  assert.equal(dockAt({ x: 1400, y: 500 }, { x: 300, y: 0 }, vp), null)
+  assert.equal(dockAt({ x: 1400, y: 500 }, { x: 800, y: 0 }, vp), 'right')
+})
+
+test('a panel lands where the preview shows; without one a throw docks where the pointer would come to rest', () => {
+  assert.equal(dockFromThrow({ x: 900, y: 500 }, { x: -3000, y: 0 }, vp, 'right'), 'right')
   assert.equal(dockFromThrow({ x: 1590, y: 500 }, { x: 0, y: 0 }, vp), 'right')
   assert.equal(dockFromThrow({ x: 900, y: 500 }, { x: 0, y: 0 }, vp), null)
   // Thrown from the middle: the projection reaches the edge.

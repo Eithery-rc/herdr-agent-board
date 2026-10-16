@@ -41,8 +41,11 @@
   --col-min: 136px;
 }
 
+/* Light or dark as the system has it, unless the viewer picked one in Settings (theme.js). */
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #000000;
     --surface: #1c1c1e;
     --fill: rgba(120, 120, 128, 0.24);
@@ -66,6 +69,30 @@
     --gray: #98989d;
     --red: #ff453a;
   }
+}
+:root[data-theme="dark"] {
+  --bg: #000000;
+  --surface: #1c1c1e;
+  --fill: rgba(120, 120, 128, 0.24);
+  --fill-2: rgba(120, 120, 128, 0.14);
+  --label: #f5f5f7;
+  --label-2: rgba(235, 235, 245, 0.62);
+  --label-3: rgba(235, 235, 245, 0.32);
+  --separator: rgba(84, 84, 88, 0.6);
+  --material: rgba(14, 14, 16, 0.92);
+  --material-thick: rgba(38, 38, 40, 0.78);
+  --panel: #121214;
+  --scroll: rgba(235, 235, 245, 0.22);
+  --edge: rgba(255, 255, 255, 0.08);
+  --shadow-card: 0 0 0 0.5px rgba(255, 255, 255, 0.07), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-lift: 0 0 0 0.5px rgba(255, 255, 255, 0.1), 0 20px 50px rgba(0, 0, 0, 0.6);
+  --shadow-sheet: 0 0 0 0.5px rgba(255, 255, 255, 0.1), 0 30px 90px rgba(0, 0, 0, 0.7);
+  --green: #30d158;
+  --orange: #ff9f0a;
+  --purple: #bf5af2;
+  --blue: #0a84ff;
+  --gray: #98989d;
+  --red: #ff453a;
 }
 
 * { box-sizing: border-box; }
@@ -131,8 +158,6 @@ h1 {
 .pill-toggle.icon-only { justify-content: center; min-width: 28px; padding: 0 7px; }
 .pill-toggle.icon-only > span[data-i18n] { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .pill-toggle:hover:not(:disabled) { color: var(--label); }
-#lang { padding: 0 9px; font-variant-numeric: tabular-nums; }
-#lang svg { display: none; }
 #next-attention:disabled { opacity: 0.45; }
 /* The summary rides under the title while the row has room for it; its words are the title's tooltip too. */
 @container tools (max-width: 1580px) { .summary { display: none; } }
@@ -194,7 +219,8 @@ h1 {
   box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.04), 0 2px 6px rgba(0, 0, 0, 0.1);
   transform-origin: left center;
 }
-@media (prefers-color-scheme: dark) { .segmented .thumb { background: #636366; } }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .segmented .thumb { background: #636366; } }
+:root[data-theme="dark"] .segmented .thumb { background: #636366; }
 
 .search {
   display: inline-flex;
@@ -437,13 +463,16 @@ body.dragging { cursor: grabbing; }
   height: calc(100vh - 24px);
   container: sheet / size;
   border-radius: 22px;
-  background: var(--material-thick);
+  /* A window of thick glass: the board only tints it, its text stays clear of what is behind. */
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
   backdrop-filter: blur(40px) saturate(180%);
   -webkit-backdrop-filter: blur(40px) saturate(180%);
   box-shadow: var(--shadow-sheet), inset 0 0.5px 0 var(--edge);
   visibility: hidden;
   will-change: transform;
   touch-action: pan-y;
+  /* Corners round off as it comes loose from an edge, and square up as it docks. */
+  transition: border-radius 220ms ease;
 }
 .sheet.open { visibility: visible; }
 /* Docked, it is part of the window: flush with its edge and square there, solid, set off from
@@ -458,11 +487,9 @@ body.dragging { cursor: grabbing; }
 .sheet[data-dock="right"] { box-shadow: -1px 0 0 var(--separator), -20px 0 44px -30px rgba(0, 0, 0, 0.5); }
 .sheet[data-dock="left"] { box-shadow: 1px 0 0 var(--separator), 20px 0 44px -30px rgba(0, 0, 0, 0.5); }
 .sheet[data-dock="bottom"] { box-shadow: 0 -1px 0 var(--separator), 0 -20px 44px -30px rgba(0, 0, 0, 0.5); }
-.sheet.over {
-  border-radius: 22px;
-  background: var(--panel);
-  box-shadow: var(--shadow-sheet), inset 0 0.5px 0 var(--edge);
-}
+/* Lying over the board (no room beside it): the same sidebar, with a deeper shadow over the cards. */
+.sheet.over[data-dock="right"] { box-shadow: -1px 0 0 var(--separator), -28px 0 64px -24px rgba(0, 0, 0, 0.55); }
+.sheet.over[data-dock="left"] { box-shadow: 1px 0 0 var(--separator), 28px 0 64px -24px rgba(0, 0, 0, 0.55); }
 .sheet-inner { position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; border-radius: inherit; }
 .sheet-grip { display: none; position: absolute; z-index: 2; left: 6px; top: 50%; width: 4px; height: 40px; margin-top: -20px; border-radius: 2px; background: var(--label-3); opacity: 0.35; cursor: grab; touch-action: none; }
 .sheet[data-dock="left"] .sheet-grip { left: auto; right: 6px; }
@@ -507,7 +534,7 @@ body.panel-grabbing, body.panel-grabbing * { cursor: grabbing !important; }
 body.panel-resizing, body.panel-resizing * { cursor: var(--grab-cursor) !important; }
 
 /* Where a panel let go now would dock: grown out of the panel, on springs (panel.js). Square,
-   as the docked panel is, unless it would lie over the board. */
+   as the docked panel is. */
 .dock-preview {
   position: fixed;
   top: 0;
@@ -520,7 +547,6 @@ body.panel-resizing, body.panel-resizing * { cursor: var(--grab-cursor) !importa
   pointer-events: none;
   will-change: transform, opacity;
 }
-.dock-preview.over { border-radius: 22px; }
 
 /* The place menu, out of the button in the panel's head. */
 .layout-menu {
@@ -585,7 +611,7 @@ body.panel-resizing, body.panel-resizing * { cursor: var(--grab-cursor) !importa
   overscroll-behavior: contain;
   padding: 2px 18px 16px 22px;
   /* Scroll edge: content fades under the head and the composer instead of a hard line. */
-  mask-image: linear-gradient(transparent, #000 18px, #000 calc(100% - 14px), transparent);
+  mask-image: linear-gradient(transparent, #000 28px, #000 calc(100% - 14px), transparent);
 }
 .detail-status { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px; margin: 4px 0 8px; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--orange) 12%, var(--surface)); font-size: 12px; }
 .detail-status span { flex: 1; min-width: 0; overflow-wrap: anywhere; }

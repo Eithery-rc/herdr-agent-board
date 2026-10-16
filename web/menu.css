@@ -8,10 +8,14 @@
   --menu-edge: rgba(0, 0, 0, 0.12);
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --menu-bg: rgba(44, 44, 46, 0.78);
     --menu-edge: rgba(255, 255, 255, 0.14);
   }
+}
+:root[data-theme="dark"] {
+  --menu-bg: rgba(44, 44, 46, 0.78);
+  --menu-edge: rgba(255, 255, 255, 0.14);
 }
 
 .menu {
