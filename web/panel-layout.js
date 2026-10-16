@@ -8,6 +8,8 @@ export const DOCKS = ['right', 'left', 'bottom', 'float']
 export const MARGIN = 12
 /** A docked panel leaves the board at least this much: width beside it, height above it. */
 export const BOARD_MIN = { w: 320, h: 180 }
+/** Keep the board's five-column layout when opening a side panel would cross its breakpoint. */
+export const BOARD_COLUMNS_MIN = 961
 export const MIN = { side: 360, bottom: 320, w: 360, h: 440 }
 export const MAX_SIDE = 1200
 /** Sizes before the viewer picks one: bottom is a share of the window's height. */
@@ -72,7 +74,12 @@ export function offRect(dock, r) {
 /** The room the board leaves a docked panel, per side. A floating one gets none: it floats over. */
 export function roomFor(layout, vp) {
   const room = { left: 0, right: 0, bottom: 0 }
-  if (layout.dock !== 'float') room[layout.dock] = dockSize(layout, layout.dock, vp) + MARGIN
+  if (layout.dock !== 'float') {
+    const size = dockSize(layout, layout.dock, vp) + MARGIN
+    // At modest desktop widths the side panel overlays the board. Its dock, size,
+    // drag handles and saved preference stay intact; a wide window still makes room.
+    if (layout.dock === 'bottom' || vp.w - size >= BOARD_COLUMNS_MIN) room[layout.dock] = size
+  }
   return room
 }
 
