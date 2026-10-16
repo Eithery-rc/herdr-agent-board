@@ -157,7 +157,12 @@ export async function collect(cfg, { helpers = false, links = null } = {}) {
     const guess = categoryFor(cfg, base.cwd)
     const tool = info.tool ?? null
     const attention = attentionOf(base.status, card, info)
-    const own = helpers && path ? summarize(helpersOf(path, { alive: base.alive, since: base.since })) : null
+    let own = null
+    if (helpers && path) {
+      try {
+        own = summarize(helpersOf(path, { alive: base.alive, since: base.since }))
+      } catch {} // helpers that cannot be read leave the session's card as it was
+    }
     items.push({
       ...base,
       // A name given on the board beats the one herdr and Claude know it by; autoName is theirs.

@@ -17,10 +17,10 @@ test('a helper in words: its title, a stopwatch, tokens, the tone of its mark', 
 test('the list: at work first, workflow runs with their agents, teammates, then the finished', () => {
   const h = (id, status, startedAt, more = {}) => ({ id, status, startedAt, kind: 'agent', ...more })
   const g = groupHelpers(
-    [h('a', 'done', 1), h('b', 'running', 5), h('c', 'running', 3), h('kid', 'running', 4, { parent: 'c' }), h('m', 'idle', 2, { kind: 'teammate' }), h('w1', 'done', 6, { kind: 'workflow', workflow: 'wf1' }), h('x', 'stopped', 7)],
+    [h('a', 'done', 1), h('b', 'running', 5), h('c', 'running', 3), h('kid', 'running', 4, { parent: 'c' }), h('grandkid', 'running', 4.5, { parent: 'kid' }), h('m', 'idle', 2, { kind: 'teammate' }), h('w1', 'done', 6, { kind: 'workflow', workflow: 'wf1' }), h('x', 'stopped', 7)],
     [{ id: 'wf0', status: 'done', startedAt: 9 }, { id: 'wf1', status: 'running', startedAt: 6 }],
   )
-  assert.deepEqual(g.running.map(x => [x.id, x.depth]), [['b', 0], ['c', 0], ['kid', 1]])
+  assert.deepEqual(g.running.map(x => [x.id, x.depth]), [['b', 0], ['c', 0], ['kid', 1], ['grandkid', 2]])
   assert.deepEqual(g.teammates.map(x => x.id), ['m'])
   assert.deepEqual(g.runs.map(r => [r.id, r.agents.map(x => x.id)]), [['wf1', ['w1']], ['wf0', []]])
   assert.deepEqual(g.finished.map(x => x.id), ['x', 'a'])

@@ -46,11 +46,12 @@ export function groupHelpers(helpers = [], workflows = []) {
     else own.push(h)
   }
   const recent = (a, b) => (b.startedAt ?? b.activity ?? 0) - (a.startedAt ?? a.activity ?? 0)
-  // Children follow their parent, one level in.
+  // Children follow their parent, a level further in each time.
   const ids = new Set(own.map(h => h.id))
   const kids = new Map()
   for (const h of own) if (h.parent && ids.has(h.parent)) kids.set(h.parent, [...(kids.get(h.parent) ?? []), h])
-  const flat = list => list.sort(recent).flatMap(h => [{ ...h, depth: 0 }, ...(kids.get(h.id) ?? []).sort(recent).map(k => ({ ...k, depth: 1 }))])
+  const tree = (h, depth, seen) => (seen.has(h.id) ? [] : [{ ...h, depth }, ...(kids.get(h.id) ?? []).sort(recent).flatMap(k => tree(k, depth + 1, new Set([...seen, h.id])))])
+  const flat = list => list.sort(recent).flatMap(h => tree(h, 0, new Set()))
   const top = own.filter(h => !(h.parent && ids.has(h.parent)))
   return {
     running: flat(top.filter(h => h.status === 'running' && h.kind !== 'teammate')),
@@ -78,6 +79,7 @@ export function findHelper(helpers = [], ref = {}) {
   return named[0] ?? null
 }
 
+// As src/links.mjs matches names: keep the two alike.
 const norm = s => String(s ?? '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
 
 /**

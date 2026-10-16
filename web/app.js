@@ -8,8 +8,8 @@ import { attentionTime, nextAttention, recordView, resultToken, unseenResult } f
 import { initBoardMenus } from './board-menus.js'
 import { draftBook } from './drafts.js'
 import { initFiles } from './files.js'
-import { clock as stopwatch, findHelper, helperTitle, liveCount, relatedKeys, sessionByName, took } from './helper-model.js'
-import { helperRowHTML, HELPER_ICONS, initHelpers, kindIcon, runRowHTML, statusMark } from './helpers.js'
+import { findHelper, helperTitle, liveCount, relatedKeys, sessionByName, took } from './helper-model.js'
+import { helperRowHTML, HELPER_ICONS, initHelpers, kindIcon, redraw, runRowHTML, statusMark, tickClocks, timeHTML } from './helpers.js'
 import { LANGUAGES, translator } from './i18n.js'
 import { initLaunch } from './launch.js'
 import { updateLive } from './live.js'
@@ -529,7 +529,7 @@ function helpersChip(it) {
   const live = it.helpers.live ?? []
   const dots = live.slice(0, 3).map(h => `<i class="hd k-${esc(h.kind)}"${h.color ? ` data-color="${esc(h.color)}"` : ''}></i>`).join('') || '<i class="hd k-workflow"></i>'
   const label = live[0]?.label ?? ''
-  return `<button class="helpers-chip" data-act="helpers" title="${esc(t('helpers.chipHint'))}"><span class="hdots">${dots}</span><span class="n">${esc(t('helpers.chip', { n }))}</span>${label ? `<span class="d">${esc(label)}</span>` : ''}</button>`
+  return `<div class="helpers-row"><button class="helpers-chip" data-act="helpers" title="${esc(t('helpers.chipHint'))}"><span class="hdots">${dots}</span><span class="n">${esc(t('helpers.chip', { n }))}</span>${label ? `<span class="d">${esc(label)}</span>` : ''}</button></div>`
 }
 
 /** Who started this session and how many it started, quietly at the card's foot. */
@@ -1214,12 +1214,8 @@ function renderSheetBody(reset) {
   else if (!conv.length) html += `<p class="row-value muted">${esc(t('thread.empty'))}</p>`
   else html += thread(conv, it)
   html += '</div>'
-  const open = new Set([...sheetBody.querySelectorAll('details[open]')].map(d => d.dataset.i))
-  if (sheetBody._html !== html) {
-    sheetBody.innerHTML = html
-    sheetBody._html = html
-    for (const d of sheetBody.querySelectorAll('details')) if (open.has(d.dataset.i)) d.open = true
-  }
+  // The same thread draws the same markup (running clocks are filled in after): a redraw keeps the focus and the open folds.
+  redraw(sheetBody, html)
   files.upgrade(sheetBody, it.cwd)
   syncAvailability()
   if (reset || atBottom) sheetBody.scrollTop = sheetBody.scrollHeight
@@ -1251,10 +1247,7 @@ function renderHelpersStrip() {
     html = `<header class="helpers-head"><h3 id="sheet-helpers-title">${esc(t('helpers.title'))}</h3><span class="helpers-sum">${esc(sum)}</span><button class="helpers-all" data-helpers-all title="${esc(t('helpers.allHint'))}">${esc(t('helpers.all'))}${ICON.chev}</button></header><div class="helper-rows">${rows}</div>`
   }
   sheetHelpers.hidden = !html
-  if (sheetHelpers._html !== html) {
-    sheetHelpers.innerHTML = html
-    sheetHelpers._html = html
-  }
+  redraw(sheetHelpers, html)
 }
 sheetHelpers.addEventListener('click', e => {
   const row = e.target.closest('[data-helper]')
@@ -1266,9 +1259,7 @@ sheetHelpers.addEventListener('click', e => {
 })
 
 // The clocks of what works now move on every second, wherever they are on show.
-setInterval(() => {
-  for (const el of document.querySelectorAll('[data-since]')) if (el.dataset.since) el.textContent = stopwatch(Date.now() - Number(el.dataset.since))
-}, 1000)
+setInterval(() => tickClocks(), 1000)
 
 /**
  * Messages as bubbles; runs of tool calls fold into one line that opens to show them. A call that
@@ -1328,10 +1319,11 @@ function whoHTML(name, it, ctx, helpers, key = null) {
   if (ctx.helper && ['main', 'team-lead'].includes(name)) return `<b>${esc(it.name ?? name)}</b>`
   // A reply to a message pipe whose session is gone: no name to give.
   if (!name && !key) return `<b>${esc(t('thread.anotherSession'))}</b>`
+  // The session's own helper goes by that name first (a teammate, a named agent), then a session.
+  const mate = !key && findHelper(helpers, { name })
+  if (mate) return `<button class="who" data-helper="${esc(mate.id)}" title="${esc(t('helpers.open'))}">${esc(mate.name || helperTitle(mate))}</button>`
   const session = (key && itemOf(key)) || sessionByName(state.data.items, name, it.key)
   if (session) return `<button class="who" data-session="${esc(session.key)}" title="${esc(t('rel.open', { name: session.name }))}">${esc(session.name)}</button>`
-  const mate = findHelper(helpers, { name })
-  if (mate) return `<button class="who" data-helper="${esc(mate.id)}" title="${esc(t('helpers.open'))}">${esc(mate.name || helperTitle(mate))}</button>`
   return `<b>${esc(name)}</b>`
 }
 
@@ -1343,8 +1335,7 @@ function linkLine(m, it, ctx, helpers) {
     const kind = h?.kind ?? m.helper.kind
     const title = h ? helperTitle(h) : m.detail || m.helper.name || m.helper.type
     const sub = [h?.type ?? m.helper.type, (h?.name ?? m.helper.name) !== title ? (h?.name ?? m.helper.name) : '', t((h ? h.background : m.helper.background) ? 'helpers.background' : 'helpers.foreground')].filter(Boolean).join(' · ')
-    const time = h ? took(h) : null
-    const mark = h ? `<span class="h-time"${h.status === 'running' && h.startedAt ? ` data-since="${h.startedAt}"` : ''}>${time != null ? esc(stopwatch(time)) : ''}</span>${statusMark(h.status)}` : !m.done ? statusMark('running') : ''
+    const mark = h ? `${timeHTML(h.startedAt, h.status, took(h))}${statusMark(h.status)}` : !m.done ? statusMark('running') : ''
     const line = `${kindIcon({ kind, color: h?.color })}<span class="link-text"><span class="link-title">${esc(t('thread.helper', { kind: t(`helpers.kind.${kind}`), title }))}</span>${sub ? ` <small>${esc(sub)}</small>` : ''}</span>${mark}`
     return h ? `<button class="link-line" data-helper="${esc(h.id)}" title="${esc(t('helpers.open'))}">${line}</button>` : `<div class="link-line">${line}${when}</div>`
   }

@@ -303,15 +303,19 @@ export function promptOf(text) {
   const fork = /<\/fork-boilerplate>\s*([\s\S]*)$/.exec(t)
   if (fork) return { prompt: fork[1].replace(/^Your directive:\s*/, '').trim(), from: '' }
   const mate = /<teammate-message\b([^>]*)>\s*([\s\S]*?)\s*(?:<\/teammate-message>|$)/.exec(t)
-  if (mate) return { prompt: mate[2], from: attr(mate[1], 'teammate_id') }
+  if (mate && t.trimStart().startsWith('<teammate-message')) return { prompt: mate[2], from: attr(mate[1], 'teammate_id') }
   if (/^\[Workflow harness — user request\]/.test(t)) return null
   const wf = /^\[Workflow harness[^\]]*\][^\n]*\n([\s\S]*)$/.exec(t)
   if (wf) return { prompt: wf[1].replace(/^ {2}/gm, '').trim(), from: '' }
   return { prompt: t.trim(), from: '' }
 }
 
-/** Messages from teammates in a user line: [{ from, summary, text }]. */
+/**
+ * Messages from teammates in a user line: [{ from, summary, text }]. Only a line that is one: a
+ * prompt that mentions the tag stays the user's.
+ */
 export function teammateMessages(text) {
+  if (!String(text ?? '').trimStart().startsWith('<teammate-message')) return []
   return [...String(text ?? '').matchAll(/<teammate-message\b([^>]*)>\s*([\s\S]*?)\s*<\/teammate-message>/g)].map(m => ({
     from: attr(m[1], 'teammate_id'),
     summary: clip(attr(m[1], 'summary'), 200),
@@ -399,7 +403,8 @@ function turns(text, { sidechain = false } = {}) {
   const peers = new Set()
   const pipes = new Map() // a sender's message pipe -> its name: a reply goes to the pipe
   const peer = (p, at) => {
-    const key = p.id || JSON.stringify([p.from, p.text])
+    // Without an id, the same words twice are two messages unless they come at the same moment.
+    const key = p.id || JSON.stringify([p.from, p.text, at])
     if (peers.has(key)) return
     peers.add(key)
     if (p.pipe && p.from) pipes.set(p.pipe, p.from)
@@ -472,7 +477,7 @@ function turns(text, { sidechain = false } = {}) {
       if (sidechain) {
         // A fork's transcript starts with its parent's call that made it: its own work begins
         // with its directive.
-        if (text.includes('<fork-boilerplate>')) items.length = 0
+        if (text.trimStart().startsWith('<fork-boilerplate>')) items.length = 0
         const p = promptOf(text)
         if (!p) continue
         text = p.prompt

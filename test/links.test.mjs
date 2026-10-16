@@ -4,10 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { line, T0 } from './fixtures/helpers.mjs'
-import { createLinks, lineEvents, relate } from '../src/links.mjs'
+import { createLinks, lineEvents, newState, relate } from '../src/links.mjs'
 
 const main = o => JSON.stringify({ ...o, isSidechain: false })
-const state = () => ({ pending: new Map(), seen: new Set(), pipes: new Map() })
+const state = newState
 const peerLine = (s, name, pipe, id, body) => main(line.user(s, 'x', { isMeta: true, origin: { kind: 'peer', from: pipe, name, msg_id: id, body } }))
 
 test('events in transcript lines: sessions started, messages sent and received', () => {
@@ -27,6 +27,10 @@ test('events in transcript lines: sessions started, messages sent and received',
   assert.deepEqual(lineEvents(peerLine(6, 'Billing-master', pipe, 'm1', 'Done for today?\nmore'), st), [{ kind: 'received', name: 'Billing-master', pipe, id: 'm1', text: 'Done for today?', at: T0 + 6000 }])
   assert.deepEqual(lineEvents(JSON.stringify({ type: 'attachment', timestamp: new Date(T0).toISOString(), attachment: { type: 'queued_command', origin: { kind: 'peer', from: pipe, name: 'Billing-master', msg_id: 'm1' } } }), st), [])
   assert.equal(lineEvents(main(line.call(7, 'rp', 'SendMessage', { to: pipe, message: 'Yes.' })), st)[0].name, 'Billing-master')
+  // A broadcast, the session's own side ("main", the team lead) and an agent it named are no session.
+  assert.deepEqual(lineEvents(main(line.call(9, 'b1', 'SendMessage', { to: '*', message: 'all' })), st), [])
+  lineEvents(main(line.call(10, 'ag', 'Agent', { name: 'reviewer', prompt: 'x' })), st)
+  assert.deepEqual(lineEvents(main(line.call(11, 'b2', 'SendMessage', { to: 'reviewer', message: 'more' })), st), [])
   // A subagent's own lines and other records are not the session's.
   assert.deepEqual(lineEvents(JSON.stringify(line.call(8, 'x', 'SendMessage', { to: 'a', message: 'b' })), st), [])
   assert.deepEqual(lineEvents(JSON.stringify({ type: 'api-request-blob', message: { content: [{ type: 'tool_use', id: 'z', name: 'SendMessage', input: { to: 'a', message: 'b' } }] } }), st), [])
@@ -71,6 +75,7 @@ test('links between the board\'s sessions', () => {
     { key: 'o', name: 'Other', autoName: 'Other', pane: 'w:p3', pipe: '' },
     { key: 'd1', name: 'Twin', autoName: 'Twin', pane: 'w:p4' },
     { key: 'd2', name: 'Twin', autoName: 'Twin', pane: 'w:p5' },
+    { key: 'e', name: '🔧', autoName: '🔧', pane: 'w:p6' }, // a name with no letters
   ]
   const events = {
     m: [
@@ -79,6 +84,7 @@ test('links between the board\'s sessions', () => {
       { kind: 'sent', to: 'case 42', at: 20 },
       { kind: 'sent', to: 'Twin', at: 21 }, // two sessions go by that name: no guess
       { kind: 'sent', to: 'Nobody', at: 22 },
+      { kind: 'sent', to: '🔧', at: 23 }, // matches nothing: no letters to match on
       { kind: 'received', name: 'renamed meanwhile', pipe: 'uds:\\\\.\\pipe\\c', at: 30 },
     ],
     c: [
@@ -94,4 +100,5 @@ test('links between the board\'s sessions', () => {
   assert.deepEqual(rel.get('m').talks, [{ key: 'c', name: 'My case', in: 1, out: 1, at: 30 }])
   assert.deepEqual(rel.get('c').talks, [{ key: 'm', name: 'Master', in: 1, out: 1, at: 16 }])
   assert.deepEqual(rel.get('d1'), { from: null, started: [], talks: [] })
+  assert.deepEqual(rel.get('e').talks, [])
 })

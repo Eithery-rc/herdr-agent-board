@@ -31,6 +31,41 @@ export function statusMark(status) {
   return `<span class="h-mark ${tone}">${{ ok: HELPER_ICONS.check, fail: HELPER_ICONS.cross, idle: HELPER_ICONS.idle }[tone] ?? HELPER_ICONS.stop}</span>`
 }
 
+/**
+ * How long something ran: a running one's clock is left empty in the markup, with when it
+ * started, for tickClocks to fill and move on; so a redraw of the same state is the same markup.
+ */
+export function timeHTML(startedAt, status, ms) {
+  if (status === 'running' && startedAt) return `<span class="h-time" data-since="${Number(startedAt)}"></span>`
+  return `<span class="h-time">${ms != null ? esc(clock(ms)) : ''}</span>`
+}
+
+/** Every running clock under `root`, set to now. */
+export function tickClocks(root = document) {
+  for (const el of root.querySelectorAll('[data-since]')) {
+    const text = clock(Date.now() - Number(el.dataset.since))
+    if (el.textContent !== text) el.textContent = text
+  }
+}
+
+// What a redraw keeps: the row with the focus (by what it opens) and the folds that were open.
+const KEYS = ['helper', 'runOpen', 'session', 'helpersAll']
+const attr = k => `data-${k.replace(/[A-Z]/g, c => `-${c.toLowerCase()}`)}`
+
+/** Put `html` in `el` when it changed, keeping the focus and the open folds; then set the clocks. */
+export function redraw(el, html) {
+  if (el._html !== html) {
+    const active = el.contains(document.activeElement) ? document.activeElement.closest(KEYS.map(k => `[${attr(k)}]`).join(', ')) : null
+    const key = active && KEYS.find(k => k in active.dataset)
+    const open = new Set([...el.querySelectorAll('details[open]')].map(d => d.dataset.i))
+    el.innerHTML = html
+    el._html = html
+    for (const d of el.querySelectorAll('details')) if (open.has(d.dataset.i)) d.open = true
+    if (key) el.querySelector(`[${attr(key)}="${CSS.escape(active.dataset[key])}"]`)?.focus({ preventScroll: true })
+  }
+  tickClocks(el)
+}
+
 /** A helper's icon by its kind, in its teammate color when it has one. */
 export const kindIcon = h => `<span class="h-icon k-${esc(h.kind)}"${h.color ? ` data-color="${esc(h.color)}"` : ''}>${HELPER_ICONS[h.kind] ?? HELPER_ICONS.agent}</span>`
 
@@ -43,22 +78,20 @@ export function helperRowHTML(h, tr) {
   const what = h.status === 'running' && (h.now || h.after || h.waiting)
     ? h.now ? `<b>${esc(h.now.label)}</b> ${esc(h.now.detail)}` : h.waiting ? esc(tr('helpers.waitingBg', { n: h.waiting })) : esc(tr('helpers.after', { tool: h.after }))
     : esc([h.status === 'running' ? tr('helpers.thinking') : '', h.type, h.name && h.name !== title ? h.name : '', h.phase].filter(Boolean).join(' · '))
-  const time = took(h)
-  return `<button class="helper-row${h.depth ? ' nested' : ''}" data-helper="${esc(h.id)}" data-status="${esc(h.status)}" title="${esc(`${title} · ${tr(`helpers.status.${h.status}`)}`)}">
+  return `<button class="helper-row${h.depth ? ' nested' : ''}" data-helper="${esc(h.id)}" data-status="${esc(h.status)}" style="--depth:${Math.min(3, h.depth ?? 0)}" title="${esc(`${title} · ${tr(`helpers.status.${h.status}`)}`)}">
     ${kindIcon(h)}
     <span class="h-main"><span class="h-title">${esc(title)}</span><span class="h-now">${what}</span></span>
-    <span class="h-time"${h.status === 'running' && h.startedAt ? ` data-since="${h.startedAt}"` : ''}>${time != null ? esc(clock(time)) : ''}</span>
+    ${timeHTML(h.startedAt, h.status, took(h))}
     ${statusMark(h.status)}
   </button>`
 }
 
 /** A workflow run as a row: its name, its agents, its status. */
 export function runRowHTML(w, tr) {
-  const time = w.startedAt ? (w.status === 'running' ? Date.now() : (w.endedAt ?? w.activity)) - w.startedAt : null
   return `<button class="helper-row" data-run-open="${esc(w.id)}" data-status="${esc(w.status)}">
     ${kindIcon({ kind: 'workflow' })}
     <span class="h-main"><span class="h-title">${esc(w.name || w.id)}</span><span class="h-now">${esc([tr('helpers.kind.run'), w.agents && tr('helpers.agents', { n: w.agents })].filter(Boolean).join(' · '))}</span></span>
-    <span class="h-time"${w.status === 'running' && w.startedAt ? ` data-since="${w.startedAt}"` : ''}>${time != null ? esc(clock(time)) : ''}</span>
+    ${timeHTML(w.startedAt, w.status, w.startedAt ? (w.endedAt ?? w.activity) - w.startedAt : null)}
     ${statusMark(w.status)}
   </button>`
 }
@@ -153,9 +186,15 @@ export function initHelpers({ t, item, detail, renderThread, upgrade, openSessio
     if (reducedMotion.matches) motion.set(0)
     onDialogChange()
   }
+  /** The body anew (a placeholder, an error): the next redraw draws in full. */
+  function setBody(html) {
+    body.innerHTML = html
+    body._html = null
+  }
+
   function finishClose() {
     root.hidden = true
-    body.innerHTML = ''
+    setBody('')
     s.key = null
     s.stack = []
     s.data = null
@@ -193,7 +232,7 @@ export function initHelpers({ t, item, detail, renderThread, upgrade, openSessio
     const h = (detail(s.key)?.helpers ?? []).find(x => x.id === ref.id)
     head(h ?? { id: ref.id, kind: 'agent', status: '' })
     body.className = 'ql-body helper-body'
-    body.innerHTML = `<div class="ql-wait">${esc(tr('loading'))}</div>`
+    setBody(`<div class="ql-wait">${esc(tr('loading'))}</div>`)
     $('.helper-foot').textContent = ''
     load(s.seq, true)
   }
@@ -203,8 +242,13 @@ export function initHelpers({ t, item, detail, renderThread, upgrade, openSessio
     $('#helper-name').textContent = h.list ? tr('helpers.listTitle', { name: item(s.key)?.name ?? '' }) : helperTitle(h)
     const sub = h.list ? [] : [tr(`helpers.kind.${h.kind}`), h.name && h.name !== helperTitle(h) ? h.name : '', h.type, h.model, h.phase && tr('helpers.phase', { phase: h.phase }), h.kind === 'teammate' ? '' : tr(h.background ? 'helpers.background' : 'helpers.foreground')]
     $('.helper-sub').textContent = sub.filter(Boolean).join(' · ')
-    $('.helper-state').innerHTML = h.status ? `${statusMark(h.status)}<span>${esc(tr(`helpers.status.${h.status}`))}</span>` : ''
-    $('.helper-state').dataset.tone = h.status ? toneOf(h.status) : ''
+    // A live region: written only when the status changes, so it is not announced on every read.
+    const state = h.status ? `${statusMark(h.status)}<span>${esc(tr(`helpers.status.${h.status}`))}</span>` : ''
+    if ($('.helper-state')._html !== state) {
+      $('.helper-state').innerHTML = state
+      $('.helper-state')._html = state
+      $('.helper-state').dataset.tone = h.status ? toneOf(h.status) : ''
+    }
   }
 
   // ---------------------------------------------------------------- the list
@@ -214,10 +258,7 @@ export function initHelpers({ t, item, detail, renderThread, upgrade, openSessio
     head({ list: true })
     const d = detail(s.key)
     body.className = 'ql-body helper-body k-list'
-    if (!d) {
-      body.innerHTML = `<div class="ql-wait">${esc(tr('loading'))}</div>`
-      return
-    }
+    if (!d) return setBody(`<div class="ql-wait">${esc(tr('loading'))}</div>`)
     const g = groupHelpers(d.helpers, d.workflows)
     const section = (title, rows, extra = '') => (rows ? `<section class="helper-section"${extra}><h4>${esc(title)}</h4><div class="helper-rows">${rows}</div></section>` : '')
     let html = section(tr('helpers.section.running'), g.running.map(rowHTML).join(''))
@@ -227,7 +268,7 @@ export function initHelpers({ t, item, detail, renderThread, upgrade, openSessio
     }
     html += section(tr('helpers.section.teammates'), g.teammates.map(rowHTML).join(''))
     html += section(tr('helpers.section.finished'), g.finished.map(rowHTML).join(''))
-    body.innerHTML = html || `<div class="ql-empty">${HELPER_ICONS.stack}<p>${esc(tr('helpers.none'))}</p></div>`
+    redraw(body, html || `<div class="ql-empty">${HELPER_ICONS.stack}<p>${esc(tr('helpers.none'))}</p></div>`)
     const all = d.helpers.length
     const running = d.helpers.filter(h => h.status === 'running').length
     $('.helper-foot').textContent = [tr('helpers.count', { n: all }), running && tr('helpers.running', { n: running }), d.workflows.length && tr('helpers.runs', { n: d.workflows.length })].filter(Boolean).join(' · ')
@@ -246,17 +287,20 @@ export function initHelpers({ t, item, detail, renderThread, upgrade, openSessio
     const ref = top()
     let d = null
     let error = ''
+    let gone = false
     try {
       const res = await fetch(`/api/session/${encodeURIComponent(s.key)}/helper/${encodeURIComponent(ref.id)}`, { cache: 'no-store' })
       d = await res.json().catch(() => null)
       if (!res.ok) error = d?.error || tr('err.status', { code: res.status })
+      gone = res.status === 404
     } catch (err) {
       error = tr('err.offline', { why: err.message })
     }
     if (seq !== s.seq || root.hidden) return
     if (error) {
-      if (!s.data) body.innerHTML = `<div class="ql-empty">${HELPER_ICONS.stack}<p>${esc(error)}</p></div>`
-      return poll(seq, 4000)
+      if (!s.data) setBody(`<div class="ql-empty">${HELPER_ICONS.stack}<p>${esc(error)}</p></div>`)
+      // Not there (another session now, its files gone): asking again will not change that.
+      return gone ? undefined : poll(seq, 4000)
     }
     s.data = d
     render(first)
@@ -268,23 +312,19 @@ export function initHelpers({ t, item, detail, renderThread, upgrade, openSessio
     head(h)
     const keep = !first && !s.pinned ? body.scrollTop : null
     const html = conversation.length ? `<div class="thread helper-thread">${renderThread(conversation, { helper: h, key: s.key })}</div>` : `<div class="ql-empty">${HELPER_ICONS[h.kind] ?? HELPER_ICONS.agent}<p>${esc(tr('thread.empty'))}</p></div>`
-    if (body._html !== html) {
-      const open = new Set([...body.querySelectorAll('details[open]')].map(x => x.dataset.i))
-      body.innerHTML = html
-      body._html = html
-      for (const x of body.querySelectorAll('details')) if (open.has(x.dataset.i)) x.open = true
-      upgrade(body, item(s.key)?.cwd ?? '')
-    }
+    const changed = body._html !== html
+    redraw(body, html)
+    if (changed) upgrade(body, item(s.key)?.cwd ?? '')
     if (keep != null) body.scrollTop = keep
     else body.scrollTop = body.scrollHeight
     const time = took(h)
     const foot = [
-      h.status === 'running' ? `<span data-since="${h.startedAt ?? ''}">${esc(clock(time ?? 0))}</span>` : time != null ? esc(tr('helpers.took', { time: clock(time) })) : '',
+      h.status === 'running' ? (h.startedAt ? `<span data-since="${Number(h.startedAt)}"></span>` : '') : time != null ? esc(tr('helpers.took', { time: clock(time) })) : '',
       h.tools ? esc(tr('helpers.tools', { n: h.tools })) : '',
       h.tokens ? esc(tr('helpers.tokens', { n: tokens(h.tokens) })) : '',
       h.startedAt ? esc(tr('helpers.started', { time: new Date(h.startedAt).toLocaleString(t().lang, { dateStyle: 'short', timeStyle: 'short' }) })) : '',
     ].filter(Boolean)
-    $('.helper-foot').innerHTML = foot.join(' · ')
+    redraw($('.helper-foot'), foot.join(' · '))
   }
 
   // While it works, read it again; a hidden page reads nothing until it is back.

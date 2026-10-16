@@ -13,6 +13,7 @@
 // and size: a folder is listed again only when its time changes, a transcript's head and tail are
 // read again only when it grew.
 import { closeSync, openSync, readSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { open, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { conversation, promptOf, saidIn, toolDetail, toolLabel } from './claude.mjs'
 
@@ -154,9 +155,29 @@ export function tailInfo(text) {
 
 /** How many background commands a transcript started that have not reported back. */
 export function backgroundTasks(text) {
-  const t = String(text ?? '')
-  const started = new Set([...t.matchAll(/Command running in background with ID: ([\w-]+)/g)].map(m => m[1]))
-  for (const m of t.matchAll(/<task-id>([\w-]+)<\/task-id>/g)) started.delete(m[1])
+  const started = new Set()
+  const back = []
+  for (const line of String(text ?? '').split('\n')) {
+    if (!line.includes('Command running in background') && !line.includes('<task-id>')) continue
+    const o = parse(line)
+    if (o?.type === 'attachment' && o.attachment?.commandMode === 'task-notification') {
+      back.push(String(o.attachment.prompt ?? ''))
+      continue
+    }
+    if (o?.type !== 'user') continue
+    const content = o.message?.content
+    // Only what the tool itself answered: a file the helper read can hold the same words.
+    for (const b of Array.isArray(content) ? content : []) {
+      if (b?.type !== 'tool_result') continue
+      const said = typeof b.content === 'string' ? b.content : Array.isArray(b.content) ? b.content.map(c => c?.text ?? '').join('') : ''
+      const m = /^Command running in background with ID: ([\w-]+)/.exec(said.trim())
+      if (m) started.add(m[1])
+    }
+    // A notification is a turn of its own, never a tool's result.
+    const said = textOf(content).trim()
+    if (said.startsWith('<task-notification>')) back.push(said)
+  }
+  for (const text of back) for (const m of text.matchAll(/<task-id>([\w-]+)<\/task-id>/g)) started.delete(m[1])
   return started.size
 }
 
@@ -179,6 +200,8 @@ export function helperStatus({ meta = {}, tail = {}, kind, alive = false, since 
   if (tail.last === 'background' && now - mtimeMs > 3_600_000) return 'done'
   if (meta.finished && tail.last !== 'background') return 'done'
   if (!alive || (since && mtimeMs < since)) return 'stopped'
+  // Six hours without a word from a call or the model: it hung, or its end went unrecorded.
+  if (now - mtimeMs > 6 * 3_600_000) return 'stopped'
   return 'running'
 }
 
@@ -271,30 +294,63 @@ function readTranscript(path) {
 }
 
 /**
- * How many tool calls a transcript holds, counted on from where the last count stopped. `skip`
- * is the call that started it: a fork's transcript begins with its parent's.
+ * How many tool calls a transcript holds, counted on from where the last count stopped, in
+ * chunks and without holding the server up (a helper's transcript can be hundreds of MB). `skip`
+ * is the call that started it: a fork's transcript begins with its parent's. One count at a time
+ * per file.
  */
 export function countTools(path, skip = null) {
-  const st = statSync(path, { throwIfNoEntry: false })
+  const prev = counting.get(path) ?? Promise.resolve()
+  const next = prev.then(() => count(path, skip), () => count(path, skip))
+  counting.set(path, next)
+  next.finally(() => counting.get(path) === next && counting.delete(path)).catch(() => {})
+  return next
+}
+const counting = new Map() // transcript -> the count that runs
+
+async function count(path, skip) {
+  const st = await stat(path).catch(() => null)
   if (!st) return 0
   let c = countCache.get(path)
   if (!c || st.size < c.offset) c = { offset: 0, tools: 0, seen: new Set() }
-  if (st.size > c.offset) {
-    const text = readSlice(path, c.offset, st.size - c.offset)
-    const end = text.lastIndexOf('\n') + 1
-    for (const line of text.slice(0, end).split('\n')) {
-      if (!line.includes('"tool_use"') || !line.includes('"type":"assistant"')) continue
-      const o = parse(line)
-      if (o?.type !== 'assistant' || !Array.isArray(o.message?.content)) continue
-      for (const b of o.message.content) {
-        if (b?.type !== 'tool_use' || b.id === skip || c.seen.has(b.id)) continue
-        c.seen.add(b.id)
-        c.tools++
-      }
-    }
-    c.offset += Buffer.byteLength(text.slice(0, end))
-  }
   countCache.set(path, c)
+  if (st.size <= c.offset) return c.tools
+  const fh = await open(path, 'r')
+  try {
+    let carry = Buffer.alloc(0)
+    let pos = c.offset
+    while (pos < st.size) {
+      const want = Math.min(4 << 20, st.size - pos)
+      const chunk = Buffer.alloc(want)
+      const { bytesRead } = await fh.read(chunk, 0, want, pos)
+      if (!bytesRead) break
+      pos += bytesRead
+      const buf = carry.length ? Buffer.concat([carry, chunk.subarray(0, bytesRead)]) : chunk.subarray(0, bytesRead)
+      const last = buf.lastIndexOf(10)
+      // A line longer than 64 MB (a pasted screenshot) is no tool call: skipped, not held.
+      if (last < 0) {
+        carry = buf.length > 64 << 20 ? Buffer.alloc(0) : buf
+        continue
+      }
+      for (let at = buf.indexOf('"tool_use"'); at >= 0 && at < last; at = buf.indexOf('"tool_use"', at)) {
+        const start = buf.lastIndexOf(10, at) + 1
+        const end = buf.indexOf(10, at)
+        at = end + 1
+        const o = parse(buf.toString('utf8', start, end))
+        if (o?.type !== 'assistant' || !Array.isArray(o.message?.content)) continue
+        for (const b of o.message.content) {
+          if (b?.type !== 'tool_use' || b.id === skip || c.seen.has(b.id)) continue
+          c.seen.add(b.id)
+          c.tools++
+        }
+      }
+      carry = Buffer.from(buf.subarray(last + 1))
+    }
+    // A line still being written is counted next time, whole.
+    c.offset = pos - carry.length
+  } finally {
+    await fh.close()
+  }
   return c.tools
 }
 
@@ -339,7 +395,14 @@ export function helpersOf(transcript, { alive = false, since = null } = {}) {
   const sessionDir = transcript.slice(0, -'.jsonl'.length)
   const subagents = join(sessionDir, 'subagents')
   const helpers = []
+  // A file that goes away or cannot be read between the listing and the read: that helper is
+  // left out of this refresh, not the whole board.
   const add = (dir, name, workflow) => {
+    try {
+      addOne(dir, name, workflow)
+    } catch {}
+  }
+  const addOne = (dir, name, workflow) => {
     const m = AGENT_FILE.exec(name)
     if (!m) return
     const path = join(dir, name)
@@ -373,10 +436,17 @@ export function helpersOf(transcript, { alive = false, since = null } = {}) {
   for (const name of names) add(subagents, name, null)
   // A helper whose turn is over while an agent it started still works is at work too: that
   // agent's notification wakes it.
-  for (const h of helpers) {
-    if (h.status !== 'done' || h.kind === 'teammate') continue
-    const kids = helpers.filter(k => k.parent === h.id && k.status === 'running').length
-    if (kids) Object.assign(h, { status: 'running', waiting: h.waiting + kids, result: '' })
+  // Over again until nothing changes: a grandchild at work keeps its grandparent at work too.
+  for (let changed = true; changed; ) {
+    changed = false
+    for (const h of helpers) {
+      if (h.status !== 'done' || h.kind === 'teammate') continue
+      const kids = helpers.filter(k => k.parent === h.id && k.status === 'running').length
+      if (kids) {
+        Object.assign(h, { status: 'running', waiting: h.waiting + kids, result: '' })
+        changed = true
+      }
+    }
   }
   const workflows = []
   if (names.includes('workflows')) {
@@ -437,12 +507,12 @@ export const publicHelper = ({ path, ...h }) => h
  * made, and its conversation (the same turns as a session's, sidechain lines included). Null
  * when the session has no helper with that id: the id only picks one of the session's own files.
  */
-export function helperDetail(transcript, id, opts) {
+export async function helperDetail(transcript, id, opts) {
   const { helpers, workflows } = helpersOf(transcript, opts)
   const h = helpers.find(x => x.id === id)
   if (!h) return null
   return {
-    helper: { ...publicHelper(h), tools: countTools(h.path, h.toolUseId), prompt: h.prompt },
+    helper: { ...publicHelper(h), tools: await countTools(h.path, h.toolUseId), prompt: h.prompt },
     workflow: h.workflow ? (workflows.find(w => w.id === h.workflow) ?? null) : null,
     conversation: conversation(h.path, 80, { sidechain: true }),
   }

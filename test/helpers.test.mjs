@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { rmSync } from 'node:fs'
+import { appendFileSync, rmSync } from 'node:fs'
 import { test } from 'node:test'
 import { line, jsonl, sessionDir, T0 } from './fixtures/helpers.mjs'
 import { conversation, promptOf, spawnOf, spawnResult } from '../src/claude.mjs'
@@ -57,6 +57,9 @@ test('a helper whose turn ended with a background command still out is not done'
   const text = jsonl([line.call(1, 'b1', 'Bash', { command: 'sleep 60', run_in_background: true }), started, line.said(3, 'Waiting for the sleep.')])
   assert.equal(backgroundTasks(text), 1)
   assert.deepEqual([tailInfo(text).last, tailInfo(text).waiting], ['background', 1])
+  // The same words in a file it read are no background command.
+  const read = jsonl([line.call(1, 'r1', 'Read', { file_path: 'test.mjs' }), line.result(2, 'r1', "assert(x, 'Command running in background with ID: bg42')"), line.said(3, 'Read it.')])
+  assert.deepEqual([backgroundTasks(read), tailInfo(read).last], [0, 'end'])
   // Its notification came back: done once it has said its last word.
   const back = text + jsonl([line.user(4, '<task-notification>\n<task-id>bg42</task-id>\n<status>completed</status>\n</task-notification>'), line.said(5, 'ok')])
   assert.equal(tailInfo(back).last, 'end')
@@ -79,6 +82,7 @@ test('how a helper stands: at work only while its session runs and wrote to it',
   assert.equal(s('background'), 'running')
   assert.equal(s('background', { meta: { finished: true } }), 'running')
   assert.equal(s('background', { now: 5000 + 3_600_001 }), 'done') // the notification went elsewhere
+  assert.equal(s('tool', { now: 5000 + 6 * 3_600_001 }), 'stopped') // hung for six hours
 })
 
 test('what a helper is, from its meta file', () => {
@@ -110,7 +114,9 @@ test('every helper of a session: subagents, forks, teammates, workflow runs, nes
   ])
   // A helper that started one of its own: the parent's turn is over, its child still works.
   s.helper('aparent4', { agentType: 'general-purpose', description: 'Nested parent', toolUseId: 'toolu_c' }, [line.user(30, 'Start a child.'), line.said(31, 'Started; waiting.')])
-  s.helper('achild5', { agentType: 'general-purpose', description: 'Nested child', toolUseId: 'toolu_d', parentAgentId: 'aparent4', spawnDepth: 2 }, [line.user(32, 'Sleep.'), line.call(33, 's1', 'Bash', { command: 'sleep 90' })])
+  s.helper('achild5', { agentType: 'general-purpose', description: 'Nested child', toolUseId: 'toolu_d', parentAgentId: 'aparent4', spawnDepth: 2 }, [line.user(32, 'Start one more.'), line.said(33, 'Started; waiting.')])
+  // ...and a grandchild: whatever order the folder lists them in, the whole line stays at work.
+  s.helper('a0grand6', { agentType: 'general-purpose', description: 'Nested grandchild', parentAgentId: 'achild5', spawnDepth: 3 }, [line.user(34, 'Sleep.'), line.call(35, 's1', 'Bash', { command: 'sleep 90' })])
   // A finished workflow run with two agents, and one that runs (its name from its script file).
   s.helper('aw1', { agentType: 'workflow-subagent', description: 'audit:home', workflowPhase: 'Audit' }, [line.user(40, '[Workflow harness — computed task] x:\n  Audit home.'), line.call(41, 'o1', 'StructuredOutput', {}), line.result(42, 'o1', 'ok')], 'subagents/workflows/wf_done-1')
   s.write('subagents/workflows/wf_done-1/journal.jsonl', [{ type: 'launched' }])
@@ -120,19 +126,20 @@ test('every helper of a session: subagents, forks, teammates, workflow runs, nes
 
   const live = helpersOf(s.transcript, { alive: true, since: 0 })
   const by = id => live.helpers.find(h => h.id === id)
-  assert.deepEqual(live.helpers.map(h => h.id), ['aw2', 'aw1', 'achild5', 'aparent4', 'amate-3', 'afork2', 'adone1']) // newest first
+  assert.deepEqual(live.helpers.map(h => h.id), ['aw2', 'aw1', 'a0grand6', 'achild5', 'aparent4', 'amate-3', 'afork2', 'adone1']) // newest first
   assert.deepEqual([by('adone1').status, by('adone1').result, by('adone1').prompt], ['done', 'It is Dana.', 'Find the owner of case 1.'])
   assert.deepEqual([by('afork2').kind, by('afork2').status, by('afork2').prompt, by('afork2').now?.label], ['fork', 'running', 'Audit slice a.', 'Glob'])
   assert.deepEqual([by('amate-3').kind, by('amate-3').status, by('amate-3').from, by('amate-3').color], ['teammate', 'idle', 'team-lead', 'green'])
   assert.deepEqual([by('aparent4').status, by('aparent4').waiting], ['running', 1])
   assert.equal(by('achild5').parent, 'aparent4')
+  assert.deepEqual([by('achild5').status, by('a0grand6').status], ['running', 'running'])
   assert.deepEqual([by('aw1').kind, by('aw1').workflow, by('aw1').status, by('aw1').prompt], ['workflow', 'wf_done-1', 'done', 'Audit home.'])
   assert.deepEqual(live.workflows.map(w => [w.id, w.name, w.status, w.agents]), [['wf_live-2', 'probe-parallel', 'running', 1], ['wf_done-1', 'polish-audit', 'done', 1]])
   assert.deepEqual([live.workflows[1].tokens, live.workflows[1].taskId, live.workflows[1].endedAt], [52000, 'wtask1', T0 + 49000])
 
   const card = summarize(live)
-  assert.deepEqual([card.running, card.total, card.workflows], [4, 7, 1])
-  assert.deepEqual(card.live.map(h => h.label), ['probe:a', 'Nested child', 'Nested parent', 'Audit slice a'])
+  assert.deepEqual([card.running, card.total, card.workflows], [5, 8, 1])
+  assert.deepEqual(card.live.map(h => h.label), ['probe:a', 'Nested grandchild', 'Nested child', 'Nested parent'])
   assert.ok(card.at > 0)
 
   // The session's process is gone (it sleeps): nothing of it works any more.
@@ -149,7 +156,7 @@ test('every helper of a session: subagents, forks, teammates, workflow runs, nes
   assert.deepEqual([after.status, after.result], ['done', 'Slice a is clean.'])
 })
 
-test('one helper for its window: its conversation and its own tool calls only', t => {
+test('one helper for its window: its conversation and its own tool calls only', async t => {
   const s = sessionDir()
   t.after(() => rmSync(s.root, { recursive: true, force: true }))
   clearHelperCache()
@@ -159,17 +166,22 @@ test('one helper for its window: its conversation and its own tool calls only', 
     line.call(12, 'g1', 'Glob', { pattern: '*' }),
     line.result(13, 'g1', 'a.txt'),
   ])
-  const d = helperDetail(s.transcript, 'afork2', { alive: true, since: 0 })
+  const d = await helperDetail(s.transcript, 'afork2', { alive: true, since: 0 })
   assert.equal(d.helper.tools, 1) // the parent's call that made it is not the fork's
   assert.equal(d.helper.path, undefined) // no file paths for the page
   assert.deepEqual(d.conversation.map(m => m.role), ['user', 'tool'])
   assert.equal(d.conversation[0].text, 'Count.')
-  assert.equal(helperDetail(s.transcript, 'nope', {}), null)
-  assert.equal(helperDetail(s.transcript, '../../x', {}), null)
+  assert.equal(await helperDetail(s.transcript, 'nope', {}), null)
+  assert.equal(await helperDetail(s.transcript, '../../x', {}), null)
   // Counted on from where it stopped, each call once.
   s.append('subagents/agent-afork2.jsonl', [line.call(14, 'g2', 'Read', { file_path: 'a.txt' }), line.blob(15)])
-  assert.equal(countTools(path, 'toolu_b'), 2)
-  assert.equal(countTools(path, 'toolu_b'), 2)
+  // Two at once count each call once; a line still being written waits for its end.
+  assert.deepEqual(await Promise.all([countTools(path, 'toolu_b'), countTools(path, 'toolu_b')]), [2, 2])
+  const half = JSON.stringify(line.call(16, 'g3', 'Grep', { pattern: 'x' }))
+  appendFileSync(path, half.slice(0, 30))
+  assert.equal(await countTools(path, 'toolu_b'), 2)
+  appendFileSync(path, `${half.slice(30)}\n`)
+  assert.equal(await countTools(path, 'toolu_b'), 3)
 })
 
 test('the session thread: a call that works with others is a line of its own', t => {
@@ -193,6 +205,8 @@ test('the session thread: a call that works with others is a line of its own', t
     main({ type: 'attachment', timestamp: new Date(T0 + 12000).toISOString(), attachment: { type: 'queued_command', commandMode: 'prompt', prompt: 'dup', origin: { kind: 'peer', from: 'uds:\\\\.\\pipe\\x1', name: 'Billing-master', msg_id: 'm1', body: 'Thanks.' } } }),
     main(line.call(13, 'rp', 'SendMessage', { to: 'uds:\\\\.\\pipe\\x1', summary: 'Reply', message: 'You are welcome.' })),
     main(line.user(14, '<teammate-message teammate_id="design-check" summary="Done">It is sound.</teammate-message>')),
+    // The user asking about the tag is the user, not a teammate.
+    main(line.user(14.5, 'Why does <teammate-message teammate_id="x">hi</teammate-message> render as a bubble?')),
     main(line.said(15, 'subagent noise'), true),
   ])
   const conv = conversation(s.transcript)
@@ -208,6 +222,7 @@ test('the session thread: a call that works with others is a line of its own', t
   assert.equal(peers[0].pipe, 'uds:\\\\.\\pipe\\x1') // the server turns it into the session's key
   assert.equal(peers[1].team, true)
   assert.equal(tool('rp').send.name, 'Billing-master') // a reply to a pipe: whoever wrote from it
+  assert.ok(conv.some(m => m.role === 'user' && m.text.startsWith('Why does <teammate-message')))
   assert.ok(!conv.some(m => m.text === 'subagent noise'))
 })
 

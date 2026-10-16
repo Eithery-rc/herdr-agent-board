@@ -81,4 +81,8 @@ test('the board shows helpers and links; a helper is served only from its own se
   assert.equal((await get('/api/session/s2/helper/arun1')).status, 404) // not that session's helper
   assert.equal((await get('/api/session/s1/helper/nope')).status, 404)
   assert.equal((await get('/api/session/s1/helper/..%2F..%2Fs2')).status, 404)
+  // Whatever its files hold, what comes back names no path on this computer.
+  writeFileSync(join(project, 's1', 'subagents', 'agent-arun1.jsonl'), '')
+  const empty = await get('/api/session/s1/helper/arun1')
+  assert.ok(!JSON.stringify(empty.body).includes(box.env.HOME))
 })

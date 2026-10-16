@@ -46,8 +46,11 @@ export function lineEvents(line, state) {
     if (o.type === 'assistant' && b?.type === 'tool_use') {
       if (state.seen.has(b.id)) continue
       state.seen.add(b.id)
+      // Agents it starts by name, and its teammates: a message to one of them is not to a session.
+      if ((b.name === 'Agent' || b.name === 'Task') && typeof b.input?.name === 'string') state.agents.add(b.input.name)
       if (b.name === 'SendMessage' && typeof b.input?.to === 'string' && typeof b.input?.message === 'string') {
         const to = b.input.to.replace(/\s*\[[^\]]*\]\s*$/, '').trim().slice(0, 300)
+        if (to === '*' || ['main', 'team-lead'].includes(to) || state.agents.has(to)) continue
         // A reply to the pipe a message came from: the sender's name, for when that pipe is gone.
         out.push({ kind: 'sent', to, name: state.pipes.get(to) ?? '', summary: clip(String(b.input.summary ?? firstLine(b.input.message)), 200), at })
         continue
@@ -89,6 +92,9 @@ function markedLines(buf, last) {
   return [...starts].sort((a, b) => a - b)
 }
 
+/** What a transcript's lines carry over to later ones (lineEvents). */
+export const newState = () => ({ pending: new Map(), seen: new Set(), pipes: new Map(), agents: new Set() })
+
 /**
  * The transcripts' events, kept up to date: `update(paths)` reads what each one gained since,
  * one file at a time in the background, and calls onChange() when new events came in.
@@ -99,12 +105,12 @@ export function createLinks({ onChange = () => {} } = {}) {
   let running = false
 
   async function read(path) {
-    const f = files.get(path) ?? { offset: 0, events: [], state: { pending: new Map(), seen: new Set(), pipes: new Map() } }
+    const f = files.get(path) ?? { offset: 0, events: [], state: newState() }
     files.set(path, f)
     const st = await stat(path).catch(() => null)
     if (!st) return false
     // Rewritten from the start (it never is, but a smaller file cannot be read on from the old place).
-    if (st.size < f.offset) Object.assign(f, { offset: 0, events: [], state: { pending: new Map(), seen: new Set(), pipes: new Map() } })
+    if (st.size < f.offset) Object.assign(f, { offset: 0, events: [], state: newState() })
     if (st.size === f.offset) return false
     const before = f.events.length
     const fh = await open(path, 'r')
@@ -164,6 +170,7 @@ export function createLinks({ onChange = () => {} } = {}) {
   }
 }
 
+// As web/helper-model.js matches names: keep the two alike.
 const norm = s => String(s ?? '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
 
 /**
@@ -176,9 +183,11 @@ const norm = s => String(s ?? '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
 export function relate(items, eventsOf) {
   const names = it => new Set([it.name, it.autoName].filter(Boolean).map(norm))
   const byName = new Map()
-  for (const it of items) for (const n of names(it)) byName.set(n, [...(byName.get(n) ?? []), it])
+  for (const it of items) for (const n of names(it)) if (n) byName.set(n, [...(byName.get(n) ?? []), it])
   const byPipe = new Map(items.filter(it => it.pipe).map(it => [it.pipe.replace(/^uds:/, ''), it]))
   const one = (name, self) => {
+    // A name with no letters or digits (a broadcast "*", an emoji) names no one.
+    if (!norm(name)) return null
     const list = (byName.get(norm(name)) ?? []).filter(it => it.key !== self.key)
     return list.length === 1 ? list[0] : null
   }
@@ -214,6 +223,7 @@ export function relate(items, eventsOf) {
   }
   for (const links of out.values()) {
     links.started.sort((x, y) => y.at - x.at)
+    links.started = links.started.slice(0, 12)
     links.talks.sort((x, y) => y.at - x.at)
     links.talks = links.talks.slice(0, 8)
   }

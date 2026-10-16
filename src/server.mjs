@@ -589,7 +589,13 @@ export function startServer({ cfg, log = () => {} } = {}) {
       if (hm && req.method === 'GET') {
         const item = find(hm[1])
         if (!item) return json(404, { error: t('err.gone') })
-        const d = helperDetail(item.transcript, hm[2], { alive: item.alive, since: item.since })
+        let d
+        try {
+          d = await helperDetail(item.transcript, hm[2], { alive: item.alive, since: item.since })
+        } catch {
+          // Its files could not be read: no paths in the answer.
+          return json(500, { error: t('helpers.unreadable') })
+        }
         return d ? json(200, { ...d, conversation: withSessions(d.conversation) }) : json(404, { error: t('helpers.gone') })
       }
       const m = /^\/api\/session\/([^/]+)(?:\/(\w+))?$/.exec(path)
