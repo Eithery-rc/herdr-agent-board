@@ -10,6 +10,7 @@ import { homedir } from 'node:os'
 import { isAbsolute, join, posix, resolve, win32 } from 'node:path'
 import { translator } from '../web/i18n.js'
 import { launcherLabel } from './launch.mjs'
+import { mokupilotCommand } from './mokupilot.mjs'
 import { ROOT } from './paths.mjs'
 import { claudeCommand, shellLine } from './spawn.mjs'
 
@@ -257,6 +258,8 @@ export async function gatherFacts(cfg, { root = ROOT, env = process.env, platfor
     wakeUrl: cfg?.wakeUrl ?? null,
     wake: cfg?.wakeUrl ? await probe(`${String(cfg.wakeUrl).replace(/\/+$/, '')}/status`) : null,
     launcher,
+    // MokuPilot for calls with a fork of a session (mokupilot.mjs): how the board would start it.
+    mokupilot: mokupilotCommand(cfg, { platform, env }),
   }
 }
 
@@ -346,6 +349,16 @@ export function checkSetup(facts, t = english) {
     if (l.error) add('launch', 'warn', t('setup.launch.claudeBad'), l.error, t('setup.launch.claudeBadFix'))
     else if (!l.program?.found) add('launch', 'warn', t('setup.launch.notFound', { program }), t('setup.launch.notFoundDetail', { program }), t('setup.launch.notFoundFix'))
     else add('launch', 'ok', t('setup.launch.builtin', { claude: program }), l.claude.length === 1 && program === 'claude' ? t('setup.launch.builtinDetail') : '')
+  }
+
+  // MokuPilot: calls with a fork of a session. Optional: a mark only when config.json names one that is not there.
+  const mp = facts.mokupilot
+  if (mp) {
+    const snippet = `"mokupilot": { "dir": "${win ? 'C:\\Users\\you\\MokuPilot' : '~/MokuPilot'}" }`
+    if (mp.state === 'ok') add('mokupilot', 'ok', t('setup.mokupilot.ok'), [mp.file, ...(mp.args ?? [])].join(' '))
+    else if (mp.state === 'off') add('mokupilot', 'off', t('setup.mokupilot.disabled'), t('setup.mokupilot.disabledDetail'))
+    else if (mp.configured) add('mokupilot', 'warn', t('setup.mokupilot.missing', { file: mp.file || '?' }), both(mp.error, t('setup.mokupilot.missingDetail')), t('setup.mokupilot.missingFix'), snippet)
+    else add('mokupilot', 'off', t('setup.mokupilot.off'), t('setup.mokupilot.offDetail'), t('setup.mokupilot.offFix'), snippet)
   }
 
   // Desktop notifications with the agent's words. Optional too, until they are on.

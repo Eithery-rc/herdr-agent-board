@@ -62,6 +62,20 @@ const find = (items, id) => items.find(i => i.id === id)
 const idle = { key: 's1', session: 's1', pane: 'w1:p1', name: 'acme', cwd: 'C:\\Acme', status: 'idle', column: 'idle', auto: 'idle', category: 'acme' }
 const fresh = { t, canMutate: true, canEdit: true, categories, column: 'idle', category: 'acme' }
 
+test('a card’s menu offers a MokuPilot call for a Claude session when MokuPilot is here, also with stale herdr data', () => {
+  const claude = { ...idle, agent: 'claude' }
+  const m = cardMenu(claude, { ...fresh, mokupilot: true })
+  assert.deepEqual(ids(m).slice(0, 4), ['open', 'focus', 'mokupilot', 'write'])
+  assert.equal(find(m, 'mokupilot').label, 'Call in MokuPilot')
+  // It needs the board, not herdr: still there while herdr data is stale.
+  assert.equal(find(cardMenu(claude, { ...fresh, canMutate: false, mokupilot: true }), 'mokupilot').disabled, undefined)
+  assert.equal(find(cardMenu(claude, { ...fresh, canEdit: false, canMutate: false, mokupilot: true }), 'mokupilot').disabled, true)
+  // Not without MokuPilot, nor for a pane with no Claude session, nor for another agent.
+  assert.equal(find(cardMenu(claude, fresh), 'mokupilot'), undefined)
+  assert.equal(find(cardMenu({ ...claude, session: null }, { ...fresh, mokupilot: true }), 'mokupilot'), undefined)
+  assert.equal(find(cardMenu({ ...claude, agent: 'codex' }, { ...fresh, mokupilot: true }), 'mokupilot'), undefined)
+})
+
 test('a card’s menu follows its state', () => {
   const m = cardMenu(idle, fresh)
   assert.deepEqual(ids(m), ['open', 'focus', 'write', 'sleep', 'rename', 'category', 'status', 'reveal', 'changes', 'history', 'newHere', 'copy', 'clear'])

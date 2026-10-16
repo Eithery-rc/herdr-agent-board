@@ -279,7 +279,8 @@ export async function recentFolders(projects = join(CLAUDE_DIR, 'projects'), lim
   return found
 }
 
-async function cwdOf(file) {
+/** The folder a Claude session started in, from its transcript; null when it cannot be read. */
+export async function cwdOf(file) {
   let fh
   try {
     fh = await open(file, 'r')

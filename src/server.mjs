@@ -27,6 +27,7 @@ import { herdr, herdrText } from './herdr.mjs'
 import { createLaunches, listDirs, renameSession } from './launch.mjs'
 import { checkName } from '../web/launch-model.js'
 import { messageGate } from './message-gate.mjs'
+import { mokupilotCommand, startCall } from './mokupilot.mjs'
 import { busy, COLUMNS, collect, forgetSleepers, PINS } from './model.mjs'
 import { parseDialog, publicDialog } from './questions.mjs'
 import { CARDS_DIR, ROOT, STATE_DIR } from './paths.mjs'
@@ -146,6 +147,14 @@ export function startServer({ cfg, log = () => {} } = {}) {
   const terminals = createTerminals({ onChange: () => publish() })
   // On unless config.json says otherwise: only a missing setting or true turns it on.
   const terminalOn = () => cfg.terminal === undefined || cfg.terminal === true
+  // Whether MokuPilot is here for calls with a fork of a session (mokupilot.mjs): looked up again
+  // when its setting changes, and once a minute for one installed or removed meanwhile.
+  let mokupilot = { key: null, at: 0, on: false }
+  const mokupilotOn = () => {
+    const key = JSON.stringify(cfg.mokupilot ?? null)
+    if (key !== mokupilot.key || Date.now() - mokupilot.at > 60_000) mokupilot = { key, at: Date.now(), on: mokupilotCommand(cfg).state === 'ok' }
+    return mokupilot.on
+  }
   // What of the board is not set up on this computer (setup.mjs), for the page's quiet note:
   // { todo, sig }, the sig naming the problems (in English, so a language switch is no news).
   // Checked at the start, every 10 minutes and whenever the page opens the note; requests a few
@@ -184,7 +193,8 @@ export function startServer({ cfg, log = () => {} } = {}) {
     // The schedule without the scheduler's bookkeeping; the log is what was sent or missed lately.
     const schedules = listEntries().map(({ claim, tried, waited, ...entry }) => entry)
     // terminal: whether the board offers one (config `terminal`); shells: sessions it opened one for.
-    return { version, lang: lang(), language: cfg.language ?? 'auto', languages: LANGUAGES, fsToken: FILE_TOKEN, stale, limits: claudeLimits(), items: list, launches: launches.list(), categories, swatches: SWATCHES, columns: COLUMNS.map(({ id, title }) => ({ id, title })), schedules, scheduleLog: readLog(20), terminal: terminalOn(), shells: terminalOn() ? terminals.keys() : [], setup }
+    // mokupilot: whether a session's sheet offers a MokuPilot call with a fork of it.
+    return { version, lang: lang(), language: cfg.language ?? 'auto', languages: LANGUAGES, fsToken: FILE_TOKEN, stale, limits: claudeLimits(), items: list, launches: launches.list(), categories, swatches: SWATCHES, columns: COLUMNS.map(({ id, title }) => ({ id, title })), schedules, scheduleLog: readLog(20), terminal: terminalOn(), shells: terminalOn() ? terminals.keys() : [], mokupilot: mokupilotOn(), setup }
   }
 
   /**
@@ -296,6 +306,9 @@ export function startServer({ cfg, log = () => {} } = {}) {
         return item.sleeping ? wake(cfg, item).finally(forgetSleepers) : { ok: true }
       case 'sleep':
         return sleepSession(cfg, item).finally(forgetSleepers)
+      // A MokuPilot call whose agent is a fork of this session; no herdr in it.
+      case 'mokupilot':
+        return startCall(cfg, item)
       case 'message': {
         // Attached files go as their paths: Claude reads them, and picks up image paths as images.
         const files = (Array.isArray(body.files) ? body.files : []).filter(p => typeof p === 'string' && p.startsWith(UPLOADS_DIR))
@@ -651,9 +664,9 @@ export function startServer({ cfg, log = () => {} } = {}) {
         if (req.method === 'GET' && !m[2]) return json(200, await detail(item))
         if (req.method === 'POST' && m[2]) {
           if (req.headers['x-board'] !== '1') return json(403, { error: 'header' })
-          // Answering a dialog presses keys in a session: like a launch, only from this page.
+          // Answering a dialog presses keys in a session, a call starts a program: like a launch, only from this page.
           const origin = req.headers.origin
-          if (['answer', 'permit'].includes(m[2]) && origin && origin !== `http://127.0.0.1:${port}` && origin !== `http://localhost:${port}`) return json(403, { error: 'origin' })
+          if (['answer', 'permit', 'mokupilot'].includes(m[2]) && origin && origin !== `http://127.0.0.1:${port}` && origin !== `http://localhost:${port}`) return json(403, { error: 'origin' })
           // Actions that go through herdr wait for a board that can reach it; card edits and the rest do not.
           if (['focus', 'wake', 'sleep', 'message', 'answer', 'permit'].includes(m[2]) && refuseStale()) return json(409, { ok: false, error: t('mobile.readOnly') })
           const body = await readBody(req)

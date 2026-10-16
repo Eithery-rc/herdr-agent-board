@@ -220,14 +220,14 @@ function syncAvailability() {
     banner.textContent = t(canEdit() ? 'mobile.readOnly' : 'live.off')
   }
   for (const element of document.querySelectorAll('#sheet-focus, #sheet-sleep, #sheet-wake, [data-act="focus"], [data-act="sleep"]')) element.disabled = blocked || (missing && !!element.closest('#sheet')) || (element.id === 'sheet-sleep' && inTurn(itemOf(state.open) ?? {}))
-  for (const element of document.querySelectorAll('#attach, #cat-new, #sheet-card button:not(.rel-chip):not(.rel-more), #sheet-card input, #cats-sheet button:not([data-close]):not([data-layout]), #cats-sheet input, #sched-body .sched-x, #sched-body .sched-mode, [data-act="dismiss"]')) element.disabled = !canEdit()
+  for (const element of document.querySelectorAll('#attach, #cat-new, #sheet-mokupilot, #sheet-card button:not(.rel-chip):not(.rel-more), #sheet-card input, #cats-sheet button:not([data-close]):not([data-layout]), #cats-sheet input, #sched-body .sched-x, #sched-body .sched-mode, [data-act="dismiss"]')) element.disabled = !canEdit()
   // New sessions go through herdr: they wait for fresh data like going to a session does.
   for (const element of document.querySelectorAll('#new-session, #sheet-new, .lane-new')) {
     element.disabled = blocked
     element.title = t(blocked ? 'mobile.readOnly' : element.dataset.hint ?? 'launch.inLane')
   }
   launchUI?.syncAvailability()
-  if (missing) for (const element of document.querySelectorAll('#sheet-card button, #sheet-card input, #sheet [data-act], #sheet-new, #attach, #sheet-changes, #sheet-history')) element.disabled = true
+  if (missing) for (const element of document.querySelectorAll('#sheet-card button, #sheet-card input, #sheet [data-act], #sheet-new, #sheet-mokupilot, #attach, #sheet-changes, #sheet-history')) element.disabled = true
   else for (const element of document.querySelectorAll('#sheet-changes, #sheet-history')) element.disabled = false
   files.refreshAvailability()
   termUI?.sync()
@@ -316,6 +316,14 @@ async function focusSession(key) {
   const r = await act(key, 'focus')
   setBusy(key, null)
   toast(r.ok ? t('toast.focused', { name: it.name }) : r.error, !r.ok)
+}
+
+/** A MokuPilot call whose agent is a fork of the session (src/mokupilot.mjs): the session goes on as it was. */
+async function callMokuPilot(key) {
+  const it = itemOf(key)
+  if (!it) return
+  const r = await act(key, 'mokupilot')
+  toast(r.ok ? t('mokupilot.started', { name: it.name }) : r.error, !r.ok)
 }
 
 // ---------------------------------------------------------------- language
@@ -1179,6 +1187,7 @@ function renderSheetHead() {
   term.hidden = state.data.terminal === false || !(it.cwd || it.pane)
   term.classList.toggle('has-shell', (state.data.shells ?? []).includes(it.key))
   term.title = t((state.data.shells ?? []).includes(it.key) ? 'term.shellOpen' : 'term.hint')
+  $('#sheet-mokupilot').hidden = !(state.data.mokupilot && it.session && it.agent === 'claude')
   $('#sheet-wake').hidden = !it.sleeping
   const sleep = $('#sheet-sleep')
   sleep.hidden = it.sleeping || !it.session
@@ -1501,6 +1510,7 @@ sheetQuestion.addEventListener('click', e => {
 })
 $('#sheet-focus').addEventListener('click', () => state.open && focusSession(state.open))
 $('#sheet-term').addEventListener('click', e => state.open && openTerminal(state.open, e.currentTarget))
+$('#sheet-mokupilot').addEventListener('click', () => state.open && callMokuPilot(state.open))
 $('#sheet-wake').addEventListener('click', async () => {
   const key = state.open
   if (!key) return
@@ -1512,7 +1522,7 @@ $('#sheet-wake').addEventListener('click', async () => {
 $('#sheet-sleep').addEventListener('click', () => state.open && sleepSession(state.open))
 $('#sheet-more').addEventListener('click', e => {
   const button = e.currentTarget, rect = button.getBoundingClientRect()
-  const items = ['sheet-term', 'sheet-wake', 'sheet-sleep', 'sheet-changes', 'sheet-history', 'sheet-new']
+  const items = ['sheet-term', 'sheet-mokupilot', 'sheet-wake', 'sheet-sleep', 'sheet-changes', 'sheet-history', 'sheet-new']
     .map(id => document.getElementById(id)).filter(el => el && !el.hidden)
     .map(el => ({ id: el.id, label: el.textContent.trim(), disabled: el.disabled, reason: el.disabled ? (!canMutate() && ['sheet-wake', 'sheet-sleep', 'sheet-new'].includes(el.id) ? t('mobile.readOnly') : el.title || t('mobile.readOnly')) : '' }))
   menu.open(items, { x: rect.right, y: rect.top, source: e.detail === 0 ? 'keyboard' : matchMedia('(pointer: coarse)').matches ? 'touch' : 'mouse', origin: button, label: t('sheet.more'), onPick: id => {
@@ -2546,6 +2556,7 @@ initBoardMenus({
     changes: (key, el) => files.lookChanges(key, el),
     history: (key, el) => files.lookHistory(key, itemOf(key)?.cwd ?? '', el),
     terminal: (key, el) => openTerminal(key, el),
+    mokupilot: key => callMokuPilot(key),
     newSession,
     cats: id => openCats(id),
     filter: id => {
