@@ -306,6 +306,9 @@ const STRINGS = {
     'ql.rows': ['{n} row', '{n} rows'],
     'ql.truncated': 'the start only, open it for the rest',
     'ql.modified': 'modified {date}',
+    'ql.fit': 'Fit',
+    'ql.fitHint': 'Fit to the window (0)',
+    'ql.zoomTo': 'Zoom to {pct}',
 
     // web board: toolbar
     'tb.title': 'Agents',
@@ -856,6 +859,9 @@ const STRINGS = {
     'ql.rows': ['{n} запись', '{n} записи', '{n} записей'],
     'ql.truncated': 'показано только начало, остальное в «Открыть»',
     'ql.modified': 'изменён {date}',
+    'ql.fit': 'Вписать',
+    'ql.fitHint': 'Вписать в окно (0)',
+    'ql.zoomTo': 'Масштаб {pct}',
 
     'tb.title': 'Агенты',
     'tb.lanes': 'Категории',
