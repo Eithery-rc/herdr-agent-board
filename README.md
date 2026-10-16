@@ -304,11 +304,12 @@ It runs commands on this computer, so:
   `X-Board` header, the page's own `Origin` and fresh herdr data. Without fresh data the window
   keeps showing the screen and takes no keys. The stream (Server-Sent Events, which send no
   headers) needs the per-run token of the board payload, as raw files do.
-- Keys go only to the shell the board opened for that session (its pane id in `terminals.json`
-  in the state folder; herdr never gives a closed pane's id to another), or to the session's own
-  pane once herdr says the same session still runs there, as for a message. The server takes
-  only keys from its list, text without control characters, at most 16 KB a request; a request
-  with anything else types nothing.
+- Keys go only to the shell the board opened for that session (kept in `terminals.json` in the
+  state folder, and checked to be still that pane, in its tab, with the terminal it was opened
+  with), or to the session's own pane once herdr says the same session still runs there, as for
+  a message. A shell moved elsewhere in herdr is no longer the board's: it is neither typed into
+  nor closed. The server takes only keys from its list, text without control characters, at most
+  16 KB a request; a request with anything else types nothing.
 - Nothing typed or shown is logged or kept; typed text reaches herdr as an argument of `pane
   send-text`.
 - `"terminal": false` in config.json turns it off: no button, and every terminal route answers

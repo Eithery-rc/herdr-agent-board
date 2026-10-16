@@ -125,6 +125,10 @@ test('browser keys become herdr keys; typing, pasting and the browser’s own ke
   // Ctrl with a letter goes by the key's place: Ctrl+C on a Russian layout too.
   assert.deepEqual(keyStep(ev('с', { code: 'KeyC', ctrlKey: true })), { key: 'ctrl+c' })
   assert.deepEqual(keyStep(ev('R', { code: 'KeyR', ctrlKey: true, shiftKey: true })), { key: 'ctrl+r' })
+  // On a Latin layout a letter is its own: Ctrl+Z on a German keyboard (the Y place), Ctrl+A on a French one.
+  assert.deepEqual(keyStep(ev('z', { code: 'KeyY', ctrlKey: true })), { key: 'ctrl+z' })
+  assert.deepEqual(keyStep(ev('a', { code: 'KeyQ', ctrlKey: true })), { key: 'ctrl+a' })
+  assert.deepEqual(keyStep(ev('c', { code: 'KeyI', ctrlKey: true }), { selection: true }), { copy: true })
   assert.deepEqual(keyStep(ev('b', { code: 'KeyB', altKey: true })), { key: 'alt+b' })
   assert.deepEqual(keyStep(ev('.', { code: 'Period', altKey: true })), { key: 'alt+.' })
   assert.deepEqual(keyStep(ev(' ', { code: 'Space', ctrlKey: true })), { key: 'ctrl+space' })
@@ -167,9 +171,14 @@ test('the server takes only keys the board sends, in canonical form', () => {
 })
 
 test('an input request becomes herdr calls in order, or nothing at all', () => {
-  assert.deepEqual(herdrCalls([{ text: 'git st' }, { key: 'tab' }, { key: 'enter' }, { text: '-x' }, { key: 'home' }, { text: 'y' }]), {
-    calls: [{ text: 'git st' }, { keys: ['tab', 'enter'] }, { text: '-x\x1b[Hy' }],
+  assert.deepEqual(herdrCalls([{ text: 'git st' }, { key: 'tab' }, { key: 'enter' }, { text: 'ls -la' }, { key: 'home' }, { text: 'y' }]), {
+    calls: [{ text: 'git st' }, { keys: ['tab', 'enter'] }, { text: 'ls -la\x1b[Hy' }],
   })
+  // Dashes a call starts with go as keys: herdr's command line never reads the text as an option.
+  assert.deepEqual(herdrCalls([{ key: 'enter' }, { text: '--help' }]), { calls: [{ keys: ['enter', '-', '-'] }, { text: 'help' }] })
+  assert.deepEqual(herdrCalls([{ text: '-' }]), { calls: [{ keys: ['-'] }] })
+  // Names an object has of its own are no keys.
+  for (const key of ['constructor', '__proto__', 'toString', 'valueOf', 'hasOwnProperty', 'ctrl+constructor', 'shift+__proto__']) assert.equal(herdrCalls([{ key }]).error, 'key', key)
   assert.deepEqual(herdrCalls([{ text: 'a\x1b]0;x\x07b' }]), { calls: [{ text: 'a]0;xb' }] })
   assert.deepEqual(herdrCalls([{ text: '\x00' }, { key: 'enter' }]), { calls: [{ keys: ['enter'] }] })
   assert.equal(herdrCalls([{ key: 'enter' }, { key: 'rm -rf' }]).error, 'key')

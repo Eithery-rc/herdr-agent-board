@@ -186,9 +186,6 @@ export function diffLines(prev, next) {
 /** The lines a diff makes of the last ones. */
 export const applyDiff = (lines, d) => lines.slice(d.drop, d.drop + d.keep).concat(d.lines)
 
-/** A diff that changes nothing. */
-export const unchanged = d => d.lines.length === 0 && d.drop === 0
-
 /**
  * How big the text can be for `cols` columns to fit `width` pixels; `ratio` is a character's
  * width per pixel of font size (0.6 for most monospace faces). Below `min` it stays at `min` and

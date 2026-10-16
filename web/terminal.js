@@ -404,6 +404,7 @@ export function initTerminal({ t, toast, canMutate, item, token, shells, wake, f
     if (s.status === 'connecting' && !s.nodes.length) html = `<p>${ICONS.spin}${esc(tr('term.connecting'))}</p>`
     else if (s.status === 'starting') html = `<p>${ICONS.spin}${esc(tr('term.starting', { path }))}</p>`
     else if (s.status === 'none') html = `<p>${esc(tr('term.noShell', { path }))}</p><button class="button primary" data-do="start"${canMutate() ? '' : ' disabled'}>${esc(tr('term.start'))}</button>${canMutate() ? '' : `<small>${esc(tr('mobile.readOnly'))}</small>`}`
+    else if (s.status === 'gone' && s.missing) html = `<p>${esc(tr('term.missing'))}</p>`
     else if (s.status === 'gone') html = s.target === 'shell' ? `<p>${esc(tr('term.gone'))}</p><button class="button primary" data-do="start"${canMutate() ? '' : ' disabled'}>${esc(tr('term.reopen'))}</button>` : `<p>${esc(tr('term.goneAgent'))}</p>`
     else if (s.status === 'asleep') html = `<p>${esc(tr('term.asleep', { name: x?.name ?? '' }))}</p><button class="button primary" data-do="wake"${canMutate() ? '' : ' disabled'}>${esc(tr('sheet.wake'))}</button>`
     else if (s.status === 'error') html = `<p>${esc(s.error || tr('err.unavailable'))}</p><button class="button" data-do="retry">${esc(tr('term.retry'))}</button>`
@@ -434,6 +435,8 @@ export function initTerminal({ t, toast, canMutate, item, token, shells, wake, f
     closeBtn.textContent = tr(armed ? 'term.closeConfirm' : 'term.close')
     closeBtn.title = tr('term.closeHint')
     const live = s.status === 'live'
+    // Out of the Tab order while it takes no keys, so Tab and Esc are the window's there.
+    input.tabIndex = canInput() ? 0 : -1
     screen.classList.toggle('typing', s.typing)
     win.classList.toggle('can-type', canInput())
     $('.term-keys').hidden = !(coarse.matches || matchMedia('(max-width: 760px)').matches) || !live
@@ -491,7 +494,8 @@ export function initTerminal({ t, toast, canMutate, item, token, shells, wake, f
     const batch = mergeSteps(s.pending.splice(0, n))
     const r = await post(`/api/term/${encodeURIComponent(key)}/${s.target}/input`, { session: item(key)?.session ?? null, steps: batch })
     s.sending = false
-    if (seq !== s.seq) return
+    // Switched meanwhile: what was queued for the other terminal went; what came since goes now.
+    if (seq !== s.seq) return flush()
     if (!r.ok) {
       // What was queued behind it would land somewhere unknown: it goes.
       s.pending = []
@@ -657,7 +661,10 @@ export function initTerminal({ t, toast, canMutate, item, token, shells, wake, f
     disconnect()
     const r = await post(`/api/term/${encodeURIComponent(key)}/shell/close`, {})
     if (key !== s.key) return
-    if (!r.ok) return toast(r.error, true)
+    if (!r.ok) {
+      toast(r.error, true)
+      return connect() // still there: back on show
+    }
     toast(tr('term.closed'))
     clearScreen()
     setStatus('gone')

@@ -22,6 +22,7 @@ function fakeHerdr({ dir }) {
   const panes = new Map([['w1:p1', { pane_id: 'w1:p1', tab_id: 'w1:t1', workspace_id: 'w1', agent: 'claude', session: 's1' }]])
   const screens = { 'w1:p1': 'agent screen\n' }
   const tabs = new Set(['w1:t1'])
+  let failReads = 0
   const gone = pane => new FakeError('pane_not_found', `pane ${pane} not found`)
   async function herdr(args) {
     calls.push(args)
@@ -35,10 +36,10 @@ function fakeHerdr({ dir }) {
       const tab = `w1:t${++n + 10}`
       const pane = `w1:p${n + 10}`
       tabs.add(tab)
-      panes.set(pane, { pane_id: pane, tab_id: tab, workspace_id: args[3] })
+      panes.set(pane, { pane_id: pane, tab_id: tab, workspace_id: args[3], terminal_id: `term-${n}` })
       panes.set(`${pane}s`, { pane_id: `${pane}s`, tab_id: tab, workspace_id: args[3], label: 'Sidebar' })
       screens[pane] = 'PS> \n'
-      return { root_pane: { pane_id: pane, tab_id: tab }, tab: { tab_id: tab } }
+      return { root_pane: { pane_id: pane, tab_id: tab, terminal_id: `term-${n}` }, tab: { tab_id: tab } }
     }
     if (a === 'pane' && b === 'list') return { panes: [...panes.values()].filter(p => p.workspace_id === args[3]) }
     if (a === 'pane' && b === 'close') {
@@ -65,10 +66,14 @@ function fakeHerdr({ dir }) {
   async function herdrText(args) {
     calls.push(args)
     const pane = args[2]
+    if (failReads) {
+      failReads--
+      throw new FakeError(undefined, 'herdr did not answer')
+    }
     if (!panes.has(pane)) throw gone(pane)
     return screens[pane]
   }
-  return { herdr, herdrText, calls, panes, tabs, screens, dir }
+  return { herdr, herdrText, calls, panes, tabs, screens, dir, failNextReads: n => (failReads = n) }
 }
 
 function setup(t) {
@@ -76,9 +81,11 @@ function setup(t) {
   t.after(() => rmSync(dir, { recursive: true, force: true }))
   const h = fakeHerdr({ dir })
   const file = join(dir, 'terminals.json')
-  const make = () => createTerminals({ herdr: h.herdr, herdrText: h.herdrText, file, sleep: async () => {} })
+  const clock = { t: 1_000_000 }
+  const changes = []
+  const make = () => createTerminals({ herdr: h.herdr, herdrText: h.herdrText, file, sleep: async () => {}, now: () => clock.t, onChange: () => changes.push(clock.t) })
   const item = { key: 's1', session: 's1', pane: 'w1:p1', cwd: dir, name: 'probe', agent: 'claude' }
-  return { h, file, make, item, dir }
+  return { h, file, make, item, dir, clock, changes }
 }
 
 test('a shell opens once per session, in a tab of its own in the session’s workspace and folder', async t => {
@@ -159,7 +166,8 @@ test('input is checked first and typed in order; a refused request types nothing
   const [r1, r2] = await Promise.all([terms.input(pane, [{ text: '-x' }, { key: 'home' }, { key: 'enter' }]), terms.input(pane, [{ key: 'ctrl+c' }])])
   assert.ok(r1.ok && r2.ok)
   assert.deepEqual(h.calls.slice(before), [
-    ['pane', 'send-text', pane, '-x\x1b[H'],
+    ['pane', 'send-keys', pane, '-'],
+    ['pane', 'send-text', pane, 'x\x1b[H'],
     ['pane', 'send-keys', pane, 'enter'],
     ['pane', 'send-keys', pane, 'ctrl+c'],
   ])
@@ -210,4 +218,55 @@ test('the pace of reading, and a pane’s columns', () => {
   assert.equal(paneCols({ panes: [{ pane_id: 'a', rect: { width: 109 } }] }, 'a'), 107)
   assert.equal(paneCols({ panes: [] }, 'a'), null)
   assert.equal(paneCols(null, 'a'), null)
+})
+
+test('a shell is typed into only while it is the one the board opened: same pane, same tab, same terminal', async t => {
+  const { h, make, item, clock, changes } = setup(t)
+  const terms = make()
+  const { pane } = await terms.openShell(item, 'x')
+  assert.deepEqual(await terms.inputPane(item, 'shell', 's1'), { pane })
+  // herdr started over and gave that id to a pane with another terminal: not the board's.
+  h.panes.get(pane).terminal_id = 'term-other'
+  assert.deepEqual(await terms.inputPane(item, 'shell', 's1'), { pane }) // a burst of keys checks once
+  clock.t += 5000
+  assert.deepEqual(await terms.inputPane(item, 'shell', 's1'), { error: 'term.err.noShell' })
+  assert.deepEqual(terms.keys(), [])
+  assert.ok(h.panes.has(pane), 'a pane that is not the board’s is never closed')
+  assert.equal(changes.length, 1)
+})
+
+test('a shell the user moved to another tab is theirs: opening again leaves it be', async t => {
+  const { h, make, item } = setup(t)
+  const terms = make()
+  const first = await terms.openShell(item, 'x')
+  h.panes.get(first.pane).tab_id = 'w1:t1'
+  const second = await terms.openShell(item, 'x')
+  assert.notEqual(second.pane, first.pane)
+  assert.ok(h.panes.has(first.pane))
+})
+
+test('a read that fails is said once; the next one that works says so too', async t => {
+  const { h, make, item } = setup(t)
+  const terms = make()
+  const { pane } = await terms.openShell(item, 'x')
+  h.failNextReads(2)
+  const got = []
+  t.after(terms.watch(pane, { shell: true, key: 's1' }, m => got.push(m)))
+  for (let i = 0; i < 300 && !got.some(m => m.t === 'frame'); i++) await new Promise(r => setTimeout(r, 10))
+  assert.deepEqual(got.map(m => m.t), ['error', 'frame'])
+  assert.match(got[0].why, /did not answer/)
+})
+
+test('a board that starts again forgets shells that went, and tidies their tabs', async t => {
+  const { h, make, item, changes } = setup(t)
+  const { pane } = await make().openShell(item, 'x')
+  const tab = h.panes.get(pane).tab_id
+  h.panes.delete(pane)
+  const again = make()
+  assert.deepEqual(again.keys(), ['s1'])
+  await again.prune()
+  assert.deepEqual(again.keys(), [])
+  for (let i = 0; i < 100 && h.tabs.has(tab); i++) await new Promise(r => setTimeout(r, 10))
+  assert.ok(!h.tabs.has(tab))
+  assert.ok(changes.length >= 1)
 })

@@ -140,7 +140,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
   // Sessions started from the board (launch.mjs): their progress goes out with the board.
   const launches = createLaunches({ cfg, log, onChange: () => publish() })
   // The terminal (terminal.mjs): shells the board opened in sessions' folders, and live panes.
-  const terminals = createTerminals()
+  const terminals = createTerminals({ onChange: () => publish() })
   const terminalOn = () => cfg.terminal !== false
 
   /** The board as clients see it, without the time of the last successful refresh. */
@@ -177,6 +177,8 @@ export function startServer({ cfg, log = () => {} } = {}) {
   // changed (stale included): a refresh time that moves every few seconds alone is no news.
   let sent = ''
   function publish() {
+    // Turned off in config.json: no pane stays on show.
+    if (!terminalOn()) terminals.stopAll()
     const next = board()
     const key = JSON.stringify(next)
     payload = JSON.stringify({ ...next, lastSuccessfulRefreshAt })
@@ -352,6 +354,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
         publish()
         return r
       }
+      if (op !== 'focus') return fail('term.err.target')
       // focus: the shell's tab in herdr, and the terminal window up.
       const shell = terminals.shellOf(item.key)
       if (!shell) return fail('term.err.noShell')
@@ -632,7 +635,7 @@ export function startServer({ cfg, log = () => {} } = {}) {
       // The port makes it one board per machine, so one scheduler; claims cover an overlap.
       const scheduler = startScheduler({ cfg, log, onChange: refresh })
       // Shells a board before this one opened and that are gone by now are forgotten.
-      terminals.prune().then(publish)
+      if (terminalOn()) terminals.prune()
       resolve({ port, url: `http://127.0.0.1:${port}/`, refresh, scheduler })
     })
   })

@@ -38,9 +38,11 @@ for (let i = 1; i <= 10; i++) BROWSER_KEYS[`F${i}`] = `f${i}`
  */
 export function keyStep(e, { selection = false } = {}) {
   if (e.isComposing || e.key === 'Process' || e.key === 'Dead' || e.metaKey) return null
-  const letter = /^Key([A-Z])$/.exec(e.code ?? '')?.[1]?.toLowerCase()
+  // A letter key: by its character on a Latin layout (Ctrl+Z on a German one is its own Z), by
+  // its place on another script's (Ctrl+С on a Russian layout is Ctrl+C).
+  const own = /^[a-z]$/i.test(e.key ?? '') ? e.key.toLowerCase() : null
+  const letter = own ?? /^Key([A-Z])$/.exec(e.code ?? '')?.[1]?.toLowerCase()
   if (e.ctrlKey && !e.altKey) {
-    // By the key's place, not its character: Ctrl+C on a Russian layout is still Ctrl+C.
     if (e.code === 'BracketRight') return { leave: true }
     if (letter === 'c' && (selection || e.shiftKey)) return { copy: true }
     if (letter === 'v' || (e.shiftKey && letter === 'c')) return null // paste: the paste event
@@ -58,7 +60,7 @@ export function keyStep(e, { selection = false } = {}) {
   }
   if (e.key === ' ' && e.ctrlKey) return { key: 'ctrl+space' }
   if (!e.ctrlKey && !e.altKey) return null // a character: the input event types it
-  // Ctrl or Alt with a character key: by its place for letters, by its character otherwise.
+  // Ctrl or Alt with a character key: a letter as above, anything else by its character.
   const ch = letter ?? (e.key?.length === 1 ? e.key.toLowerCase() : null)
   if (!ch || !CHAR.test(ch)) return null
   return { key: [...mods.filter(m => m !== 'shift' || !letter), ch].join('+') }
@@ -98,7 +100,7 @@ export function splitKey(name) {
   const mods = parts
   // Modifiers once each, in the order ctrl, alt, shift.
   if (!base || mods.join('+') !== MODS.filter(m => mods.includes(m)).join('+')) return null
-  if (NAMED.has(base) || SEQUENCES[base]) return { mods, base }
+  if (NAMED.has(base) || Object.hasOwn(SEQUENCES, base)) return { mods, base }
   // A character goes with Ctrl or Alt (Shift alone types it).
   if (CHAR.test(base) && mods.length && !(mods.length === 1 && mods[0] === 'shift')) return { mods, base }
   return null
@@ -111,27 +113,34 @@ const modParam = mods => 1 + (mods.includes('shift') ? 1 : 0) + (mods.includes('
 export function keyCall(name) {
   const k = splitKey(name)
   if (!k) return null
-  const seq = SEQUENCES[k.base]
+  const seq = Object.hasOwn(SEQUENCES, k.base) ? SEQUENCES[k.base] : null
   if (seq) {
     if (!k.mods.length) return { text: seq[0] }
     const [, fin] = seq
     return { text: fin === 'H' || fin === 'F' ? `\x1b[1;${modParam(k.mods)}${fin}` : `\x1b[${fin[0]};${modParam(k.mods)}~` }
   }
   // herdr names arrows with one modifier; two or more go as the sequence.
-  if (ARROWS[k.base] && k.mods.length > 1) return { text: `\x1b[1;${modParam(k.mods)}${ARROWS[k.base]}` }
+  if (Object.hasOwn(ARROWS, k.base) && k.mods.length > 1) return { text: `\x1b[1;${modParam(k.mods)}${ARROWS[k.base]}` }
   return { keys: [name] }
 }
 
 /**
  * The steps of an input request checked and turned into herdr calls, in order:
  * [{ keys: [...] } | { text }]. { error } when any step is not one the board sends: nothing of a
- * request that fails goes.
+ * request that fails goes. Dashes a text starts with go as keys, so the text never reads as an
+ * option to herdr's command line.
  */
 export function herdrCalls(steps) {
   if (!Array.isArray(steps) || !steps.length) return { error: 'empty' }
   if (steps.length > MAX_STEPS) return { error: 'too many' }
   let size = 0
   const calls = []
+  const add = call => {
+    const last = calls.at(-1)
+    if (call.keys && last?.keys) last.keys.push(...call.keys)
+    else if (call.text != null && last?.text != null) last.text += call.text
+    else calls.push(call.keys ? { keys: [...call.keys] } : { text: call.text })
+  }
   for (const s of steps) {
     let call
     if (s && typeof s.text === 'string' && s.key == null) {
@@ -141,13 +150,23 @@ export function herdrCalls(steps) {
       call = { text }
     } else if (s && typeof s.key === 'string' && s.text == null) {
       call = keyCall(s.key)
-      if (!call) return { error: 'key' }
+      if (!Array.isArray(call?.keys) && typeof call?.text !== 'string') return { error: 'key' }
     } else return { error: 'step' }
     if (size > MAX_TEXT) return { error: 'too long' }
-    const last = calls.at(-1)
-    if (call.keys && last?.keys) last.keys.push(...call.keys)
-    else if (call.text != null && last?.text != null) last.text += call.text
-    else calls.push(call.keys ? { keys: [...call.keys] } : { text: call.text })
+    add(call)
   }
-  return { calls }
+  // Text after text is one call by now: only where a call starts can a dash be read as an option.
+  const out = []
+  for (const c of calls) {
+    const dashes = c.text?.match(/^-+/)?.[0]
+    if (!dashes) {
+      out.push(c)
+      continue
+    }
+    const keys = [...dashes].map(() => '-')
+    if (out.at(-1)?.keys) out.at(-1).keys.push(...keys)
+    else out.push({ keys })
+    if (c.text.length > dashes.length) out.push({ text: c.text.slice(dashes.length) })
+  }
+  return { calls: out }
 }

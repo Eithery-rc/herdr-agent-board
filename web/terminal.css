@@ -59,32 +59,32 @@
   user-select: text;
   -webkit-user-select: text;
 }
-.tl:empty::before { content: '\200b'; }
+.term-lines .tl:empty::before { content: '\200b'; }
 .term-probe { position: absolute; visibility: hidden; font-size: 100px; white-space: pre; }
 
-.f0 { color: #3a3a40; } .f1 { color: #ff6b64; } .f2 { color: #5fd27a; } .f3 { color: #f2cc60; }
-.f4 { color: #62a8ff; } .f5 { color: #d68cf5; } .f6 { color: #5fd0e0; } .f7 { color: #d8d8de; }
-.f8 { color: #86868f; } .f9 { color: #ff918a; } .f10 { color: #86e59a; } .f11 { color: #ffe08a; }
-.f12 { color: #93c3ff; } .f13 { color: #e6b2ff; } .f14 { color: #8fe6f0; } .f15 { color: #ffffff; }
-.b0 { background: #3a3a40; } .b1 { background: #ff6b64; } .b2 { background: #5fd27a; } .b3 { background: #f2cc60; }
-.b4 { background: #62a8ff; } .b5 { background: #d68cf5; } .b6 { background: #5fd0e0; } .b7 { background: #d8d8de; }
-.b8 { background: #86868f; } .b9 { background: #ff918a; } .b10 { background: #86e59a; } .b11 { background: #ffe08a; }
-.b12 { background: #93c3ff; } .b13 { background: #e6b2ff; } .b14 { background: #8fe6f0; } .b15 { background: #ffffff; }
-.fs { color: var(--term-bg); }
-.bi { background: var(--term-fg); }
-.tb { font-weight: 650; }
-.td { opacity: 0.6; }
-.ti { font-style: italic; }
-.tu { text-decoration: underline; text-underline-offset: 2px; }
-.ts { text-decoration: line-through; }
-.tus { text-decoration: underline line-through; }
-.th { color: transparent; }
-.tlink { cursor: pointer; text-decoration-color: rgba(255, 255, 255, 0.45); }
-.tlink:hover { color: #93c3ff; text-decoration-color: currentColor; }
+.term-lines .f0 { color: #3a3a40; } .term-lines .f1 { color: #ff6b64; } .term-lines .f2 { color: #5fd27a; } .term-lines .f3 { color: #f2cc60; }
+.term-lines .f4 { color: #62a8ff; } .term-lines .f5 { color: #d68cf5; } .term-lines .f6 { color: #5fd0e0; } .term-lines .f7 { color: #d8d8de; }
+.term-lines .f8 { color: #86868f; } .term-lines .f9 { color: #ff918a; } .term-lines .f10 { color: #86e59a; } .term-lines .f11 { color: #ffe08a; }
+.term-lines .f12 { color: #93c3ff; } .term-lines .f13 { color: #e6b2ff; } .term-lines .f14 { color: #8fe6f0; } .term-lines .f15 { color: #ffffff; }
+.term-lines .b0 { background: #3a3a40; } .term-lines .b1 { background: #ff6b64; } .term-lines .b2 { background: #5fd27a; } .term-lines .b3 { background: #f2cc60; }
+.term-lines .b4 { background: #62a8ff; } .term-lines .b5 { background: #d68cf5; } .term-lines .b6 { background: #5fd0e0; } .term-lines .b7 { background: #d8d8de; }
+.term-lines .b8 { background: #86868f; } .term-lines .b9 { background: #ff918a; } .term-lines .b10 { background: #86e59a; } .term-lines .b11 { background: #ffe08a; }
+.term-lines .b12 { background: #93c3ff; } .term-lines .b13 { background: #e6b2ff; } .term-lines .b14 { background: #8fe6f0; } .term-lines .b15 { background: #ffffff; }
+.term-lines .fs { color: var(--term-bg); }
+.term-lines .bi { background: var(--term-fg); }
+.term-lines .tb { font-weight: 650; }
+.term-lines .td { opacity: 0.6; }
+.term-lines .ti { font-style: italic; }
+.term-lines .tu { text-decoration: underline; text-underline-offset: 2px; }
+.term-lines .ts { text-decoration: line-through; }
+.term-lines .tus { text-decoration: underline line-through; }
+.term-lines .th { color: transparent; }
+.term-lines .tlink { cursor: pointer; text-decoration-color: rgba(255, 255, 255, 0.45); }
+.term-lines .tlink:hover { color: #93c3ff; text-decoration-color: currentColor; }
 
 /* Where the terminal types next: solid and blinking while the screen has the keys, an outline
    while it does not, as a terminal window does when it is not in front. */
-.tcaret {
+.term-lines .tcaret {
   position: absolute;
   width: 1ch;
   height: 1.1em;
@@ -93,7 +93,7 @@
   box-shadow: inset 0 0 0 1px rgba(245, 245, 247, 0.55);
   pointer-events: none;
 }
-.term-screen.typing .tcaret { background: var(--term-caret); box-shadow: none; animation: term-blink 1.06s steps(1) infinite; }
+.term-screen.typing .term-lines .tcaret { background: var(--term-caret); box-shadow: none; animation: term-blink 1.06s steps(1) infinite; }
 @keyframes term-blink { 50% { opacity: 0; } }
 
 /* What the screen says when there is nothing (yet) to show: starting, gone, asleep, an error. */
@@ -199,7 +199,7 @@
   .term-foot { padding: 7px 10px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .term-screen.typing .tcaret { animation: none; }
+  .term-screen.typing .term-lines .tcaret { animation: none; }
   .term-screen, .term-dot, .term-keys button { transition: none; }
 }
 @media (prefers-reduced-transparency: reduce) {
@@ -208,5 +208,5 @@
 }
 @media (prefers-contrast: more) {
   .term-screen { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.4); }
-  .td { opacity: 0.75; }
+  .term-lines .td { opacity: 0.75; }
 }

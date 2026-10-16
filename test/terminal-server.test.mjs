@@ -107,6 +107,8 @@ test('the terminal: only the page’s own requests, its own shell, the same sess
   assert.deepEqual(typed(), [['send-text', 'w1:p9', 'echo secret-typed'], ['send-keys', 'w1:p9', 'enter']])
   const bad = await post('/api/term/s1/shell/input', { session: 's1', steps: [{ text: 'ls' }, { key: 'enter; rm' }] })
   assert.equal(bad.status, 409)
+  for (const key of ['constructor', '__proto__', 'ctrl+toString']) assert.equal((await post('/api/term/s1/shell/input', { session: 's1', steps: [{ key }] })).status, 409, key)
+  assert.equal((await post('/api/term/s1/shell/stream')).status, 409) // a POST is not the stream, nor anything else
   assert.equal(typed().length, 2)
 
   // The session's own pane: only while the same session runs there.
