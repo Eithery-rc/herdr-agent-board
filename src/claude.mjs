@@ -4,7 +4,7 @@
 import { closeSync, openSync, readSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { onLanguage, t } from './lang.mjs'
-import { isNotice, reminderNotice, taskNotice } from './notices.mjs'
+import { boardNotice, isNotice, taskNotice } from './notices.mjs'
 import { CLAUDE_DIR } from './paths.mjs'
 import { questionsOf } from './questions.mjs'
 
@@ -271,8 +271,9 @@ function parse(line) {
  * The last `limit` turns of a session for the detail view: the user's prompts, the agent's
  * texts and its tool calls in a line each (done = the call has a result). A question form
  * (AskUserQuestion) carries its questions and, once done, the answers: { ask, answers }, answers
- * null when it was closed without one. Background tasks reporting back and board reminders come
- * as { role: 'notice', ...taskNotice() or reminderNotice() } (notices.mjs). A call that works
+ * null when it was closed without one. Background tasks reporting back, board reminders and
+ * MokuPilot call results come as { role: 'notice', ...taskNotice() or boardNotice() }
+ * (notices.mjs). A call that works
  * with others carries what it is about, for a line of its own: `helper` (Agent: a subagent or a
  * fork, `id` once it started), `workflow`, `send` (SendMessage), `spawn` (spawn-agent started a
  * session). Another session's or a teammate's message is { role: 'peer', from, text }.
@@ -448,7 +449,7 @@ function turns(text, { sidechain = false } = {}) {
       const task = a.commandMode === 'task-notification' ? taskNotice(a.prompt) : null
       if (task) notice(task, when)
       const text = a.commandMode === 'prompt' && a.origin?.kind !== 'peer' ? userText(a.prompt) : ''
-      const reminder = reminderNotice(text)
+      const reminder = boardNotice(text)
       if (reminder) notice(reminder, when)
       else if (text && !(items.at(-1)?.role === 'user' && items.at(-1).text === clip(text, 3000))) items.push({ role: 'user', text: clip(text, 3000), at: when })
       continue
@@ -485,7 +486,7 @@ function turns(text, { sidechain = false } = {}) {
         if (!p) continue
         text = p.prompt
       }
-      const n = taskNotice(text) ?? reminderNotice(text)
+      const n = taskNotice(text) ?? boardNotice(text)
       if (n) notice(n, at)
       else if (text) items.push({ role: 'user', text: clip(text, 3000), at })
     } else if (Array.isArray(content)) {

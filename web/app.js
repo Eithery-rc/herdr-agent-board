@@ -16,7 +16,7 @@ import { updateLive } from './live.js'
 import { limitInfo } from './limits-model.js'
 import { markdown } from './markdown.js'
 import { initMenu } from './menu.js'
-import { noticeLine } from './notice-model.js'
+import { callTitle, noticeLine } from './notice-model.js'
 import { initQuestions } from './questions.js'
 import { keepInSight, menuOpen, Panel, panelDock, panels, placePanels, resetPanelSize, roomBelow } from './panel.js'
 import { renameInPlace } from './rename.js'
@@ -48,6 +48,7 @@ const ICON = {
   repeat: '<svg viewBox="0 0 20 20"><path d="M4 9.5V8a3 3 0 0 1 3-3h8.5m-2.5-2.5L15.5 5 13 7.5M16 10.5V12a3 3 0 0 1-3 3H4.5M7 12.5 4.5 15 7 17.5"/></svg>',
   trash: '<svg viewBox="0 0 20 20"><path d="M4.5 6h11M8 6V4.5h4V6m-6 0 .7 9.5h6.6L14 6"/></svg>',
   bolt: '<svg viewBox="0 0 20 20"><path d="M11 2.5 4.5 11H10l-1 6.5L15.5 9H10Z"/></svg>',
+  phone: '<svg viewBox="0 0 20 20"><path d="M6.6 3.5H4.8A1.8 1.8 0 0 0 3 5.4c.3 6 5.6 11.3 11.6 11.6a1.8 1.8 0 0 0 1.9-1.8v-1.8a1 1 0 0 0-.8-1l-2.6-.6a1 1 0 0 0-1 .3l-1 1.2a10 10 0 0 1-4.8-4.8l1.2-1a1 1 0 0 0 .3-1l-.6-2.6a1 1 0 0 0-1-.8Z"/></svg>',
   hourglass: '<svg viewBox="0 0 20 20"><path d="M6 3h8M6 17h8M7 3v2.6c0 1.2.6 2.1 1.6 2.8L10 9.4l1.4-1c1-.7 1.6-1.6 1.6-2.8V3M7 17v-2.6c0-1.2.6-2.1 1.6-2.8l1.4-1 1.4 1c1 .7 1.6 1.6 1.6 2.8V17"/></svg>',
   // Sessions working together: who started it, whom it started, a message out and in.
   from: '<svg viewBox="0 0 20 20"><path d="M8 4.5 4.5 8 8 11.5"/><path d="M4.5 8H12a3.5 3.5 0 0 1 3.5 3.5v4"/></svg>',
@@ -553,7 +554,7 @@ function alarmBadge(it) {
   const list = schedulesOf(it.key)
   if (!list.length) return ''
   const first = list[0]
-  const title = t('sched.badge', { n: list.length, when: longWhen(first.next, t), text: plain(first.text) })
+  const title = t('sched.badge', { n: list.length, when: longWhen(first.next, t), text: plain(entryText(first)) })
   return `<span class="alarm${overdue(first) ? ' due' : ''}" title="${esc(title)}">${first.cron ? ICON.repeat : ICON.alarm}<span>${esc(shortWhen(first.next, t))}</span></span>`
 }
 
@@ -1260,13 +1261,18 @@ function linkedSessions(it) {
   return [...by.values()].filter(p => itemOf(p.key)).sort((a, b) => b.from - a.from || b.at - a.at)
 }
 
+/** What a schedule entry says, in a line: a MokuPilot call's results by their title. */
+function entryText(e) {
+  return e.kind === 'call' ? `${t('notice.call')}: ${callTitle(e.text)}` : e.text
+}
+
 /** The session's reminders in its sheet: the first three, the rest in the schedule panel. */
 function scheduleRow(it) {
   const list = schedulesOf(it.key)
   if (!list.length) return ''
   const shown = list.slice(0, 3).map(e => {
     const what = `${e.cron ? ICON.repeat : ICON.alarm}${esc(capital(longWhen(e.next, t), t))}`
-    return `<div class="sched-mini" data-id="${esc(e.id)}"><span class="when${overdue(e) ? ' due' : ''}" title="${esc(e.cron ? `${t('sched.repeat')}: ${e.cron}` : t('sched.once'))}">${what}</span><span class="text" title="${esc(e.text)}">${esc(e.text)}</span>${modeButton(e, true)}${cancelButton(e)}</div>`
+    return `<div class="sched-mini" data-id="${esc(e.id)}"><span class="when${overdue(e) ? ' due' : ''}" title="${esc(e.cron ? `${t('sched.repeat')}: ${e.cron}` : t('sched.once'))}">${what}</span><span class="text" title="${esc(entryText(e))}">${esc(entryText(e))}</span>${modeButton(e, true)}${cancelButton(e)}</div>`
   })
   const more = list.length > 3 ? `<button class="sched-more" data-sched-more>${esc(t('sched.more', { n: list.length - 3 }))}</button>` : ''
   return `<div class="row sched-row"><span class="row-label">${esc(t('sched.row'))}</span><div class="row-value">${shown.join('')}${more}</div></div>`
@@ -1450,13 +1456,13 @@ function peerBubble(m, it, ctx, helpers) {
 }
 
 /**
- * A background task reporting back or a board reminder: a quiet line in the thread, not the
- * user's bubble. An agent's report or a monitor's lines open from it; a command's output file is
- * a click away.
+ * A background task reporting back, a board reminder or a MokuPilot call's results: a quiet line
+ * in the thread, not the user's bubble. An agent's report, a call's results or a monitor's lines
+ * open from it; a command's output file is a click away.
  */
 function notice(m, helpers = []) {
   const { text, sub, tone } = noticeLine(m, t)
-  const mark = { ok: ICON.check, fail: ICON.cross, stop: ICON.stop }[tone] ?? (m.kind === 'reminder' || m.kind === 'schedule' ? ICON.alarm : ICON.bolt)
+  const mark = { ok: ICON.check, fail: ICON.cross, stop: ICON.stop }[tone] ?? (m.kind === 'call' ? ICON.phone : m.kind === 'reminder' || m.kind === 'schedule' ? ICON.alarm : ICON.bolt)
   const file = m.file && !m.detail ? `<span class="notice-file fs-inline" data-path="${esc(m.file)}">${esc(t('notice.output'))}</span>` : ''
   // An agent that reported back: its whole conversation is a click away.
   const agent = m.kind === 'agent' && m.id ? findHelper(helpers, { id: m.id }) : null
@@ -1466,8 +1472,9 @@ function notice(m, helpers = []) {
     : run ? `<button class="notice-open" data-run-open="${esc(run.id)}" title="${esc(t('helpers.open'))}">${esc(t('notice.open'))}</button>` : ''
   const line = `<span class="notice-mark">${mark}</span><span class="notice-text"${m.summary ? ` title="${esc(m.summary)}"` : ''}>${esc(text)}${sub ? ` <small>${esc(sub)}</small>` : ''}</span>${file}${open}<span class="when">${clock(m.at)}</span>`
   if (!m.detail) return `<div class="notice ${tone}">${line}</div>`
-  // An agent's report is markdown; a monitor's lines and a tool's result are kept as they came.
-  const body = ['agent', 'workflow'].includes(m.kind) ? `<div class="md">${markdown(m.detail)}</div>` : `<pre>${esc(m.detail)}</pre>`
+  // An agent's report and a call's results are markdown (its paths become file chips); a
+  // monitor's lines and a tool's result are kept as they came.
+  const body = ['agent', 'workflow', 'call'].includes(m.kind) ? `<div class="md">${markdown(m.detail)}</div>` : `<pre>${esc(m.detail)}</pre>`
   // Kept open across refreshes by this key: a task can report several times under one id.
   return `<details class="notice ${tone}" data-i="notice-${esc(`${m.id}-${m.at}`)}"><summary>${line}${ICON.chev}</summary><div class="notice-body">${body}</div></details>`
 }
@@ -2143,7 +2150,7 @@ function entryHTML(e, when) {
     <div class="sched-time"><b>${esc(when(e))}</b><span>${e.cron ? `${ICON.repeat}${esc(t('sched.repeat'))}` : esc(t('sched.once'))}</span></div>
     <div class="sched-main">
       <button class="sched-who" data-open="${esc(e.key)}" style="--lane:${it ? catInfo(catOf(it)).color : 'var(--gray)'}"${it ? ` title="${esc(t('sched.open'))}"` : ' disabled'}>${esc(it?.name || e.name || t('session'))}</button>
-      <div class="sched-text">${esc(e.text)}</div>
+      <div class="sched-text">${esc(entryText(e))}</div>
       <div class="sched-stats">${modeButton(e)}${stats ? `<span>${stats}</span>` : ''}</div>${note ? `<div class="sched-state${pending ? '' : ' muted'}">${esc(note)}</div>` : ''}
     </div>
     ${cancelButton(e)}
@@ -2158,7 +2165,7 @@ function logHTML(r) {
     : r.result === 'missed' ? (['busy', 'gone', 'draft', 'dialog'].includes(r.why) ? t(`sched.why.${r.why}`) : r.why)
     : late > 120_000 ? t('sched.lateBy', { late: span(late, t) }) : ''
   const icon = { sent: ICON.check, missed: '!', dropped: '×' }[r.result] ?? '!'
-  return `<div class="log-row ${esc(r.result)}"><span class="log-icon" title="${esc(t(`sched.${r.result === 'sent' || r.result === 'dropped' ? r.result : 'missed'}`))}">${icon}</span><span class="log-when">${esc(capital(longWhen(r.at, t), t))}</span><span class="log-what"><b>${esc(it?.name || r.name || t('session'))}</b> ${esc(r.text)}</span>${note ? `<span class="log-note">${esc(note)}</span>` : ''}</div>`
+  return `<div class="log-row ${esc(r.result)}"><span class="log-icon" title="${esc(t(`sched.${r.result === 'sent' || r.result === 'dropped' ? r.result : 'missed'}`))}">${icon}</span><span class="log-when">${esc(capital(longWhen(r.at, t), t))}</span><span class="log-what"><b>${esc(it?.name || r.name || t('session'))}</b> ${esc(entryText(r))}</span>${note ? `<span class="log-note">${esc(note)}</span>` : ''}</div>`
 }
 
 function renderSchedule() {
