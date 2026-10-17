@@ -113,7 +113,12 @@ can go to the pane in herdr instead. The same goes to the board as `POST /api/re
   the session knows while the session itself stays as it was. The board runs MokuPilot's launcher
   with `call --claude-session <id> --cwd <folder>`; a running MokuPilot takes it over. Found by
   itself (`MokuPilot.exe` where its installer puts it, else `meet` on PATH, `meet.cmd` standing
-  for its checkout) or set in [Settings](#settings) as `mokupilot`.
+  for its checkout) or set in [Settings](#settings) as `mokupilot`. Once its protocol is ready,
+  MokuPilot sends the call's results back with `board call-report`: the session gets them once it
+  is free (woken if it sleeps), for its information, as `[mokupilot call report]`, the report, and
+  a note not to start work on it unless you ask; its conversation shows "MokuPilot call results"
+  as a quiet line that opens to the report, its paths (the full protocol, the transcript) as file
+  chips.
 - The sheet's place and size are the viewer's own (kept in this browser): docked right, left or
   at the bottom, flush with that edge like a sidebar, where the board makes room for it (a window
   too narrow for that keeps the board's columns and lays the sheet over them), or floating over
@@ -720,6 +725,9 @@ board every "<cron>" "<text>"  the same on a cron schedule
   --idle                  (remind, every) wait until the session is free, not on time
 board schedule [--all]    this session's entries (every session's)
 board unschedule <id|all> remove an entry (all: every entry of this session)
+board call-report --session <id> --file <report.md>
+                          a MokuPilot call's results for the session (MokuPilot runs it):
+                          typed in once the session is free, for its information
 --session <id|name|pane>  for another session's card
 board doctor              what is set up on this computer, and what is missing
 spawn-agent --name <Name> --cwd <folder> [--brief-file <file>]   a new session in a herdr tab

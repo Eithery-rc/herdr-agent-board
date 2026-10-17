@@ -5,7 +5,8 @@
 // what was sent and what was missed, for the web board.
 //
 // An entry: { id, key (the session's card key), name, pane, cwd, text, at (one-off) | cron, next
-// (when it is due), created, by, from (the session that set it: { key, name }) } plus the
+// (when it is due), created, by, from (the session that set it: { key, name }), kind ('call': a
+// MokuPilot call's results, `board call-report`; a reminder without one) } plus the
 // scheduler's own fields: runs, missed, lastRun, gone (runs missed in a row with the session gone),
 // movedFrom (the session it was for before /clear), and while it waits for a busy session
 // pendingSince, waited, tried, why; claim while a run is on its way.
@@ -22,6 +23,8 @@ const fileOf = id => join(SCHEDULE_DIR, `${id}.json`)
 // Enough for any real use; an agent stuck in a loop cannot fill the disk.
 export const MAX_PER_SESSION = 30
 export const MAX_TEXT = 2000
+// A call's results (kind 'call') are a short report, not a one-line reminder.
+export const MAX_REPORT = 16_000
 
 /** Every entry, soonest first. */
 export function listEntries() {
@@ -46,7 +49,7 @@ export function getEntry(id) {
 
 // The text is typed into a terminal: no control characters (an escape could drive the pane).
 const CONTROL = /[\x00-\x08\x0b-\x1f\x7f]/g
-export const cleanText = s => String(s ?? '').replace(CONTROL, '').slice(0, MAX_TEXT)
+export const cleanText = (s, max = MAX_TEXT) => String(s ?? '').replace(CONTROL, '').slice(0, max)
 // A name goes into the prompt's tag: no brackets either.
 export const cleanName = s => String(s ?? '').replace(CONTROL, '').replace(/[[\]]/g, '').trim().slice(0, 60)
 
@@ -58,7 +61,7 @@ export function addEntry(fields) {
   }
   const clean = {
     ...fields,
-    text: cleanText(fields.text),
+    text: cleanText(fields.text, fields.kind === 'call' ? MAX_REPORT : MAX_TEXT),
     name: cleanName(fields.name),
     ...(fields.from && { from: { key: String(fields.from.key), name: cleanName(fields.from.name) } }),
   }

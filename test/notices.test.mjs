@@ -7,10 +7,10 @@ import { test } from 'node:test'
 import { root, sandbox } from './fixtures/sandbox.mjs'
 import { conversation, transcriptInfo } from '../src/claude.mjs'
 import { useLanguage } from '../src/lang.mjs'
-import { isNotice, reminderNotice, taskNotice } from '../src/notices.mjs'
+import { boardNotice, CALL_NOTE, callNotice, isNotice, reminderNotice, taskNotice } from '../src/notices.mjs'
 import { promptOf } from '../src/scheduler.mjs'
 import { translator } from '../web/i18n.js'
-import { noticeLine } from '../web/notice-model.js'
+import { callTitle, noticeLine } from '../web/notice-model.js'
 
 useLanguage('en')
 
@@ -172,4 +172,64 @@ test('a task reporting back does not count as the user answering the session (ho
     proc.stdin.end(JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 's1', cwd: box.dir, prompt: notification('Agent "Review" finished') }))
   })
   assert.equal(JSON.parse(readFileSync(join(cards, 's1.json'), 'utf8')).ask, 'Send it?')
+})
+
+// A MokuPilot call's results (`board call-report`): the board's own prompt, a line that opens to the report.
+const REPORT = '# Release 2.4 call · Oct 17 · 32 min\n\n- Decided: ship on Monday\n\nFull protocol: /tmp/meeting_1.summary.md'
+
+test('a call\'s results reach the session as information and show as their own line', () => {
+  const entry = { id: 'c1', key: 's1', kind: 'call', idle: true, text: REPORT, next: Date.now() }
+  const prompt = promptOf(entry, Date.now())
+  assert.equal(prompt, `[mokupilot call report]\n${REPORT}\n\n${CALL_NOTE}`)
+  assert.match(CALL_NOTE, /for your information/)
+  assert.match(CALL_NOTE, /do not start work on them unless the user asks/)
+  const n = callNotice(prompt)
+  assert.deepEqual(n, { kind: 'call', status: 'event', name: 'Release 2.4 call · Oct 17 · 32 min', note: '', detail: REPORT })
+  assert.ok(isNotice(prompt))
+  assert.deepEqual(boardNotice(prompt), n)
+  assert.equal(reminderNotice(prompt), null)
+  assert.equal(callNotice('[board reminder] x'), null)
+  assert.equal(callNotice('the [mokupilot call report] went out'), null)
+  // Late (the board was off): the tag says so, the line shows it quietly.
+  const late = callNotice(promptOf({ ...entry, next: Date.now() - 3 * 3600_000 }, Date.now()))
+  assert.match(late.note, /3 h late/)
+  assert.equal(late.detail, REPORT)
+  const en = translator('en')
+  const ru = translator('ru')
+  assert.deepEqual(noticeLine(n, en), { text: 'MokuPilot call results: Release 2.4 call · Oct 17 · 32 min', sub: '', tone: 'info' })
+  assert.equal(noticeLine(n, ru).text, 'Итоги звонка в MokuPilot: Release 2.4 call · Oct 17 · 32 min')
+  assert.equal(callTitle('\n\n**Звонок** _про_ `релиз`\nтекст'), 'Звонок про релиз')
+})
+
+test('in the conversation a call\'s results are a notice, not the user answering', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'agent-board-'))
+  const file = join(dir, 's.jsonl')
+  const line = o => JSON.stringify(o)
+  const prompt = promptOf({ id: 'c1', key: 's1', kind: 'call', text: REPORT, next: Date.now() }, Date.now())
+  writeFileSync(
+    file,
+    [
+      line({ type: 'user', message: { content: 'deploy it' }, timestamp: '2026-10-17T10:00:00Z' }),
+      line({ type: 'assistant', message: { content: [{ type: 'text', text: 'Shall I deploy now?' }] } }),
+      line({ type: 'user', message: { content: prompt }, timestamp: '2026-10-17T11:00:00Z' }),
+    ].join('\n'),
+  )
+  const conv = conversation(file)
+  assert.deepEqual(conv.map(c => c.role), ['user', 'assistant', 'notice'])
+  assert.deepEqual([conv[2].kind, conv[2].name, conv[2].detail], ['call', 'Release 2.4 call · Oct 17 · 32 min', REPORT])
+  assert.equal(transcriptInfo(file).replied, false)
+})
+
+test('a call\'s results do not count as the user answering the session (hook)', { timeout: 15_000 }, async t => {
+  const box = sandbox(t)
+  const cards = join(box.env.LOCALAPPDATA, 'herdr', 'plugins', 'agent-board', 'cards')
+  mkdirSync(cards, { recursive: true })
+  writeFileSync(join(cards, 's1.json'), JSON.stringify({ key: 's1', ask: 'Deploy now?', askSince: 1, briefV: 99 }))
+  const prompt = promptOf({ id: 'c1', key: 's1', kind: 'call', text: REPORT, next: Date.now() }, Date.now())
+  await new Promise(resolve => {
+    const proc = spawn(process.execPath, [join(root, 'src/hook.mjs')], { cwd: root, env: { ...box.env, HERDR_PANE_ID: 'p1' } })
+    proc.on('close', resolve)
+    proc.stdin.end(JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 's1', cwd: box.dir, prompt }))
+  })
+  assert.equal(JSON.parse(readFileSync(join(cards, 's1.json'), 'utf8')).ask, 'Deploy now?')
 })

@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { root, sandbox, until } from './fixtures/sandbox.mjs'
+import { promptOf as promptOfEntry } from '../src/scheduler.mjs'
 
 // The scheduler runs in a child process against a fake herdr: entries are files in the sandbox's
 // schedule folder, the session's prompt is a logged `herdr agent prompt` call.
@@ -398,4 +399,76 @@ test('the web board lists the schedule without the bookkeeping and cancels an en
   assert.equal((await cancel({ 'x-board': '1' })).status, 200)
   assert.equal(read(box, 'abcdef'), null)
   assert.equal((await cancel({ 'x-board': '1' })).status, 404)
+})
+
+// `board call-report`: MokuPilot hands a call's results back to the session it was a fork of.
+const SID = '0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e'
+
+test('board call-report queues the results for the session: now, once it is free, of kind call', { timeout: 15_000 }, async t => {
+  const box = sandbox(t)
+  const file = join(box.dir, 'report.md')
+  const report = '# Release 2.4 call · Oct 17 · 32 min\n\n- Decided: ship on Monday\n\nFull protocol: /tmp/meeting_1.summary.md'
+  writeFileSync(file, `﻿${report.replace(/\n/g, '\r\n')}\r\n`)
+  // The board knows the session: its name, pane and folder go into the entry.
+  box.state({ 'api snapshot': { result: { snapshot: { panes: [{ pane_id: 'p7', agent: 'claude', agent_session: { value: SID }, agent_status: 'idle', cwd: box.dir, terminal_title_stripped: 'Release' }], tabs: [], workspaces: [] } } } })
+  const before = Date.now()
+  config(box)
+  // Run as MokuPilot runs it: outside any pane, herdr answered by the fake.
+  const r = await agentCli(box, ['call-report', '--session', SID, '--file', file])
+  assert.equal(r.code, 0, r.out)
+  assert.match(r.out, /^ok · call report ([0-9a-f]{6}) for Release, typed in once the session is free · cancel: board unschedule \1/)
+  const e = read(box, /call report ([0-9a-f]{6})/.exec(r.out)[1])
+  assert.deepEqual([e.key, e.kind, e.idle, e.by, e.pane, e.cwd, e.name, e.text], [SID, 'call', true, 'mokupilot', 'p7', box.dir, 'Release', report])
+  assert.ok(e.next >= before && e.next <= Date.now())
+
+  // Without herdr (or the session gone from it) the entry is still kept, by the session's id.
+  const lone = sandbox(t)
+  const f2 = join(lone.dir, 'r.md')
+  writeFileSync(f2, 'x'.repeat(20_000))
+  const long = await cli(lone, ['call-report', '--session', SID, '--file', f2])
+  assert.equal(long.code, 0, long.out)
+  const cut = read(lone, /call report ([0-9a-f]{6})/.exec(long.out)[1])
+  assert.equal(cut.key, SID)
+  assert.ok(cut.text.length <= 16_000)
+  assert.ok(cut.text.endsWith(`[the report goes on; all of it: ${f2}]`))
+})
+
+test('board call-report refuses a bad session id and a missing or empty report', { timeout: 15_000 }, async t => {
+  const box = sandbox(t)
+  const empty = join(box.dir, 'empty.md')
+  writeFileSync(empty, ' \n')
+  const fails = [
+    [['call-report', '--file', empty], /usage: board call-report --session/],
+    [['call-report', '--session', 'Release', '--file', empty], /UUID/],
+    [['call-report', '--session', SID], /usage: board call-report/],
+    [['call-report', '--session', SID, '--file', join(box.dir, 'none.md')], /cannot read the report .*ENOENT/],
+    [['call-report', '--session', SID, '--file', empty], /is empty/],
+  ]
+  for (const [args, re] of fails) {
+    const r = await cli(box, args)
+    assert.equal(r.code, 1, r.out)
+    assert.match(r.out, re)
+  }
+  assert.equal(existsSync(dirOf(box)) ? readdirSync(dirOf(box)).filter(n => n.endsWith('.json')).length : 0, 0)
+})
+
+test('a call report waits for a working session, then goes in as information; the log keeps its title', { timeout: 15_000 }, async t => {
+  const box = sandbox(t)
+  herdrWith(box, 'working')
+  const text = '# Release 2.4 call\n\n- Decided: ship on Monday'
+  put(box, { id: 'dddd01', kind: 'call', idle: true, text, at: Date.now() - 1000, next: Date.now() - 1000 })
+  await scheduler(box)
+  await until(() => read(box, 'dddd01')?.pendingSince)
+  assert.deepEqual(prompts(box), [])
+  herdrWith(box, 'idle')
+  await until(() => prompts(box).length === 1 && runs(box).length === 1)
+  const [prompt] = prompts(box)
+  assert.ok(prompt.startsWith(`[mokupilot call report]\n${text}\n\nThis is for your information`), prompt)
+  assert.deepEqual([runs(box)[0].result, runs(box)[0].kind, runs(box)[0].text], ['sent', 'call', 'Release 2.4 call'])
+  assert.equal(read(box, 'dddd01'), null)
+})
+
+test('entries from before kinds existed are reminders as ever', () => {
+  const at = Date.now()
+  assert.equal(promptOfEntry({ id: 'eeee01', key: 's1', text: 'old one', next: at }, at), '[board reminder] old one')
 })

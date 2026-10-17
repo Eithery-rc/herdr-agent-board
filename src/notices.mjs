@@ -1,7 +1,8 @@
 // Turns that reach a session as a prompt but were not typed by a person: Claude Code's
 // <task-notification> when a background command, agent, monitor or workflow reports back, and
-// the board's own reminders (scheduler.mjs). The detail view shows them as a line of their own,
-// and they never count as the user answering.
+// the board's own reminders and MokuPilot call results (scheduler.mjs). The detail view shows
+// them as a line of their own, and they never count as the user answering.
+import { callTitle } from '../web/notice-model.js'
 
 const DETAIL_LIMIT = 4000
 
@@ -102,5 +103,37 @@ export function reminderNotice(text) {
   }
 }
 
-/** True for a prompt the user did not type: a task notification or a board reminder. */
-export const isNotice = text => !!(taskNotice(text) || reminderNotice(text))
+/**
+ * What follows a MokuPilot call's results in the session's prompt (scheduler.mjs promptOf): they
+ * are for the agent's information, not an order. In English, like the tags: the agent reads it.
+ */
+export const CALL_NOTE = 'This is for your information: the results of a MokuPilot call the user held with a fork of this session. Take the decisions into account; do not start work on them unless the user asks.'
+// The report's own body is shown whole when the line opens; a cut copy only guards the page.
+const CALL_LIMIT = 20_000
+
+/**
+ * A MokuPilot call's results the board typed in (`board call-report`, scheduler.mjs promptOf),
+ * "[mokupilot call report; notes]\n<report>\n\n<CALL_NOTE>", as { kind: 'call', status:
+ * 'event', name: the report's title (its first line), note, detail: the report without the note }.
+ * Null for anything else.
+ */
+export function callNotice(text) {
+  const m = /^\[mokupilot call report\b((?:[^[\]]|\[[^\]]*\])*)\]\s*([\s\S]*)$/.exec(String(text ?? '').trim())
+  if (!m) return null
+  let body = m[2].trim()
+  if (body.endsWith(CALL_NOTE)) body = body.slice(0, -CALL_NOTE.length).trim()
+  const title = callTitle(body)
+  return {
+    kind: 'call',
+    status: 'event',
+    name: clip(title, 200),
+    note: clip(m[1].replace(/^\s*;/, '').trim(), 300),
+    detail: clip(body, CALL_LIMIT),
+  }
+}
+
+/** A prompt the board typed in: a reminder or a call's results. */
+export const boardNotice = text => reminderNotice(text) ?? callNotice(text)
+
+/** True for a prompt the user did not type: a task notification, a board reminder or a call's results. */
+export const isNotice = text => !!(taskNotice(text) || boardNotice(text))

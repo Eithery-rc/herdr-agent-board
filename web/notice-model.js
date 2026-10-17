@@ -1,11 +1,16 @@
-// The line a notice gets in the conversation (src/notices.mjs): a background task reporting back
-// or a board reminder, shown small and apart from what the user typed.
+// The line a notice gets in the conversation (src/notices.mjs): a background task reporting back,
+// a board reminder or a MokuPilot call's results, shown small and apart from what the user typed.
+
+/** A MokuPilot call's results by their title: the report's first line, without markdown's marks. */
+export const callTitle = report => (String(report ?? '').split('\n').find(l => l.trim()) ?? '').replace(/^[#>*\s-]+/, '').replace(/[*_`]+/g, '').trim()
 
 /**
  * { text, sub, tone } for a notice: text is the line itself, sub a quieter second part, tone the
  * mark's color: ok | fail | stop | info.
  */
 export function noticeLine(n, t) {
+  // A MokuPilot call's results: its title; the report opens from the line.
+  if (n.kind === 'call') return { text: n.name ? `${t('notice.call')}: ${n.name}` : t('notice.call'), sub: n.note || '', tone: 'info' }
   if (n.kind === 'reminder' || n.kind === 'schedule') {
     const sub = [n.from && t('notice.from', { name: n.from }), n.cron, n.note].filter(Boolean).join(' · ')
     return { text: `${t(`notice.${n.kind}`)}: ${n.name}`, sub, tone: 'info' }

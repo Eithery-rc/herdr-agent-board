@@ -14,8 +14,10 @@ import { mkdirSync, watch } from 'node:fs'
 import { send, wake } from './actions.mjs'
 import { t } from './lang.mjs'
 import { collect, forgetSleepers } from './model.mjs'
+import { CALL_NOTE } from './notices.mjs'
 import { getEntry, listEntries, logRun, removeEntry, SCHEDULE_DIR, updateEntry } from './schedule.mjs'
 import { countRuns, nextRun } from './when.mjs'
+import { callTitle } from '../web/notice-model.js'
 import { longWhen, span } from '../web/when.js'
 
 // A run on its way (waking a session takes up to three minutes) holds its claim this long.
@@ -28,7 +30,11 @@ const MAX_WAKING = 2
 // miss forever.
 const GONE_RUNS = 3
 
-/** What the session gets: "[board reminder] text", with a note when it is late or stands for several runs. */
+/**
+ * What the session gets: "[board reminder] text", with a note when it is late or stands for
+ * several runs. A MokuPilot call's results (kind 'call') come as "[mokupilot call report]", the
+ * report on lines of its own, and a closing note that they are for its information.
+ */
 export function promptOf(entry, now) {
   const notes = []
   if (entry.cron) {
@@ -43,6 +49,7 @@ export function promptOf(entry, now) {
   if (before) notes.push(t(setter ? 'sched.prompt.clearedFor' : 'sched.prompt.cleared', { name: before.name || before.key.slice(0, 8) }))
   // The tag stays in English: the hook knows a board prompt by it (hook.mjs).
   const from = setter ? ` from ${setter}` : ''
+  if (entry.kind === 'call') return `[mokupilot call report${notes.length ? `; ${notes.join('; ')}` : ''}]\n${entry.text}\n\n${CALL_NOTE}`
   const tag = entry.cron ? `board schedule ${entry.id}${from}: ${entry.cron}` : `board reminder${from}`
   return `[${tag}${notes.length ? `; ${notes.join('; ')}` : ''}] ${entry.text}`
 }
@@ -175,7 +182,8 @@ export function startScheduler({ cfg, log = () => {}, onChange = () => {} }) {
     }
   }
 
-  const record = (entry, at, result, why) => ({ id: entry.id, key: entry.key, name: entry.name, text: entry.text, cron: entry.cron, due: entry.next, at, result, why })
+  // A call's results go into the log by their title: the report itself is the session's now.
+  const record = (entry, at, result, why) => ({ id: entry.id, key: entry.key, name: entry.name, text: entry.kind === 'call' ? callTitle(entry.text) : entry.text, ...(entry.kind && { kind: entry.kind }), cron: entry.cron, due: entry.next, at, result, why })
 
   /** Not sent this time: try again on the next tick, or log it as missed once the wait is over. */
   function wait(entry, now, why) {
